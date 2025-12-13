@@ -1,0 +1,583 @@
+{
+    "name": "Hips",
+    "method": "keypoint_with_global_rot_roll",
+    "point_reference": ["hips", "spine"],
+    "roll_reference": "root",
+    "roll_additional_from_reference": 0,
+    "children": [
+      {
+        "name": "Spine",
+        "method": "keypoint_with_global_rot_roll",
+        "point_reference": ["spine", "upper_spine"],
+        "roll_reference": "c_spine0",
+        "roll_additional_from_reference": -90,
+        "children": [
+          {
+            "name": "Chest",
+            "method": "keypoint_with_global_rot_roll",
+            "point_reference": ["upper_spine", "chest"],
+            "roll_reference": "c_spine1",
+            "roll_additional_from_reference": -90,
+            "children": [
+              {
+                "name": "Neck",
+                "method": "keypoint_with_global_rot_roll",
+                "point_reference": ["chest", "neck"],
+                "roll_reference": "c_spine2",
+                "roll_additional_from_reference": -90,
+                "children": [
+                  {
+                    "name": "Head",
+                    "method": "keypoint_with_global_rot_roll",
+                    "point_reference": ["neck", "head"],
+                    "roll_reference": "c_head",
+                    "roll_additional_from_reference": -90,
+                    "children": [
+                      {
+                        "name": "Head_end",
+                        "joint_mapping": "c_head_null",
+                        "method": "keypoint_with_global_rot_roll",
+                        "point_reference": ["neck", "head"],
+                        "roll_reference": "c_head_null",
+                        "roll_additional_from_reference": -90,
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "LeftShoulder",
+                "method": "keypoint_with_global_rot_roll",
+                "point_reference": ["chest", "left_shoulder"],
+                "roll_reference": "l_clavicle",
+                "roll_additional_from_reference": -90,
+                "children": [
+                  {
+                    "name": "LeftUpperArm",
+                    "method": "keypoint_with_global_rot_roll",
+                    "point_reference": ["left_shoulder", "left_elbow"],
+                    "roll_reference": "l_uparm",
+                    "roll_additional_from_reference": 90,
+                    "children": [
+                      {
+                        "name": "LeftLowerArm",
+                        "method": "keypoint_with_global_rot_roll",
+                        "point_reference": ["left_elbow", "left_wrist"],
+                        "roll_reference": "l_lowarm",
+                        "roll_additional_from_reference": 90,
+                        "children": [
+                          {
+                            "name": "LeftWrist",
+                            "method": "keypoint_with_global_rot_roll",
+                            "point_reference": ["left_wrist", "left_hand"],
+                            "roll_reference": "l_wrist",
+                            "roll_additional_from_reference": 0,
+                            "children": [
+                              {
+                                "name": "LeftHand",
+                                "method": "keypoint_with_global_rot_roll",
+                                "point_reference": ["left_wrist", "left_middle_finger_third_joint"],
+                                "roll_reference": "l_wrist",
+                                "roll_additional_from_reference": 0,
+                                "children": [
+                                  {
+                                    "name": "LeftThumbProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["left_thumb_third_joint", "left_thumb2"],
+                                    "roll_reference": "l_thumb1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "LeftThumbIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["left_thumb2", "left_thumb3"],
+                                        "roll_reference": "l_thumb2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "LeftThumbDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["left_thumb3", "left_thumb4"],
+                                            "roll_reference": "l_thumb3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "LeftThumbDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["left_thumb3", "left_thumb4"],
+                                                "roll_reference": "l_thumb_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "LeftIndexProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["left_forefinger_third_joint", "left_forefinger2"],
+                                    "roll_reference": "l_index1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "LeftIndexIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["left_forefinger2", "left_forefinger3"],
+                                        "roll_reference": "l_index2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "LeftIndexDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["left_forefinger3", "left_forefinger4"],
+                                            "roll_reference": "l_index3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "LeftIndexDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["left_forefinger3", "left_forefinger4"],
+                                                "roll_reference": "l_index_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "LeftMiddleProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["left_middle_finger_third_joint", "left_middle_finger2"],
+                                    "roll_reference": "l_middle1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "LeftMiddleIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["left_middle_finger2", "left_middle_finger3"],
+                                        "roll_reference": "l_middle2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "LeftMiddleDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["left_middle_finger3", "left_middle_finger4"],
+                                            "roll_reference": "l_middle3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "LeftMiddleDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["left_middle_finger3", "left_middle_finger4"],
+                                                "roll_reference": "l_middle_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "LeftRingProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["left_ring_finger_third_joint", "left_ring_finger2"],
+                                    "roll_reference": "l_ring1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "LeftRingIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["left_ring_finger2", "left_ring_finger3"],
+                                        "roll_reference": "l_ring2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "LeftRingDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["left_ring_finger3", "left_ring_finger4"],
+                                            "roll_reference": "l_ring3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "LeftRingDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["left_ring_finger3", "left_ring_finger4"],
+                                                "roll_reference": "l_ring_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "LeftLittleProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["left_little_finger_third_joint", "left_little_finger2"],
+                                    "roll_reference": "l_pinky1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "LeftLittleIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["left_little_finger2", "left_little_finger3"],
+                                        "roll_reference": "l_pinky2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "LeftLittleDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["left_little_finger3", "left_little_finger4"],
+                                            "roll_reference": "l_pinky3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "LeftLittleDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["left_little_finger3", "left_little_finger4"],
+                                                "roll_reference": "l_pinky_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "name": "RightShoulder",
+                "method": "keypoint_with_global_rot_roll",
+                "point_reference": ["chest", "right_shoulder"],
+                "roll_reference": "r_clavicle",
+                "roll_additional_from_reference": 180,
+                "children": [
+                  {
+                    "name": "RightUpperArm",
+                    "method": "keypoint_with_global_rot_roll",
+                    "point_reference": ["right_shoulder", "right_elbow"],
+                    "roll_reference": "r_uparm",
+                    "roll_additional_from_reference": 180,
+                    "children": [
+                      {
+                        "name": "RightLowerArm",
+                        "method": "keypoint_with_global_rot_roll",
+                        "point_reference": ["right_elbow", "right_wrist"],
+                        "roll_reference": "r_lowarm",
+                        "roll_additional_from_reference": 180,
+                        "children": [
+                          {
+                            "name": "RightWrist",
+                            "method": "keypoint_with_global_rot_roll",
+                            "point_reference": ["right_wrist", "right_hand"],
+                            "roll_reference": "r_wrist",
+                            "roll_additional_from_reference": -90,
+                            "children": [
+                              {
+                                "name": "RightHand",
+                                "method": "keypoint_with_global_rot_roll",
+                                "point_reference": ["right_wrist", "right_middle_finger_third_joint"],
+                                "roll_reference": "r_wrist",
+                                "roll_additional_from_reference": -90,
+                                "children": [
+                                  {
+                                    "name": "RightThumbProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["right_thumb_third_joint", "right_thumb2"],
+                                    "roll_reference": "r_thumb1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "RightThumbIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["right_thumb2", "right_thumb3"],
+                                        "roll_reference": "r_thumb1",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "RightThumbDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["right_thumb3", "right_thumb4"],
+                                            "roll_reference": "r_thumb2",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "RightThumbDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["right_thumb3", "right_thumb4"],
+                                                "roll_reference": "r_thumb_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "RightIndexProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["right_forefinger_third_joint", "right_forefinger2"],
+                                    "roll_reference": "r_index1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "RightIndexIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["right_forefinger2", "right_forefinger3"],
+                                        "roll_reference": "r_index2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "RightIndexDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["right_forefinger3", "right_forefinger4"],
+                                            "roll_reference": "r_index3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "RightIndexDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["right_forefinger3", "right_forefinger4"],
+                                                "roll_reference": "r_index_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "RightMiddleProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["right_middle_finger_third_joint", "right_middle_finger2"],
+                                    "roll_reference": "r_middle1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "RightMiddleIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["right_middle_finger2", "right_middle_finger3"],
+                                        "roll_reference": "r_middle2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "RightMiddleDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["right_middle_finger3", "right_middle_finger4"],
+                                            "roll_reference": "r_middle3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "RightMiddleDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["right_middle_finger3", "right_middle_finger4"],
+                                                "roll_reference": "r_middle_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "RightRingProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["right_ring_finger_third_joint", "right_ring_finger2"],
+                                    "roll_reference": "r_ring1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "RightRingIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["right_ring_finger2", "right_ring_finger3"],
+                                        "roll_reference": "r_ring2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "RightRingDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["right_ring_finger3", "right_ring_finger4"],
+                                            "roll_reference": "r_ring3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "RightRingDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["right_ring_finger3", "right_ring_finger4"],
+                                                "roll_reference": "r_ring_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  },
+                                  {
+                                    "name": "RightLittleProximal",
+                                    "method": "keypoint_with_global_rot_roll",
+                                    "point_reference": ["right_little_finger_third_joint", "right_little_finger2"],
+                                    "roll_reference": "r_pinky1",
+                                    "roll_additional_from_reference": 0,
+                                    "children": [
+                                      {
+                                        "name": "RightLittleIntermediate",
+                                        "method": "keypoint_with_global_rot_roll",
+                                        "point_reference": ["right_little_finger2", "right_little_finger3"],
+                                        "roll_reference": "r_pinky2",
+                                        "roll_additional_from_reference": 0,
+                                        "children": [
+                                          {
+                                            "name": "RightLittleDistal",
+                                            "method": "keypoint_with_global_rot_roll",
+                                            "point_reference": ["right_little_finger3", "right_little_finger4"],
+                                            "roll_reference": "r_pinky3",
+                                            "roll_additional_from_reference": 0,
+                                            "children": [
+                                              {
+                                                "name": "RightLittleDistal_end",
+                                                "method": "keypoint_with_global_rot_roll",
+                                                "point_reference": ["right_little_finger3", "right_little_finger4"],
+                                                "roll_reference": "r_pinky_null",
+                                                "roll_additional_from_reference": 0,
+                                                "children": []
+                                              }
+                                            ]
+                                          }
+                                        ]
+                                      }
+                                    ]
+                                  }
+                                ]
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "LeftUpperLeg",
+        "method": "keypoint_with_global_rot_roll",
+        "point_reference": ["left_hip", "left_knee"],
+        "roll_reference": "l_upleg",
+        "roll_additional_from_reference": 90,
+        "children": [
+          {
+            "name": "LeftLowerLeg",
+            "method": "keypoint_with_global_rot_roll",
+            "point_reference": ["left_knee", "left_ankle"],
+            "roll_reference": "l_lowleg",
+            "roll_additional_from_reference": 90,
+            "children": [
+              {
+                "name": "LeftFoot",
+                "method": "keypoint_with_global_rot_roll",
+                "point_reference": ["left_ankle", "left_mid_foot"],
+                "roll_reference": "l_foot",
+                "roll_additional_from_reference": 90,
+                "children": [
+                  {
+                    "name": "LeftToes",
+                    "method": "keypoint_with_global_rot_roll",
+                    "point_reference": ["left_mid_foot", "left_big_toe"],
+                    "roll_reference": "l_ball",
+                    "roll_additional_from_reference": 90,
+                    "children": [
+                      {
+                        "name": "LeftToes_end",
+                        "method": "keypoint_with_global_rot_roll",
+                        "point_reference": ["left_mid_foot", "left_big_toe"],
+                        "roll_reference": "l_ball",
+                        "roll_additional_from_reference": 90,
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "name": "RightUpperLeg",
+        "method": "keypoint_with_global_rot_roll",
+        "point_reference": ["right_hip", "right_knee"],
+        "roll_reference": "r_upleg",
+        "roll_additional_from_reference": 90,
+        "children": [
+          {
+            "name": "RightLowerLeg",
+            "method": "keypoint_with_global_rot_roll",
+            "point_reference": ["right_knee", "right_ankle"],
+            "roll_reference": "r_lowleg",
+            "roll_additional_from_reference": 90,
+            "children": [
+              {
+                "name": "RightFoot",
+                "method": "keypoint_with_global_rot_roll",
+                "point_reference": ["right_ankle", "right_mid_foot"],
+                "roll_reference": "r_foot",
+                "roll_additional_from_reference": 90,
+                "children": [
+                  {
+                    "name": "RightToes",
+                    "method": "keypoint_with_global_rot_roll",
+                    "point_reference": ["right_mid_foot", "right_big_toe"],
+                    "roll_reference": "r_ball",
+                    "roll_additional_from_reference": 90,
+                    "children": [
+                      {
+                        "name": "RightToes_end",
+                        "method": "keypoint_with_global_rot_roll",
+                        "point_reference": ["right_mid_foot", "right_big_toe"],
+                        "roll_reference": "r_ball",
+                        "roll_additional_from_reference": 90,
+                        "children": []
+                      }
+                    ]
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+  

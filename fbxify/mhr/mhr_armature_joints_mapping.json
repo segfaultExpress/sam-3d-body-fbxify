@@ -1,0 +1,826 @@
+{
+  "name": "root",
+  "method": "direct_rotation",
+  "reference": "root",
+  "children": [
+    {
+      "name": "l_upleg",
+      "method": "direct_rotation",
+      "reference": "l_upleg",
+      "children": [
+        {
+          "name": "l_lowleg",
+          "method": "direct_rotation",
+          "reference": "l_lowleg",
+          "children": [
+            {
+              "name": "l_foot",
+              "method": "direct_rotation",
+              "reference": "l_foot",
+              "children": [
+                {
+                  "name": "l_talocrural",
+                  "method": "direct_rotation",
+                  "reference": "l_talocrural",
+                  "children": [
+                    {
+                      "name": "l_subtalar",
+                      "method": "direct_rotation",
+                      "reference": "l_subtalar",
+                      "children": [
+                        {
+                          "name": "l_transversetarsal",
+                          "method": "direct_rotation",
+                          "reference": "l_transversetarsal",
+                          "children": [
+                            {
+                              "name": "l_ball",
+                              "method": "direct_rotation",
+                              "reference": "l_ball",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "l_lowleg_twist1_proc",
+              "method": "direct_rotation",
+              "reference": "l_lowleg_twist1_proc",
+              "children": []
+            },
+            {
+              "name": "l_lowleg_twist2_proc",
+              "method": "direct_rotation",
+              "reference": "l_lowleg_twist2_proc",
+              "children": []
+            },
+            {
+              "name": "l_lowleg_twist3_proc",
+              "method": "direct_rotation",
+              "reference": "l_lowleg_twist3_proc",
+              "children": []
+            },
+            {
+              "name": "l_lowleg_twist4_proc",
+              "method": "direct_rotation",
+              "reference": "l_lowleg_twist4_proc",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "l_upleg_twist0_proc",
+          "method": "direct_rotation",
+          "reference": "l_upleg_twist0_proc",
+          "children": []
+        },
+        {
+          "name": "l_upleg_twist1_proc",
+          "method": "direct_rotation",
+          "reference": "l_upleg_twist1_proc",
+          "children": []
+        },
+        {
+          "name": "l_upleg_twist2_proc",
+          "method": "direct_rotation",
+          "reference": "l_upleg_twist2_proc",
+          "children": []
+        },
+        {
+          "name": "l_upleg_twist3_proc",
+          "method": "direct_rotation",
+          "reference": "l_upleg_twist3_proc",
+          "children": []
+        },
+        {
+          "name": "l_upleg_twist4_proc",
+          "method": "direct_rotation",
+          "reference": "l_upleg_twist4_proc",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "r_upleg",
+      "method": "direct_rotation",
+      "reference": "r_upleg",
+      "children": [
+        {
+          "name": "r_lowleg",
+          "method": "direct_rotation",
+          "reference": "r_lowleg",
+          "children": [
+            {
+              "name": "r_foot",
+              "method": "direct_rotation",
+              "reference": "r_foot",
+              "children": [
+                {
+                  "name": "r_talocrural",
+                  "method": "direct_rotation",
+                  "reference": "r_talocrural",
+                  "children": [
+                    {
+                      "name": "r_subtalar",
+                      "method": "direct_rotation",
+                      "reference": "r_subtalar",
+                      "children": [
+                        {
+                          "name": "r_transversetarsal",
+                          "method": "direct_rotation",
+                          "reference": "r_transversetarsal",
+                          "children": [
+                            {
+                              "name": "r_ball",
+                              "method": "direct_rotation",
+                              "reference": "r_ball",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "name": "r_lowleg_twist1_proc",
+              "method": "direct_rotation",
+              "reference": "r_lowleg_twist1_proc",
+              "children": []
+            },
+            {
+              "name": "r_lowleg_twist2_proc",
+              "method": "direct_rotation",
+              "reference": "r_lowleg_twist2_proc",
+              "children": []
+            },
+            {
+              "name": "r_lowleg_twist3_proc",
+              "method": "direct_rotation",
+              "reference": "r_lowleg_twist3_proc",
+              "children": []
+            },
+            {
+              "name": "r_lowleg_twist4_proc",
+              "method": "direct_rotation",
+              "reference": "r_lowleg_twist4_proc",
+              "children": []
+            }
+          ]
+        },
+        {
+          "name": "r_upleg_twist0_proc",
+          "method": "direct_rotation",
+          "reference": "r_upleg_twist0_proc",
+          "children": []
+        },
+        {
+          "name": "r_upleg_twist1_proc",
+          "method": "direct_rotation",
+          "reference": "r_upleg_twist1_proc",
+          "children": []
+        },
+        {
+          "name": "r_upleg_twist2_proc",
+          "method": "direct_rotation",
+          "reference": "r_upleg_twist2_proc",
+          "children": []
+        },
+        {
+          "name": "r_upleg_twist3_proc",
+          "method": "direct_rotation",
+          "reference": "r_upleg_twist3_proc",
+          "children": []
+        },
+        {
+          "name": "r_upleg_twist4_proc",
+          "method": "direct_rotation",
+          "reference": "r_upleg_twist4_proc",
+          "children": []
+        }
+      ]
+    },
+    {
+      "name": "c_spine0",
+      "method": "direct_rotation",
+      "reference": "c_spine0",
+      "children": [
+        {
+          "name": "c_spine1",
+          "method": "direct_rotation",
+          "reference": "c_spine1",
+          "children": [
+            {
+              "name": "c_spine2",
+              "method": "direct_rotation",
+              "reference": "c_spine2",
+              "children": [
+                {
+                  "name": "c_spine3",
+                  "method": "direct_rotation",
+                  "reference": "c_spine3",
+                  "children": [
+                    {
+                      "name": "r_clavicle",
+                      "method": "direct_rotation",
+                      "reference": "r_clavicle",
+                      "children": [
+                        {
+                          "name": "r_uparm",
+                          "method": "direct_rotation",
+                          "reference": "r_uparm",
+                          "children": [
+                            {
+                              "name": "r_lowarm",
+                              "method": "direct_rotation",
+                              "reference": "r_lowarm",
+                              "children": [
+                                {
+                                  "name": "r_wrist_twist",
+                                  "method": "direct_rotation",
+                                  "reference": "r_wrist_twist",
+                                  "children": [
+                                    {
+                                      "name": "r_wrist",
+                                      "method": "direct_rotation",
+                                      "reference": "r_wrist",
+                                      "children": [
+                                        {
+                                          "name": "r_pinky0",
+                                          "method": "direct_rotation",
+                                          "reference": "r_pinky0",
+                                          "children": [
+                                            {
+                                              "name": "r_pinky1",
+                                              "method": "direct_rotation",
+                                              "reference": "r_pinky1",
+                                              "children": [
+                                                {
+                                                  "name": "r_pinky2",
+                                                  "method": "direct_rotation",
+                                                  "reference": "r_pinky2",
+                                                  "children": [
+                                                    {
+                                                      "name": "r_pinky3",
+                                                      "method": "direct_rotation",
+                                                      "reference": "r_pinky3",
+                                                      "children": [
+                                                        {
+                                                          "name": "r_pinky_null",
+                                                          "method": "direct_rotation",
+                                                          "reference": "r_pinky_null",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "r_ring1",
+                                          "method": "direct_rotation",
+                                          "reference": "r_ring1",
+                                          "children": [
+                                            {
+                                              "name": "r_ring2",
+                                              "method": "direct_rotation",
+                                              "reference": "r_ring2",
+                                              "children": [
+                                                {
+                                                  "name": "r_ring3",
+                                                  "method": "direct_rotation",
+                                                  "reference": "r_ring3",
+                                                  "children": [
+                                                    {
+                                                      "name": "r_ring_null",
+                                                      "method": "direct_rotation",
+                                                      "reference": "r_ring_null",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "r_middle1",
+                                          "method": "direct_rotation",
+                                          "reference": "r_middle1",
+                                          "children": [
+                                            {
+                                              "name": "r_middle2",
+                                              "method": "direct_rotation",
+                                              "reference": "r_middle2",
+                                              "children": [
+                                                {
+                                                  "name": "r_middle3",
+                                                  "method": "direct_rotation",
+                                                  "reference": "r_middle3",
+                                                  "children": [
+                                                    {
+                                                      "name": "r_middle_null",
+                                                      "method": "direct_rotation",
+                                                      "reference": "r_middle_null",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "r_index1",
+                                          "method": "direct_rotation",
+                                          "reference": "r_index1",
+                                          "children": [
+                                            {
+                                              "name": "r_index2",
+                                              "method": "direct_rotation",
+                                              "reference": "r_index2",
+                                              "children": [
+                                                {
+                                                  "name": "r_index3",
+                                                  "method": "direct_rotation",
+                                                  "reference": "r_index3",
+                                                  "children": [
+                                                    {
+                                                      "name": "r_index_null",
+                                                      "method": "direct_rotation",
+                                                      "reference": "r_index_null",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "r_thumb0",
+                                          "method": "direct_rotation",
+                                          "reference": "r_thumb0",
+                                          "children": [
+                                            {
+                                              "name": "r_thumb1",
+                                              "method": "direct_rotation",
+                                              "reference": "r_thumb1",
+                                              "children": [
+                                                {
+                                                  "name": "r_thumb2",
+                                                  "method": "direct_rotation",
+                                                  "reference": "r_thumb2",
+                                                  "children": [
+                                                    {
+                                                      "name": "r_thumb3",
+                                                      "method": "direct_rotation",
+                                                      "reference": "r_thumb3",
+                                                      "children": [
+                                                        {
+                                                          "name": "r_thumb_null",
+                                                          "method": "direct_rotation",
+                                                          "reference": "r_thumb_null",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "r_lowarm_twist1_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "r_lowarm_twist1_proc",
+                                  "children": []
+                                },
+                                {
+                                  "name": "r_lowarm_twist2_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "r_lowarm_twist2_proc",
+                                  "children": []
+                                },
+                                {
+                                  "name": "r_lowarm_twist3_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "r_lowarm_twist3_proc",
+                                  "children": []
+                                },
+                                {
+                                  "name": "r_lowarm_twist4_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "r_lowarm_twist4_proc",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "name": "r_uparm_twist0_proc",
+                              "method": "direct_rotation",
+                              "reference": "r_uparm_twist0_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "r_uparm_twist1_proc",
+                              "method": "direct_rotation",
+                              "reference": "r_uparm_twist1_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "r_uparm_twist2_proc",
+                              "method": "direct_rotation",
+                              "reference": "r_uparm_twist2_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "r_uparm_twist3_proc",
+                              "method": "direct_rotation",
+                              "reference": "r_uparm_twist3_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "r_uparm_twist4_proc",
+                              "method": "direct_rotation",
+                              "reference": "r_uparm_twist4_proc",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "l_clavicle",
+                      "method": "direct_rotation",
+                      "reference": "l_clavicle",
+                      "children": [
+                        {
+                          "name": "l_uparm",
+                          "method": "direct_rotation",
+                          "reference": "l_uparm",
+                          "children": [
+                            {
+                              "name": "l_lowarm",
+                              "method": "direct_rotation",
+                              "reference": "l_lowarm",
+                              "children": [
+                                {
+                                  "name": "l_wrist_twist",
+                                  "method": "direct_rotation",
+                                  "reference": "l_wrist_twist",
+                                  "children": [
+                                    {
+                                      "name": "l_wrist",
+                                      "method": "direct_rotation",
+                                      "reference": "l_wrist",
+                                      "children": [
+                                        {
+                                          "name": "l_pinky0",
+                                          "method": "direct_rotation",
+                                          "reference": "l_pinky0",
+                                          "children": [
+                                            {
+                                              "name": "l_pinky1",
+                                              "method": "direct_rotation",
+                                              "reference": "l_pinky1",
+                                              "children": [
+                                                {
+                                                  "name": "l_pinky2",
+                                                  "method": "direct_rotation",
+                                                  "reference": "l_pinky2",
+                                                  "children": [
+                                                    {
+                                                      "name": "l_pinky3",
+                                                      "method": "direct_rotation",
+                                                      "reference": "l_pinky3",
+                                                      "children": [
+                                                        {
+                                                          "name": "l_pinky_null",
+                                                          "method": "direct_rotation",
+                                                          "reference": "l_pinky_null",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "l_ring1",
+                                          "method": "direct_rotation",
+                                          "reference": "l_ring1",
+                                          "children": [
+                                            {
+                                              "name": "l_ring2",
+                                              "method": "direct_rotation",
+                                              "reference": "l_ring2",
+                                              "children": [
+                                                {
+                                                  "name": "l_ring3",
+                                                  "method": "direct_rotation",
+                                                  "reference": "l_ring3",
+                                                  "children": [
+                                                    {
+                                                      "name": "l_ring_null",
+                                                      "method": "direct_rotation",
+                                                      "reference": "l_ring_null",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "l_middle1",
+                                          "method": "direct_rotation",
+                                          "reference": "l_middle1",
+                                          "children": [
+                                            {
+                                              "name": "l_middle2",
+                                              "method": "direct_rotation",
+                                              "reference": "l_middle2",
+                                              "children": [
+                                                {
+                                                  "name": "l_middle3",
+                                                  "method": "direct_rotation",
+                                                  "reference": "l_middle3",
+                                                  "children": [
+                                                    {
+                                                      "name": "l_middle_null",
+                                                      "method": "direct_rotation",
+                                                      "reference": "l_middle_null",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "l_index1",
+                                          "method": "direct_rotation",
+                                          "reference": "l_index1",
+                                          "children": [
+                                            {
+                                              "name": "l_index2",
+                                              "method": "direct_rotation",
+                                              "reference": "l_index2",
+                                              "children": [
+                                                {
+                                                  "name": "l_index3",
+                                                  "method": "direct_rotation",
+                                                  "reference": "l_index3",
+                                                  "children": [
+                                                    {
+                                                      "name": "l_index_null",
+                                                      "method": "direct_rotation",
+                                                      "reference": "l_index_null",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "name": "l_thumb0",
+                                          "method": "direct_rotation",
+                                          "reference": "l_thumb0",
+                                          "children": [
+                                            {
+                                              "name": "l_thumb1",
+                                              "method": "direct_rotation",
+                                              "reference": "l_thumb1",
+                                              "children": [
+                                                {
+                                                  "name": "l_thumb2",
+                                                  "method": "direct_rotation",
+                                                  "reference": "l_thumb2",
+                                                  "children": [
+                                                    {
+                                                      "name": "l_thumb3",
+                                                      "method": "direct_rotation",
+                                                      "reference": "l_thumb3",
+                                                      "children": [
+                                                        {
+                                                          "name": "l_thumb_null",
+                                                          "method": "direct_rotation",
+                                                          "reference": "l_thumb_null",
+                                                          "children": []
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "name": "l_lowarm_twist1_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "l_lowarm_twist1_proc",
+                                  "children": []
+                                },
+                                {
+                                  "name": "l_lowarm_twist2_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "l_lowarm_twist2_proc",
+                                  "children": []
+                                },
+                                {
+                                  "name": "l_lowarm_twist3_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "l_lowarm_twist3_proc",
+                                  "children": []
+                                },
+                                {
+                                  "name": "l_lowarm_twist4_proc",
+                                  "method": "direct_rotation",
+                                  "reference": "l_lowarm_twist4_proc",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "name": "l_uparm_twist0_proc",
+                              "method": "direct_rotation",
+                              "reference": "l_uparm_twist0_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "l_uparm_twist1_proc",
+                              "method": "direct_rotation",
+                              "reference": "l_uparm_twist1_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "l_uparm_twist2_proc",
+                              "method": "direct_rotation",
+                              "reference": "l_uparm_twist2_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "l_uparm_twist3_proc",
+                              "method": "direct_rotation",
+                              "reference": "l_uparm_twist3_proc",
+                              "children": []
+                            },
+                            {
+                              "name": "l_uparm_twist4_proc",
+                              "method": "direct_rotation",
+                              "reference": "l_uparm_twist4_proc",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "name": "c_neck",
+                      "method": "direct_rotation",
+                      "reference": "c_neck",
+                      "children": [
+                        {
+                          "name": "c_neck_twist1_proc",
+                          "method": "direct_rotation",
+                          "reference": "c_neck_twist1_proc",
+                          "children": []
+                        },
+                        {
+                          "name": "c_neck_twist0_proc",
+                          "method": "direct_rotation",
+                          "reference": "c_neck_twist0_proc",
+                          "children": []
+                        },
+                        {
+                          "name": "c_head",
+                          "method": "direct_rotation",
+                          "reference": "c_head",
+                          "children": [
+                            {
+                              "name": "c_jaw",
+                              "method": "direct_rotation",
+                              "reference": "c_jaw",
+                              "children": [
+                                {
+                                  "name": "c_teeth",
+                                  "method": "direct_rotation",
+                                  "reference": "c_teeth",
+                                  "children": []
+                                },
+                                {
+                                  "name": "c_jaw_null",
+                                  "method": "direct_rotation",
+                                  "reference": "c_jaw_null",
+                                  "children": []
+                                },
+                                {
+                                  "name": "c_tongue0",
+                                  "method": "direct_rotation",
+                                  "reference": "c_tongue0",
+                                  "children": [
+                                    {
+                                      "name": "c_tongue1",
+                                      "method": "direct_rotation",
+                                      "reference": "c_tongue1",
+                                      "children": [
+                                        {
+                                          "name": "c_tongue2",
+                                          "method": "direct_rotation",
+                                          "reference": "c_tongue2",
+                                          "children": [
+                                            {
+                                              "name": "c_tongue3",
+                                              "method": "direct_rotation",
+                                              "reference": "c_tongue3",
+                                              "children": [
+                                                {
+                                                  "name": "c_tongue4",
+                                                  "method": "direct_rotation",
+                                                  "reference": "c_tongue4",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "name": "r_eye",
+                              "method": "direct_rotation",
+                              "reference": "r_eye",
+                              "children": [
+                                {
+                                  "name": "r_eye_null",
+                                  "method": "direct_rotation",
+                                  "reference": "r_eye_null",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "name": "l_eye",
+                              "method": "direct_rotation",
+                              "reference": "l_eye",
+                              "children": [
+                                {
+                                  "name": "l_eye_null",
+                                  "method": "direct_rotation",
+                                  "reference": "l_eye_null",
+                                  "children": []
+                                }
+                              ]
+                            },
+                            {
+                              "name": "c_head_null",
+                              "method": "direct_rotation",
+                              "reference": "c_head_null",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

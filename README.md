@@ -23,6 +23,12 @@ SAM 3D Body is one part of SAM 3D, a pair of models for object and human mesh re
 
 3DB employs an encoder-decoder architecture and supports auxiliary prompts, including 2D keypoints and masks, enabling user-guided inference similar to the SAM family of models. Our model is trained on high-quality annotations from a multi-stage annotation pipeline using differentiable optimization, multi-view geometry, dense keypoint detection, and a data engine to collect and annotated data covering both common and rare poses across a wide range of viewpoints.
 
+## FBXify: Export to FBX Format
+
+![FBX Export Example](example_fbx.gif?raw=true)
+
+This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export estimated poses as FBX files compatible with Unity, Mixamo, and other 3D animation tools. Upload images or videos to generate armature-only FBX files that can be retargeted to any MHR, Mixamo, or Unity character.
+
 ## Qualitative Results
 
 <table>
@@ -72,6 +78,34 @@ SAM 3D Body is one part of SAM 3D, a pair of models for object and human mesh re
 ## Latest updates
 
 **11/19/2025** -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out!
+
+## FBXify: Installation & Usage
+
+This repository includes **FBXify**, a web-based tool that converts SAM 3D Body pose estimates into FBX files. The tool allows you to upload images or videos, automatically detects the closest person, and exports an armature-only FBX file that can be retargeted to MHR, Mixamo, or Unity characters.
+
+### Acknowledgments
+
+Special thanks to [tori29umai0123](https://github.com/tori29umai0123) for their starter code that inspired this fork. See the original GitHub issue: [A script that outputs a human animation fbx file that can be loaded in Unity (incomplete) #66](https://github.com/facebookresearch/sam-3d-body/issues/66).
+
+### Installation
+
+1. **Install all requirements** required for standard sam-3d-body (see [INSTALL.md](INSTALL.md) for detailed instructions)
+2. **(Optional) Install using Dockerfile** - The repository includes a Dockerfile for containerized deployment
+3. **Start the server:**
+   - Linux/Mac: `./start_server.sh`
+   - Windows: `./start_server.bat`
+4. **Access the web interface** - The server will automatically open your browser to `http://localhost:7444`
+5. **Upload and process** - Upload images or videos, then download the generated FBX files
+
+### Features
+
+- **Export armature-only FBX files** from SAM 3D Body pose estimates
+- **Support for multiple rig formats:** MHR, Mixamo, and Unity character remapping
+- **Video processing:** Automatically detects the closest person and applies all keyframes to create an animation action
+- **Image processing:** Single frame pose estimation and export
+- **Web-based interface:** Easy-to-use Gradio interface for uploading and processing files
+
+Note: The exported FBX files contain only the armature (skeleton), not the mesh. You can retarget or directly move the action to any MHR, Mixamo, or Unity character.
 
 ## Installation
 See [INSTALL.md](INSTALL.md) for instructions for python environment setup and model checkpoint access.
@@ -137,6 +171,46 @@ The SAM 3D Body data is released on [Hugging Face](https://huggingface.co/datase
 [SAM 3D Objects](https://github.com/facebookresearch/sam-3d-objects) is a foundation model that reconstructs full 3D shape geometry, texture, and layout from a single image.
 
 As a way to combine the strengths of both **SAM 3D Objects** and **SAM 3D Body**, we provide an example notebook that demonstrates how to combine the results of both models such that they are aligned in the same frame of reference. Check it out [here](https://github.com/facebookresearch/sam-3d-objects/blob/main/notebook/demo_3db_mesh_alignment.ipynb).
+
+## Mapping
+
+FBXify supports remapping poses to different rig formats. For detailed information on how to configure mappings for custom rigs, see the [Mapping Guide](fbxify/Mapping_Guide.md).
+
+### Supported Rigs
+
+- **MHR (Momentum Human Rig):** Native support with direct rotation mapping
+- **Mixamo:** Standard rigs can use the Rokoko Retargeting plugin, or custom mappings can be configured
+- **Unity:** Unity Humanoid-compatible rigs with custom bone mappings
+
+### Mapping Methods
+
+The system supports three mapping methods:
+
+1. **`direct_rotation`**: Direct mapping for bones, primarily useful for MHR due to the perpendicular nature of MHR bone rotations
+2. **`keypoint_with_global_rot_roll`**: Extends keypoint-based mapping by adding roll rotation from MHR rig bones, useful for rigs that need proper bone orientation
+3. **Keypoint-based mapping**: Uses keypoints from the MHR pose estimation to drive bone rotations
+
+### Adding Custom Rigs
+
+To add support for a custom rig:
+
+1. Extract your skeleton structure and rest pose using the provided Blender scripts:
+   - `extract_armature_bone_struct_for_mapping.py`
+   - `extract_armature_skeleton_and_rest_pose.py`
+2. Ensure your armature is selected and in rest pose
+3. Copy the console output into a JSON file and add it to `metadata.py`'s `PROFILES`
+4. Configure the mapping method and parameters for each bone
+
+For complete instructions, see [fbxify/Mapping_Guide.md](fbxify/Mapping_Guide.md).
+
+## TODO
+
+Future improvements planned for FBXify:
+
+1. Smoothen the mocap data to prevent shakiness
+2. Fix some remaining artifacts
+3. Add option to scale the armature based on returned values
+4. Rig an MHR to the mixamo/unity rigs
 
 ## License
 
