@@ -6,7 +6,25 @@ This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export 
 
 ## FBXify: Installation & Usage
 
-This repository includes **FBXify**, a web-based tool that converts SAM 3D Body pose estimates into FBX files. The tool allows you to upload images or videos, automatically detects the closest person, and exports an armature-only FBX file that can be retargeted to MHR, Mixamo, or Unity characters.
+### Installation
+
+1. **Install all requirements** required for standard sam-3d-body (see [INSTALL.md](INSTALL.md) for detailed instructions)
+2. **(Optional) Install using Dockerfile** - The repository includes a Dockerfile for containerized deployment
+3. **Start the server:**
+   - Linux/Mac: `./start_server.sh`
+   - Windows: `./start_server.bat`
+4. **Access the web interface** - The server will automatically open your browser to `http://localhost:7444`
+5. **Upload and process** - Upload images or videos, then download the generated FBX files
+
+### Features
+
+- **Export armature-only FBX files** from SAM 3D Body pose estimates
+- **Support for multiple rig formats:** MHR, Mixamo, and Unity character remapping
+- **Video processing:** Automatically detects the closest person and applies all keyframes to create an animation action
+- **Image processing:** Single frame pose estimation and export
+- **Web-based interface:** Easy-to-use Gradio interface for uploading and processing files
+
+Note: The exported FBX files contain only the armature (skeleton), not the mesh. You can retarget or directly move the action to any MHR, Mixamo, or Unity character.
 
 ### Acknowledgments
 
@@ -126,26 +144,6 @@ SAM 3D Body is one part of SAM 3D, a pair of models for object and human mesh re
 ## Latest updates
 
 **11/19/2025** -- Checkpoints Launched, Dataset Released, Web Demo and Paper are out!
-
-### Installation
-
-1. **Install all requirements** required for standard sam-3d-body (see [INSTALL.md](INSTALL.md) for detailed instructions)
-2. **(Optional) Install using Dockerfile** - The repository includes a Dockerfile for containerized deployment
-3. **Start the server:**
-   - Linux/Mac: `./start_server.sh`
-   - Windows: `./start_server.bat`
-4. **Access the web interface** - The server will automatically open your browser to `http://localhost:7444`
-5. **Upload and process** - Upload images or videos, then download the generated FBX files
-
-### Features
-
-- **Export armature-only FBX files** from SAM 3D Body pose estimates
-- **Support for multiple rig formats:** MHR, Mixamo, and Unity character remapping
-- **Video processing:** Automatically detects the closest person and applies all keyframes to create an animation action
-- **Image processing:** Single frame pose estimation and export
-- **Web-based interface:** Easy-to-use Gradio interface for uploading and processing files
-
-Note: The exported FBX files contain only the armature (skeleton), not the mesh. You can retarget or directly move the action to any MHR, Mixamo, or Unity character.
 
 ## Installation
 See [INSTALL.md](INSTALL.md) for instructions for python environment setup and model checkpoint access.
