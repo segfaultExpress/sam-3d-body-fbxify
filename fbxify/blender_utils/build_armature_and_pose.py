@@ -4,10 +4,9 @@ from mathutils import Vector, Matrix, Quaternion
 import sys
 import math
 
-metadata_path = sys.argv[-6]
-joint_mapping_path = sys.argv[-5]
-rest_pose_path = sys.argv[-4]
-verts_path = sys.argv[-3]
+metadata_path = sys.argv[-5]
+joint_mapping_path = sys.argv[-4]
+rest_pose_path = sys.argv[-3]
 faces_path = sys.argv[-2]
 fbx_path = sys.argv[-1]
 
@@ -17,8 +16,6 @@ with open(joint_mapping_path, "r", encoding="utf-8") as f:
     joint_mapping = json.load(f)["joint_mapping"]
 with open(rest_pose_path, "r", encoding="utf-8") as f:
     rest_pose = json.load(f)["rest_pose"]
-with open(verts_path) as f:
-    vertices = json.load(f)["vertices"]
 with open(faces_path) as f:
     faces = json.load(f)["faces"]
 
@@ -463,6 +460,7 @@ def breadth_first_pose_application(joint_mapping, frame_idx):
                 print(f"  WARNING: [{bone_dict['name']}] has no rotation found for frame {frame_idx + 1}")
             else:
                 set_pose_from_global_rotation(pbone, R_global)
+                applied_bones.add(bone_dict['name'])
                 bpy.context.view_layer.update()
 
             for child in bone_dict.get("children", []):
