@@ -4,7 +4,8 @@ __pycache__/
 *$py.class
 *.pyc
 
-./checkpoints
+# Used for faster docker build and runs
+/cache/
 
 # C extensions
 *.so

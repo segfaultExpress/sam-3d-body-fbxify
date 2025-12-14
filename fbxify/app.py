@@ -15,6 +15,18 @@ def parse_args():
     parser = argparse.ArgumentParser()
     # can choose between vith and dinov3
     parser.add_argument("--model", type=str, default="vith", choices=["vith", "dinov3"])
+    parser.add_argument(
+        "--fov_name",
+        default="moge2",
+        type=str,
+        help="FOV estimation model for demo (Default `moge2`, add your favorite fov estimator if needed).",
+    )
+    parser.add_argument(
+        "--fov_path",
+        default="",
+        type=str,
+        help="Path to fov estimation model folder (or set SAM3D_FOV_PATH)",
+    )
     return parser.parse_args()
 
 def create_app(estimator):
@@ -167,7 +179,15 @@ if __name__ == "__main__":
     checkpoint_path = os.path.join(checkpoint_base_path, "model.ckpt")
     mhr_path = os.path.join(checkpoint_base_path, "assets", "mhr_model.pt")
     
-    estimator = PoseEstimator(checkpoint_path, mhr_path)
+    # Get FOV path from args or environment variable
+    fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
+    
+    estimator = PoseEstimator(
+        checkpoint_path=checkpoint_path,
+        mhr_path=mhr_path,
+        fov_name=args.fov_name,
+        fov_path=fov_path
+    )
 
     app = create_app(estimator)
     app.launch(

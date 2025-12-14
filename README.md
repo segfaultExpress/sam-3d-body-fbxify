@@ -10,6 +10,9 @@ This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export 
 
 1. **Install all requirements** required for standard sam-3d-body (see [INSTALL.md](INSTALL.md) for detailed instructions)
 2. **(Optional) Install using Dockerfile** - The repository includes a Dockerfile for containerized deployment
+2.a. There are multiple dockerfiles:
+   - Dockerfile3.11 - I may delete this soon, 3.12 has been working great so far. But if you just want something quick, use this one
+   - Dockerfile3.12-pymomentum - This also installs pymomentum-gpu and flash-attn
 3. **Start the server:**
    - Linux/Mac: `./start_server.sh`
    - Windows: `./start_server.bat`

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Git
+.git/
+.gitignore
+
+# Caches / artifacts
+cache/
+**/cache/
+checkpoints/
+**/checkpoints/
+wheelhouse/
+**/wheelhouse/
+
+# Logs / outputs
+*.log
+output/
+outputs/
+
+# Large data you never want in the image
+data/
+datasets/
+
+# OS junk
+.DS_Store
+Thumbs.db

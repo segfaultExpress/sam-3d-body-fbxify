@@ -7,7 +7,7 @@ import json
 import os
 
 class PoseEstimator:    
-    def __init__(self, checkpoint_path, mhr_path, device=None):
+    def __init__(self, checkpoint_path, mhr_path, device=None, fov_name="moge2", fov_path=None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Loading SAM 3D Body on {self.device}...")
         
@@ -17,12 +17,24 @@ class PoseEstimator:
             mhr_path=mhr_path
         )
         
+        # Initialize FOV estimator if requested
+        fov_estimator = None
+        if fov_name:
+            fov_path = fov_path or os.environ.get("SAM3D_FOV_PATH", "")
+            try:
+                from tools.build_fov_estimator import FOVEstimator
+                fov_estimator = FOVEstimator(name=fov_name, device=self.device, path=fov_path)
+                print(f"FOV estimator '{fov_name}' loaded successfully.")
+            except Exception as e:
+                print(f"Warning: Failed to load FOV estimator '{fov_name}': {e}")
+                print("Continuing without FOV estimator (will use default FOV).")
+        
         self.estimator = SAM3DBodyEstimator(
             sam_3d_body_model=model,
             model_cfg=cfg,
             human_detector=None,
             human_segmentor=None,
-            fov_estimator=None,
+            fov_estimator=fov_estimator,
         )
         self.faces = self.estimator.faces
 
