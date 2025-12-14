@@ -1,3 +1,81 @@
+<<<<<<< Updated upstream
+=======
+## FBXify: Export to FBX Format
+
+![FBX Export Example](example_fbx.gif?raw=true)
+
+This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export estimated poses as FBX files compatible with Unity, Mixamo, and other 3D animation tools. Upload images or videos to generate armature-only FBX files that can be retargeted to any MHR, Mixamo, or Unity character.
+
+## FBXify: Installation & Usage
+
+### Installation
+
+1. **Install all requirements** required for standard sam-3d-body (see [INSTALL.md](INSTALL.md) for detailed instructions)
+2. **(Optional) Install using Dockerfile** - The repository includes a Dockerfile for containerized deployment
+2.a. There are multiple dockerfiles:
+   - Dockerfile3.11 - I may delete this soon, 3.12 has been working great so far. But if you just want something quick, use this one
+   - Dockerfile3.12-pymomentum - This also installs pymomentum-gpu and flash-attn
+3. **Start the server:**
+   - Linux/Mac: `./start_server.sh`
+   - Windows: `./start_server.bat`
+4. **Access the web interface** - Open your browser to `http://localhost:7444`
+5. **Upload and process** - Upload images or videos, then download the generated FBX files
+
+### Features
+
+- **Export armature-only FBX files** from SAM 3D Body pose estimates
+- **Support for multiple rig formats:** MHR, Mixamo, and Unity character remapping
+- **Video processing:** Either automatically detects the closest person or allows bbox submitting to applies all keyframes to create an action for each person passed
+- **Image processing:** Single frame pose estimation and export
+- **Web-based interface:** Easy-to-use Gradio interface for uploading and processing files
+
+Note: The exported FBX files contain only the armature (skeleton), not the mesh. You can retarget or directly move the action to any MHR, Mixamo, or Unity character.
+
+### Acknowledgments
+
+Special thanks to [tori29umai0123](https://github.com/tori29umai0123) for their starter code that inspired this fork. See the original GitHub issue: [A script that outputs a human animation fbx file that can be loaded in Unity (incomplete) #66](https://github.com/facebookresearch/sam-3d-body/issues/66).
+
+## Mapping
+
+FBXify supports remapping poses to different rig formats. For detailed information on how to configure mappings for custom rigs, see the [Mapping Guide](fbxify/Mapping_Guide.md).
+
+### Supported Rigs
+
+- **MHR (Momentum Human Rig):** Native support with direct rotation mapping
+- **Mixamo:** Standard rigs can use the Rokoko Retargeting plugin, or custom mappings can be configured
+- **Unity:** Unity Humanoid-compatible rigs with custom bone mappings
+
+### Mapping Methods
+
+The system supports three mapping methods:
+
+1. **`direct_rotation`**: Direct mapping for bones, primarily useful for MHR due to the perpendicular nature of MHR bone rotations
+2. **`keypoint_with_global_rot_roll`**: Extends keypoint-based mapping by adding roll rotation from MHR rig bones, useful for rigs that need proper bone orientation
+3. **Keypoint-based mapping**: Uses keypoints from the MHR pose estimation to drive bone rotations
+
+### Adding Custom Rigs
+
+To add support for a custom rig:
+
+1. Extract your skeleton structure and rest pose using the provided Blender scripts:
+   - `extract_armature_bone_struct_for_mapping.py`
+   - `extract_armature_skeleton_and_rest_pose.py`
+2. Ensure your armature is selected and in rest pose
+3. Copy the console output into a JSON file and add it to `metadata.py`'s `PROFILES`
+4. Configure the mapping method and parameters for each bone
+
+For complete instructions, see [fbxify/Mapping_Guide.md](fbxify/Mapping_Guide.md).
+
+## TODO
+
+Future improvements planned for FBXify:
+
+1. Smoothen the mocap data to prevent shakiness
+2. Fix some remaining artifacts
+3. Add option to scale the armature based on returned values
+4. Rig an MHR mesh to the mixamo/unity rigs
+
+>>>>>>> Stashed changes
 # SAM 3D
 
 SAM 3D Body is one part of SAM 3D, a pair of models for object and human mesh reconstruction. If you’re looking for SAM 3D Objects, [click here](https://github.com/facebookresearch/sam-3d-objects).
