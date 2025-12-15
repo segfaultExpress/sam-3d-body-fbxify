@@ -4,8 +4,9 @@ from mathutils import Vector, Matrix, Quaternion
 import sys
 import math
 
-metadata_path = sys.argv[-5]
-joint_mapping_path = sys.argv[-4]
+metadata_path = sys.argv[-6]
+joint_mapping_path = sys.argv[-5]
+root_motion_path = sys.argv[-4]
 rest_pose_path = sys.argv[-3]
 faces_path = sys.argv[-2]
 fbx_path = sys.argv[-1]
@@ -14,6 +15,8 @@ with open(metadata_path, "r", encoding="utf-8") as f:
     metadata = json.load(f)["metadata"]
 with open(joint_mapping_path, "r", encoding="utf-8") as f:
     joint_mapping = json.load(f)["joint_mapping"]
+with open(root_motion_path, "r", encoding="utf-8") as f:
+    root_motion = json.load(f)["root_motion"]
 with open(rest_pose_path, "r", encoding="utf-8") as f:
     rest_pose = json.load(f)["rest_pose"]
 with open(faces_path) as f:
@@ -157,48 +160,6 @@ bpy.context.scene.frame_end = 1  # Will be updated after we know num_keyframes
 
 # Update scene frame range
 bpy.context.scene.frame_end = num_keyframes
-
-# ------------------------------------------------------------------------
-# BUILD PARENT-CHILD RELATIONSHIP FROM POSE DATA
-# ------------------------------------------------------------------------
-def build_parent_map(bone_dict, parent_map, parent_name=None):
-    """Build mapping from bone name to parent name."""
-    if bone_dict is None:
-        return
-    
-    bone_name = bone_dict.get("name")
-    if bone_name:
-        parent_map[bone_name] = parent_name
-        
-        # Process children
-        for child in bone_dict.get("children", []):
-            build_parent_map(child, parent_map, bone_name)
-
-parent_map = {}
-if isinstance(joint_mapping, dict):
-    build_parent_map(joint_mapping, parent_map)
-elif isinstance(joint_mapping, list):
-    for root_bone in joint_mapping:
-        build_parent_map(root_bone, parent_map)
-
-# ------------------------------------------------------------------------
-# BREADTH-FIRST TRAVERSAL AND POSE APPLICATION
-# ------------------------------------------------------------------------
-def find_bone_in_pose_data(pose_data, bone_name):
-    """Find bone dictionary in pose_data by name."""
-    if isinstance(pose_data, dict):
-        if pose_data.get("name") == bone_name:
-            return pose_data
-        for child in pose_data.get("children", []):
-            result = find_bone_in_pose_data(child, bone_name)
-            if result:
-                return result
-    elif isinstance(pose_data, list):
-        for bone in pose_data:
-            result = find_bone_in_pose_data(bone, bone_name)
-            if result:
-                return result
-    return None
 
 # Get pose bones
 blender_pose_bones = arm_obj.pose.bones
@@ -477,6 +438,26 @@ def breadth_first_pose_application(joint_mapping, frame_idx):
 
 for frame_idx in range(num_keyframes):
     breadth_first_pose_application(joint_mapping, frame_idx)
+
+bpy.ops.object.mode_set(mode="OBJECT")
+
+# ------------------------------------------------------------------------
+# APPLY ROOT MOTION
+# ------------------------------------------------------------------------
+
+bpy.ops.object.mode_set(mode="OBJECT")
+
+if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
+    # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
+    # apply keyframes to the armature, not any bone
+    for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
+        arm_obj.rotation_euler = tuple(root_motion_entry["global_rot"])
+        # Convert camera translation to Vector before adding
+        cam_translation = root_motion_entry["pred_cam_t"]
+        arm_obj.matrix_world.translation = Vector(cam_translation)
+
+        arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
+        arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
 
 bpy.ops.object.mode_set(mode="OBJECT")
 

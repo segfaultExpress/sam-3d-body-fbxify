@@ -1,12 +1,16 @@
 import torch
 import numpy as np
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
+from sam_3d_body.data.utils.io import load_image
 from fbxify.utils import convert_to_blender_coords, get_keypoint, get_profile, add_helper_keypoints
 from fbxify.metadata import JOINT_NAMES_TO_INDEX
 import json
 import os
+import random
 
 class PoseEstimator:
+
+    cached_cam_int = None # cache for camera intrinsics to avoid re-running FOV estimator per frame
 
     armature_rest_poses_cached = {} # armature rest pose cache to avoid loading from json per frame or per person
     joint_to_bone_mappings_cached = {} # joint to bone mapping cache to avoid loading from json per frame or per person
@@ -98,12 +102,11 @@ class PoseEstimator:
 
         if "rotation" not in data or not isinstance(data["rotation"], list):
             data["rotation"] = []
-        
         # Ensure list has exactly keyframe_index elements before we add the new one
         # This handles sequential processing (0, 1, 2...) correctly
         while len(data["rotation"]) < keyframe_index:
             data["rotation"].append(None)
-        
+
         # Now append the new value (will be at index keyframe_index)
         data["rotation"].append(joint_rotations[joint_index].tolist())
 
@@ -168,11 +171,193 @@ class PoseEstimator:
         # Now append the new value (will be at index keyframe_index)
         data["roll_vector"].append(joint_rotations[roll_joint_index].tolist())
 
+    def cache_cam_int_from_images(self, img_paths, average_of=1):
+        if self.estimator.fov_estimator is None:
+            print("Camera Intrinsics caching turned on, but there was no FOV estimator loaded. Please load an FOV estimator.")
+            return
+
+        # Randomly sample average_of images from img_paths
+
+        if average_of > len(img_paths):
+            print(f"Warning: Requested to average over {average_of} images, but only {len(img_paths)} images are available. Using all images.")
+            average_of = len(img_paths)
+
+        img_paths = random.sample(img_paths, average_of)
+
+        cam_ints = []
+        for img_path in img_paths:
+            img = load_image(img_path, backend="cv2", image_format="bgr")
+            cam_int = self.estimator.fov_estimator.get_cam_intrinsics(img)
+            cam_ints.append(cam_int)
+
+        # Average the camera intrinsics (they should all be tensors with shape (1, 3, 3))
+        # Stack them, compute mean, and ensure it's a tensor
+        cam_ints_stacked = torch.stack(cam_ints, dim=0)  # (N, 1, 3, 3)
+        self.cached_cam_int = torch.mean(cam_ints_stacked, dim=0)  # (1, 3, 3)
+        print(f"Cached camera intrinsics (averaged of {average_of} images): {self.cached_cam_int}")
+
+    def cache_cam_int_from_file(self, cam_int):
+        """
+        Cache camera intrinsics from file or array.
+        
+        Accepts either:
+        1. MoGe format: 3x3 numpy array or torch tensor with intrinsics matrix
+           [[fx, 0, cx],
+            [0, fy, cy],
+            [0, 0, 1]]
+        
+        2. COLMAP format: path to cameras.txt file or dict with COLMAP parameters
+           - File format: "CAMERA_ID MODEL WIDTH HEIGHT [params...]"
+           - For PINHOLE: "1 PINHOLE W H FX FY CX CY"
+           - For SIMPLE_PINHOLE: "1 SIMPLE_PINHOLE W H F CX CY"
+           - Dict format: {"model": "PINHOLE", "width": W, "height": H, "fx": FX, "fy": FY, "cx": CX, "cy": CY}
+        
+        Args:
+            cam_int: Either a 3x3 numpy array/tensor (MoGe) or file path/dict (COLMAP)
+        """
+        # Check if it's a numpy array or torch tensor (MoGe format)
+        if isinstance(cam_int, (np.ndarray, torch.Tensor)):
+            # Convert to tensor if numpy array
+            if isinstance(cam_int, np.ndarray):
+                cam_int = torch.from_numpy(cam_int).float()
+            
+            # Validate shape and convert to (1, 3, 3) format
+            if cam_int.shape == (3, 3):
+                # Add batch dimension: (3, 3) -> (1, 3, 3)
+                self.cached_cam_int = cam_int.unsqueeze(0)
+                print(f"Cached camera intrinsics from MoGe format (3x3 matrix):\n{self.cached_cam_int}")
+                return
+            elif cam_int.shape == (1, 3, 3):
+                # Already in correct format
+                self.cached_cam_int = cam_int.float()
+                print(f"Cached camera intrinsics from MoGe format (batched 1x3x3 matrix):\n{self.cached_cam_int}")
+                return
+            else:
+                raise ValueError(f"MoGe format must be 3x3 or 1x3x3 array, got shape {cam_int.shape}")
+        
+        # Check if it's a file path (COLMAP format or MoGe text format)
+        elif isinstance(cam_int, str) and os.path.isfile(cam_int):
+            # Try to parse as COLMAP format first
+            try:
+                with open(cam_int, 'r') as f:
+                    lines = f.readlines()
+                    for line in lines:
+                        line = line.strip()
+                        # Skip comments and empty lines
+                        if not line or line.startswith('#'):
+                            continue
+                        
+                        parts = line.split()
+                        if len(parts) < 4:
+                            continue
+                        
+                        # Check if it looks like COLMAP format (has MODEL keyword)
+                        if parts[1] in ["PINHOLE", "SIMPLE_PINHOLE"]:
+                            camera_id = parts[0]
+                            model = parts[1]
+                            width = float(parts[2])
+                            height = float(parts[3])
+                            
+                            if model == "PINHOLE":
+                                if len(parts) != 8:
+                                    raise ValueError(f"PINHOLE model requires 8 parameters, got {len(parts)}")
+                                fx, fy, cx, cy = float(parts[4]), float(parts[5]), float(parts[6]), float(parts[7])
+                            elif model == "SIMPLE_PINHOLE":
+                                if len(parts) != 7:
+                                    raise ValueError(f"SIMPLE_PINHOLE model requires 7 parameters, got {len(parts)}")
+                                f = float(parts[4])
+                                fx = fy = f
+                                cx, cy = float(parts[5]), float(parts[6])
+                            else:
+                                raise ValueError(f"Unsupported COLMAP camera model: {model}. Only PINHOLE and SIMPLE_PINHOLE are supported.")
+                            
+                            # Build 3x3 intrinsics matrix as tensor with batch dimension (1, 3, 3)
+                            self.cached_cam_int = torch.tensor([
+                                [[fx, 0, cx],
+                                 [0, fy, cy],
+                                 [0, 0, 1]]
+                            ], dtype=torch.float32)
+                            
+                            print(f"Cached camera intrinsics from COLMAP file (camera_id={camera_id}, model={model}):\n{self.cached_cam_int}")
+                            return
+            except (ValueError, IndexError) as e:
+                # If COLMAP parsing fails, try MoGe format (3x3 matrix)
+                pass
+            
+            # Try to parse as MoGe format (3x3 matrix text file)
+            try:
+                # Read all lines and try to parse as 3x3 matrix
+                with open(cam_int, 'r') as f:
+                    lines = f.readlines()
+                    matrix_data = []
+                    for line in lines:
+                        line = line.strip()
+                        # Skip comments and empty lines
+                        if not line or line.startswith('#'):
+                            continue
+                        # Try to parse as space or comma separated numbers
+                        if ',' in line:
+                            row = [float(x.strip()) for x in line.split(',')]
+                        else:
+                            row = [float(x) for x in line.split()]
+                        if len(row) == 3:
+                            matrix_data.append(row)
+                    
+                    if len(matrix_data) == 3:
+                        cam_int_matrix = np.array(matrix_data, dtype=np.float32)
+                        # Validate it's a valid intrinsics matrix
+                        if cam_int_matrix.shape == (3, 3) and cam_int_matrix[2, 0] == 0 and cam_int_matrix[2, 1] == 0 and cam_int_matrix[2, 2] == 1:
+                            # Convert to tensor and add batch dimension: (3, 3) -> (1, 3, 3)
+                            self.cached_cam_int = torch.from_numpy(cam_int_matrix).float().unsqueeze(0)
+                            print(f"Cached camera intrinsics from MoGe text file (3x3 matrix):\n{self.cached_cam_int}")
+                            return
+            except (ValueError, IndexError) as e:
+                pass
+            
+            raise ValueError(f"Could not parse camera intrinsics file: {cam_int}. Expected COLMAP format (cameras.txt) or MoGe format (3x3 matrix).")
+        
+        # Check if it's a dict (COLMAP format as dict)
+        elif isinstance(cam_int, dict):
+            model = cam_int.get("model", "PINHOLE").upper()
+            width = float(cam_int.get("width", 1920))
+            height = float(cam_int.get("height", 1080))
+            
+            if model == "PINHOLE":
+                fx = float(cam_int.get("fx", cam_int.get("f", width)))
+                fy = float(cam_int.get("fy", cam_int.get("f", height)))
+                cx = float(cam_int.get("cx", width / 2))
+                cy = float(cam_int.get("cy", height / 2))
+            elif model == "SIMPLE_PINHOLE":
+                f = float(cam_int.get("f", (width + height) / 2))
+                fx = fy = f
+                cx = float(cam_int.get("cx", width / 2))
+                cy = float(cam_int.get("cy", height / 2))
+            else:
+                raise ValueError(f"Unsupported COLMAP camera model: {model}. Only PINHOLE and SIMPLE_PINHOLE are supported.")
+            
+            # Build 3x3 intrinsics matrix as tensor with batch dimension (1, 3, 3)
+            self.cached_cam_int = torch.tensor([
+                [[fx, 0, cx],
+                 [0, fy, cy],
+                 [0, 0, 1]]
+            ], dtype=torch.float32)
+            
+            print(f"Cached camera intrinsics from COLMAP dict (model={model}):\n{self.cached_cam_int}")
+            return
+        
+        else:
+            raise ValueError(f"Unsupported camera intrinsics format. Expected:\n"
+                           f"  - 3x3 numpy array/tensor (MoGe format)\n"
+                           f"  - Path to COLMAP cameras.txt file (string)\n"
+                           f"  - Dict with COLMAP parameters\n"
+                           f"Got: {type(cam_int)}")
+
     def process_single_frame(self, 
         profile_name,
         image_path,
         keyframe_index,
         joint_to_bone_mappings=None,
+        root_motions=None,
         num_people=1,
         bboxes=None) -> list[dict]:
         """
@@ -183,19 +368,34 @@ class PoseEstimator:
             image_path: Path to the image file
             keyframe_index: Index of this keyframe (0-based)
             joint_to_bone_mappings: Optional existing joint_to_bone_mappings for each person.
+            bboxes: Either a list of tuples (person_id, x1, y1, w, h, ...) or numpy array in xyxy format
         
         Returns:
             dict for each person: joint_to_bone_mapping, rest_pose, vertices, keypoints_3d
         """
 
         ids = []
+        bboxes_numpy = None
+        
         if num_people > 0 and bboxes is None:
             ids = [i for i in range(num_people)] # without bboxes, name people 0, 1, 2, ...
         else:
-            ids = self._get_person_ids(bboxes)
+            # Check if bboxes is a list (original format) or numpy array
+            if isinstance(bboxes, list):
+                # Original format: list of tuples (person_id, x1, y1, w, h, ...)
+                ids = self._get_person_ids(bboxes)
+                # Convert to numpy array in xyxy format for process_one_image
+                bboxes_numpy = self._convert_bboxes_to_numpy(bboxes)
+            elif isinstance(bboxes, np.ndarray):
+                # Already in numpy format - extract person IDs if possible
+                # If numpy array, we can't extract person IDs, so use indices
+                ids = [i for i in range(len(bboxes))]
+                bboxes_numpy = bboxes
+            else:
+                raise ValueError(f"bboxes must be either a list or numpy array, got {type(bboxes)}")
 
         ## IMPORTANT: process_one_image returns a list of dicts, in ORDER of bboxes passed in!
-        outputs_raw = self.estimator.process_one_image(image_path, bboxes=bboxes)
+        outputs_raw = self.estimator.process_one_image(image_path, bboxes=bboxes_numpy, cam_int=self.cached_cam_int)
 
         all_results = {} # dict for each person: joint_to_bone_mapping, rest_pose, vertices, keypoints_3d
         for i, id in enumerate(ids):
@@ -222,19 +422,33 @@ class PoseEstimator:
             if joint_to_bone_mappings is None:
                 joint_to_bone_mappings = {}
 
-            if i not in joint_to_bone_mappings:
+            if id not in joint_to_bone_mappings.keys():
                 # force load from json to prevent weird dict mutation issues
                 joint_to_bone_mapping = self.get_joint_to_bone_mapping(profile_name, use_cache=False)
             else:
-                joint_to_bone_mapping = joint_to_bone_mappings[i]
+                joint_to_bone_mapping = joint_to_bone_mappings[id]
+
+            if root_motions is None:
+                root_motions = {}
+
+            if id not in root_motions.keys():
+                root_motions[id] = []
+
+            root_motion = root_motions[id]
 
             # Populate joint mapping for this keyframe (modifies joint_to_bone_mapping in-place)
             self.populate_joint_mapping(joint_to_bone_mapping, joint_rotations, joint_coords, keypoints_3d, keyframe_index)
+
+            root_motion.append({
+                "global_rot": convert_to_blender_coords(outputs["global_rot"]),
+                "pred_cam_t": convert_to_blender_coords(outputs["pred_cam_t"]), # colmap can and should be used to reverse this, assuming both camera and person are moving. But we assume static camera as far as outputs are concerned
+            })
             
             # vertices = np.array([convert_to_blender_coords(v) for v in vertices]) # TODO: Not sure what to do with this for now - we're armature only
         
             all_results[id] = {
                 "joint_to_bone_mapping": joint_to_bone_mapping,
+                "root_motion": root_motion,
                 # "vertices": vertices.tolist(), # TODO: Not sure what to do with this for now - we're armature only
                 # "keypoints_3d": keypoints_3d.tolist(), # Not used downstream, maybe eventually?
             }
@@ -283,9 +497,10 @@ class PoseEstimator:
 
     def _get_person_ids(self, bboxes):
         """
-        Assumes MOT format bboxes, aka
-        [frame_index, person_id, x1, y1, w, h, conf:optional, x_world:optional, y_world:optional, z_world:optional]
-        We just need the first six columns overall for bbox support
+        Extract person IDs from bbox list.
+        
+        Input format: list of tuples (person_id, x1, y1, w, h, conf, x_world, y_world, z_world)
+        where person_id is at index 0.
 
         Returns:
             list of person ids
@@ -293,10 +508,35 @@ class PoseEstimator:
         seen = set()
         out = []
         for b in bboxes:
-            if len(b) >= 2 and b[1] is not None and b[1] not in seen:
-                seen.add(b[1])
-                out.append(b[1])
+            # person_id is at index 0 in the tuple
+            if len(b) >= 1 and b[0] is not None and b[0] not in seen:
+                seen.add(b[0])
+                out.append(b[0])
         return out
+
+    def _convert_bboxes_to_numpy(self, bbox_list):
+        """
+        Convert list of bbox tuples to numpy array in xyxy format.
+        
+        Input format: list of (person_id, x1, y1, w, h, conf, x_world, y_world, z_world)
+        where person_id is at index 0, x1 at index 1, y1 at index 2, w at index 3, h at index 4.
+        Output format: numpy array of shape (N, 4) with [x1, y1, w, h] format 
+        """
+        if bbox_list is None or len(bbox_list) == 0:
+            return None
+        
+        bboxes_xyxy = []
+        for bbox_tuple in bbox_list:
+            # Extract x1, y1, w, h (indices 1, 2, 3, 4 in the tuple, since index 0 is person_id)
+            x1 = float(bbox_tuple[1])
+            y1 = float(bbox_tuple[2])
+            w = float(bbox_tuple[3])
+            h = float(bbox_tuple[4])
+            # Convert to xyxy format: [x1, y1, w, h]
+            bboxes_xyxy.append([x1, y1, w, h])
+            # bboxes_xyxy.append([x1, y1, x1+w, y1+h]) # GPT insists that sam-3d-body expects [x1, y1, x2, y2] format but console outputs suggest otherwise
+        
+        return np.array(bboxes_xyxy, dtype=np.float32)
 
     def _pick_largest_person(self, outputs, person_index=0):
         """

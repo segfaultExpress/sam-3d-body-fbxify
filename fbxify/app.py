@@ -3,9 +3,11 @@ import argparse
 import cv2
 import tempfile
 import shutil
+import numpy as np
 from fbxify.pose_estimator import PoseEstimator
 from fbxify.utils import export_to_fbx
 from fbxify.metadata import PROFILES
+from fbxify.i18n import Translator, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE
 import gradio as gr
 
 VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
@@ -42,7 +44,10 @@ def parse_args():
     return parser.parse_args()
 
 def create_app(estimator):
-    """Gradioアプリを作成"""
+    """Create Gradio app"""
+    
+    # Initialize translator with default language
+    translator = Translator(DEFAULT_LANGUAGE)
         
     def extract_frames_from_video(video_path, temp_dir):
         """Extract all frames from MP4 video and save to temp directory."""
@@ -84,14 +89,16 @@ def create_app(estimator):
                     if line.strip() == "":
                         continue
                     frame_index, person_id, x1, y1, w, h, conf, x_world, y_world, z_world = line.strip().split(",")
-                    if frame_index not in bbox_dict:
-                        bbox_dict[frame_index] = []
-                    bbox_dict[frame_index].append((person_id, x1, y1, w, h, conf, x_world, y_world, z_world))
+                    # Convert frame_index to int to standardize keys (handles '1', '1.0', etc.)
+                    frame_index_int = int(float(frame_index))
+                    if frame_index_int not in bbox_dict:
+                        bbox_dict[frame_index_int] = []
+                    bbox_dict[frame_index_int].append((person_id, x1, y1, w, h, conf, x_world, y_world, z_world))
             except Exception as e:
                 raise ValueError(f"Error preparing bboxes: {e}")
         return bbox_dict
 
-    def process(input_file, profile_name, use_bbox, bbox_file, num_people, progress=gr.Progress()):
+    def process(input_file, profile_name, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, use_root_motion, progress=gr.Progress()):
         """Process image or video file."""
         try:
             if input_file is None:
@@ -99,7 +106,7 @@ def create_app(estimator):
 
             # there must either be a valid number of people (>0) or a bbox file
             if use_bbox and bbox_file is None:
-                raise ValueError("BBOX file must be provided when 'use bbox' is enabled")
+                raise ValueError(translator.t("errors.bbox_file_required"))
 
             bbox_dict = None
             if use_bbox:
@@ -107,7 +114,7 @@ def create_app(estimator):
                 num_people = len(bbox_dict)
             else:
                 if num_people <= 0:
-                    raise ValueError("Number of people must be greater than 0")
+                    raise ValueError(translator.t("errors.num_people_required"))
 
             file_path = input_file.name
             file_ext = os.path.splitext(file_path)[1].lower()
@@ -115,14 +122,39 @@ def create_app(estimator):
                 frame_paths = prepare_video(input_file)
             else:
                 frame_paths = [input_file.name]
+            
+            # Handle FOV estimation caching based on method
+            if fov_method == "File":
+                if fov_file is None:
+                    raise ValueError(translator.t("errors.camera_intrinsics_required"))
+                # Load camera intrinsics from file
+                estimator.cache_cam_int_from_file(fov_file.name)
+            elif fov_method == "Sample":
+                if estimator.estimator.fov_estimator is None:
+                    raise ValueError(translator.t("errors.fov_estimator_required"))
+                # Sample and average camera intrinsics from images
+                sample_num = int(sample_number) if sample_number is not None else 1
+                estimator.cache_cam_int_from_images(frame_paths, average_of=sample_num)
+            # else: "Default" - built-in FOV estimator runs every frame (default behavior)
 
             joint_to_bone_mappings = {}
+            root_motions = {} if use_root_motion else None
+            # If bbox_dict exists, get sorted keys to allow starting from 0, 1, or any index
             for keyframe_index, frame_path in enumerate(frame_paths):
+                # proper MOT bbox formatting starts at 1, offset keyframe index by 1 (sorry if you like 0-indexing for bboxes)
+                bboxes = bbox_dict[keyframe_index + 1] if bbox_dict is not None and keyframe_index + 1 in bbox_dict else None
                 print(f"Processing frame {keyframe_index + 1} of {len(frame_paths)}")
-                bboxes = bbox_dict[keyframe_index] if bbox_dict is not None else None
 
                 try:
-                    results = estimator.process_single_frame(profile_name, frame_path, keyframe_index, joint_to_bone_mappings=joint_to_bone_mappings, num_people=num_people, bboxes=bboxes)
+                    results = estimator.process_single_frame(
+                        profile_name,
+                        frame_path,
+                        keyframe_index,
+                        joint_to_bone_mappings=joint_to_bone_mappings,
+                        root_motions=root_motions,
+                        num_people=num_people,
+                        bboxes=bboxes
+                    )
                     
                     # Only process results if any people were detected
                     if results and len(results) > 0:
@@ -140,24 +172,31 @@ def create_app(estimator):
                         # Re-raise other ValueError exceptions
                         raise
 
-                progress((keyframe_index * 0.5) / len(frame_paths), desc="📦 キーフレームを処理中...")
+                progress((keyframe_index * 0.5) / len(frame_paths), desc=translator.t("progress.processing_keyframes"))
 
             # Collect all FBX paths for each person
             fbx_paths = []
             num_keyframes = len(frame_paths)
             for person_index, id in enumerate(joint_to_bone_mappings.keys()):
+                root_motion = root_motions[id] if use_root_motion and root_motions is not None and id in root_motions else []
                 fbx_path = output({
                     "metadata": estimator.create_metadata(profile_name, id, num_keyframes=num_keyframes),
                     "joint_to_bone_mapping": joint_to_bone_mappings[id],
+                    "root_motion": root_motion,
                     "rest_pose": estimator.get_armature_rest_pose(profile_name)
                 })
                 if fbx_path is not None:
                     fbx_paths.append(fbx_path)
 
-                progress((person_index * 0.5) / len(joint_to_bone_mappings.keys()), desc="📦 人物を処理中...")
+                progress((person_index * 0.5) / len(joint_to_bone_mappings.keys()), desc=translator.t("progress.processing_person"))
         except Exception as e:
             # Catch other exceptions and display them as well
-            raise gr.Error(f"An error occurred: {str(e)}")
+            error_type = type(e).__name__
+            error_msg = str(e)
+            if error_msg:
+                raise gr.Error(translator.t("errors.error_occurred", error_type=error_type, error_msg=error_msg))
+            else:
+                raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
         
         # Return list of FBX paths (or single path if only one, for backward compatibility)
         if len(fbx_paths) == 0:
@@ -174,37 +213,155 @@ def create_app(estimator):
         fbx_path = export_to_fbx(
             result["metadata"],
             result["joint_to_bone_mapping"],
+            result["root_motion"],
             result["rest_pose"],
             estimator.faces
         )
         return fbx_path
     
-    with gr.Blocks(title="SAM 3D Body → Unity FBX") as app:
-        gr.Markdown("## 🧍‍♂️ SAM 3D Body → Unity Humanoid FBX")
-        gr.Markdown("""
-        ### 機能
-        - 1枚の画像からUnity Humanoid互換のFBXファイルを生成
-        - MP4動画から複数フレームのアニメーションを生成
-        - 3Dメッシュ + スケルトン + **アニメーション**
+    def get_ui_texts(lang: str = DEFAULT_LANGUAGE):
+        """Get all UI texts for a given language."""
+        t = Translator(lang)
+        features = t.get("app.features", [])
+        usage = t.get("app.usage", [])
         
-        ### 使い方
-        1. 画像またはMP4動画をアップロード
-        2. 「FBXを生成」ボタンをクリック
-        3. 生成されたFBXをダウンロード → Unityにインポート
-        """)
+        features_text = "\n".join([f"- {f}" for f in features])
+        usage_text = "\n".join([f"{i+1}. {u}" for i, u in enumerate(usage)])
+        
+        return {
+            "title": t.t("app.title"),
+            "heading": t.t("app.heading"),
+            "features_title": t.t("app.features_title"),
+            "features": features_text,
+            "usage_title": t.t("app.usage_title"),
+            "usage": usage_text,
+            "profile": t.t("ui.profile"),
+            "input_file": t.t("ui.input_file"),
+            "use_bbox": t.t("ui.use_bbox"),
+            "bbox_file": t.t("ui.bbox_file"),
+            "num_people": t.t("ui.num_people"),
+            "fov_method": t.t("ui.fov_method"),
+            "fov_method_info": t.t("ui.fov_method_info"),
+            "fov_file": t.t("ui.fov_file"),
+            "sample_number": t.t("ui.sample_number"),
+            "sample_number_info": t.t("ui.sample_number_info"),
+            "use_root_motion": t.t("ui.use_root_motion"),
+            "generate_btn": t.t("ui.generate_btn"),
+            "output_file": t.t("ui.output_file"),
+        }
+    
+    def update_ui_language(lang: str):
+        """Update UI elements with new language."""
+        texts = get_ui_texts(lang)
+        # Update translator for process function
+        nonlocal translator
+        translator = Translator(lang)
+        
+        features = translator.get("app.features", [])
+        usage = translator.get("app.usage", [])
+        features_text = "\n".join([f"- {f}" for f in features])
+        usage_text = "\n".join([f"{i+1}. {u}" for i, u in enumerate(usage)])
+        description_text = f"### {texts['features_title']}\n{features_text}\n\n### {texts['usage_title']}\n{usage_text}"
+        
+        return (
+            gr.update(value=f"## {texts['heading']}"),  # heading
+            gr.update(value=description_text),  # description
+            gr.update(label=texts["profile"]),  # profile_name
+            gr.update(label=texts["input_file"]),  # input_file
+            gr.update(label=texts["use_bbox"]),  # use_bbox
+            gr.update(label=texts["bbox_file"]),  # bbox_file
+            gr.update(label=texts["num_people"]),  # num_people
+            gr.update(label=texts["fov_method"], info=texts["fov_method_info"]),  # fov_method
+            gr.update(label=texts["fov_file"]),  # fov_file
+            gr.update(label=texts["sample_number"], info=texts["sample_number_info"]),  # sample_number
+            gr.update(label=texts["use_root_motion"]),  # use_root_motion
+            gr.update(value=texts["generate_btn"]),  # generate_btn
+            gr.update(label=texts["output_file"]),  # output_file
+        )
+    
+    with gr.Blocks(title=translator.t("app.title")) as app:
+        # Title and heading
+        heading_md = gr.Markdown(f"## {translator.t('app.heading')}")
+        
+        # Description with features and usage
+        features = translator.get("app.features", [])
+        usage = translator.get("app.usage", [])
+        features_text = "\n".join([f"- {f}" for f in features])
+        usage_text = "\n".join([f"{i+1}. {u}" for i, u in enumerate(usage)])
+        description_text = f"### {translator.t('app.features_title')}\n{features_text}\n\n### {translator.t('app.usage_title')}\n{usage_text}"
+        description_md = gr.Markdown(description_text)
+        
+        # Language selector dropdown (visible for manual override)
+        lang_selector = gr.Dropdown(
+            label="🌐 Language / 言語",
+            choices=[("English", "en"), ("日本語", "ja")],
+            value=DEFAULT_LANGUAGE,
+            interactive=True
+        )
         
         # Feel free to add your own! But mixamo can also do remapping post-this via the Rokoko plugin, etc.
-        profile_name = gr.Dropdown(label="📊 プロファイル", choices=list(PROFILES.keys()), value=list(PROFILES.keys())[0])
+        profile_name = gr.Dropdown(
+            label=translator.t("ui.profile"),
+            choices=list(PROFILES.keys()),
+            value=list(PROFILES.keys())[0]
+        )
         with gr.Row():
             with gr.Column():
-                input_file = gr.File(label="📁 画像/動画ファイル", file_types=["image", "video"])
-                use_bbox = gr.Checkbox(label="👥 人物を指定", value=True)
+                input_file = gr.File(
+                    label=translator.t("ui.input_file"),
+                    file_types=["image", "video"]
+                )
+                use_bbox = gr.Checkbox(
+                    label=translator.t("ui.use_bbox"),
+                    value=True
+                )
                 with gr.Row():
-                    bbox_file = gr.File(label="📁 BBOXファイル", file_types=["txt"], visible=True)
-                    num_people = gr.Number(label="👥 人数", value=1, precision=0, visible=False)
-                generate_btn = gr.Button("🚀 FBXを生成", variant="primary")
+                    bbox_file = gr.File(
+                        label=translator.t("ui.bbox_file"),
+                        file_types=[".txt"],
+                        visible=True
+                    )
+                    num_people = gr.Number(
+                        label=translator.t("ui.num_people"),
+                        value=1,
+                        precision=0,
+                        visible=False
+                    )
+                
+                # FOV Estimation Options
+                fov_method = gr.Dropdown(
+                    label=translator.t("ui.fov_method"),
+                    choices=["Default", "File", "Sample"],
+                    value="Default",
+                    info=translator.t("ui.fov_method_info")
+                )
+                fov_file = gr.File(
+                    label=translator.t("ui.fov_file"),
+                    file_types=[".txt"],
+                    visible=False
+                )
+                sample_number = gr.Number(
+                    label=translator.t("ui.sample_number"),
+                    value=1,
+                    precision=0,
+                    minimum=1,
+                    visible=False,
+                    info=translator.t("ui.sample_number_info")
+                )
+                use_root_motion = gr.Checkbox(
+                    label=translator.t("ui.use_root_motion"),
+                    value=True
+                )
+                
+                generate_btn = gr.Button(
+                    translator.t("ui.generate_btn"),
+                    variant="primary"
+                )
             with gr.Column():
-                output_file = gr.File(label="📦 生成されたFBX (複数可)", interactive=False)
+                output_file = gr.File(
+                    label=translator.t("ui.output_file"),
+                    interactive=False
+                )
         
         def toggle_bbox_inputs(use_bbox_value):
             """Toggle visibility of bbox_file and num_people based on checkbox."""
@@ -213,8 +370,92 @@ def create_app(estimator):
                 gr.update(visible=not use_bbox_value)
             )
         
+        def toggle_fov_inputs(fov_method_value):
+            """Toggle visibility of fov_file and sample_number based on FOV method selection."""
+            if fov_method_value == "File":
+                return (
+                    gr.update(visible=True),
+                    gr.update(visible=False)
+                )
+            elif fov_method_value == "Sample":
+                return (
+                    gr.update(visible=False),
+                    gr.update(visible=True)
+                )
+            else:  # "Default"
+                return (
+                    gr.update(visible=False),
+                    gr.update(visible=False)
+                )
+        
+        # Language change handler
+        def on_lang_change(lang):
+            return update_ui_language(lang)
+        
+        # Detect browser language and update UI on page load
+        def detect_and_set_language():
+            """Detect browser language and return it for initial setup."""
+            # This will be called on page load
+            return DEFAULT_LANGUAGE
+        
+        # Load language on page load - detect browser language via JavaScript
+        app.load(
+            fn=detect_and_set_language,
+            inputs=[],
+            outputs=[lang_selector],
+            js="""
+            function() {
+                const lang = navigator.language || navigator.userLanguage;
+                const langCode = lang.split('-')[0].toLowerCase();
+                const supportedLangs = ['en', 'ja'];
+                const detectedLang = supportedLangs.includes(langCode) ? langCode : 'en';
+                return detectedLang;
+            }
+            """
+        )
+        
+        # Also add a custom script that runs after page load to trigger language update
+        app.load(
+            fn=None,
+            inputs=[],
+            outputs=[],
+            js="""
+            function() {
+                // Wait for Gradio to fully initialize
+                setTimeout(() => {
+                    const lang = navigator.language || navigator.userLanguage;
+                    const langCode = lang.split('-')[0].toLowerCase();
+                    const supportedLangs = ['en', 'ja'];
+                    const detectedLang = supportedLangs.includes(langCode) ? langCode : 'en';
+                    
+                    // Find language selector by looking for dropdown with language options
+                    const selects = document.querySelectorAll('select');
+                    for (const select of selects) {
+                        const options = Array.from(select.options);
+                        const hasEn = options.some(opt => opt.value === 'en');
+                        const hasJa = options.some(opt => opt.value === 'ja');
+                        if (hasEn && hasJa && options.length === 2) {
+                            select.value = detectedLang;
+                            // Trigger input event which Gradio listens to
+                            select.dispatchEvent(new Event('input', { bubbles: true }));
+                            select.dispatchEvent(new Event('change', { bubbles: true }));
+                            break;
+                        }
+                    }
+                }, 500);
+            }
+            """
+        )
+        
+        lang_selector.change(
+            fn=on_lang_change,
+            inputs=[lang_selector],
+            outputs=[heading_md, description_md, profile_name, input_file, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, use_root_motion, generate_btn, output_file]
+        )
+        
         use_bbox.change(fn=toggle_bbox_inputs, inputs=[use_bbox], outputs=[bbox_file, num_people])
-        generate_btn.click(fn=process, inputs=[input_file, profile_name, use_bbox, bbox_file, num_people], outputs=output_file)
+        fov_method.change(fn=toggle_fov_inputs, inputs=[fov_method], outputs=[fov_file, sample_number])
+        generate_btn.click(fn=process, inputs=[input_file, profile_name, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, use_root_motion], outputs=output_file)
     
     return app
 

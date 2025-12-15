@@ -73,7 +73,6 @@ Future improvements planned for FBXify:
 3. Add option to scale the armature based on returned values
 4. Rig an MHR mesh to the mixamo/unity rigs
 
->>>>>>> Stashed changes
 # SAM 3D
 
 SAM 3D Body is one part of SAM 3D, a pair of models for object and human mesh reconstruction. If you’re looking for SAM 3D Objects, [click here](https://github.com/facebookresearch/sam-3d-objects).

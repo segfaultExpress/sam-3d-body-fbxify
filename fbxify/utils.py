@@ -25,21 +25,37 @@ MHR_EXTENDED_KEYPOINT_INDEX = {
 def get_profile(profile_name):
     return PROFILES[profile_name]
 
-def export_to_fbx(metadata, joint_mapping, rest_pose, faces):
+def _to_serializable(obj):
+    """Recursively convert numpy types to plain Python for JSON dumping."""
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, dict):
+        return {k: _to_serializable(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_to_serializable(v) for v in obj]
+    return obj
+
+
+def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
     try:
+        metadata_path = os.path.join(tmp_dir, "metadata.json")
         joint_mapping_path = os.path.join(tmp_dir, "armature_joint_mapping.json")
+        root_motion_path = os.path.join(tmp_dir, "root_motion.json")
         rest_pose_path = os.path.join(tmp_dir, "armature_rest_pose.json")
         faces_path = os.path.join(tmp_dir, "faces.json")
         script_path = os.path.join(tmp_dir, "blender_script.py")
         fbx_path = os.path.join(tmp_dir, "output.fbx")
-        metadata_path = os.path.join(tmp_dir, "metadata.json")
         
         with open(metadata_path, "w") as f:
             json.dump({"metadata": metadata}, f)
         with open(joint_mapping_path, "w") as f:
             json.dump({"joint_mapping": joint_mapping}, f)
+        with open(root_motion_path, "w") as f:
+            json.dump({"root_motion": _to_serializable(root_motion)}, f)
         with open(rest_pose_path, "w") as f:
             json.dump({"rest_pose": rest_pose}, f)
         with open(faces_path, "w") as f:
@@ -54,7 +70,7 @@ def export_to_fbx(metadata, joint_mapping, rest_pose, faces):
             "blender", "-b",
             "--python", script_path,
             "--",
-            metadata_path, joint_mapping_path, rest_pose_path, faces_path, fbx_path
+            metadata_path, joint_mapping_path, root_motion_path, rest_pose_path, faces_path, fbx_path
         ], check=True, cwd=tmp_dir)
         
         # Use profile_name and id from metadata for filename
