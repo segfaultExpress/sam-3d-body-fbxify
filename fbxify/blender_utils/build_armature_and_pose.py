@@ -6,8 +6,8 @@ import math
 
 metadata_path = sys.argv[-6]
 joint_mapping_path = sys.argv[-5]
-rest_pose_path = sys.argv[-4]
-verts_path = sys.argv[-3]
+root_motion_path = sys.argv[-4]
+rest_pose_path = sys.argv[-3]
 faces_path = sys.argv[-2]
 fbx_path = sys.argv[-1]
 
@@ -15,10 +15,10 @@ with open(metadata_path, "r", encoding="utf-8") as f:
     metadata = json.load(f)["metadata"]
 with open(joint_mapping_path, "r", encoding="utf-8") as f:
     joint_mapping = json.load(f)["joint_mapping"]
+with open(root_motion_path, "r", encoding="utf-8") as f:
+    root_motion = json.load(f)["root_motion"]
 with open(rest_pose_path, "r", encoding="utf-8") as f:
     rest_pose = json.load(f)["rest_pose"]
-with open(verts_path) as f:
-    vertices = json.load(f)["vertices"]
 with open(faces_path) as f:
     faces = json.load(f)["faces"]
 
@@ -161,48 +161,6 @@ bpy.context.scene.frame_end = 1  # Will be updated after we know num_keyframes
 # Update scene frame range
 bpy.context.scene.frame_end = num_keyframes
 
-# ------------------------------------------------------------------------
-# BUILD PARENT-CHILD RELATIONSHIP FROM POSE DATA
-# ------------------------------------------------------------------------
-def build_parent_map(bone_dict, parent_map, parent_name=None):
-    """Build mapping from bone name to parent name."""
-    if bone_dict is None:
-        return
-    
-    bone_name = bone_dict.get("name")
-    if bone_name:
-        parent_map[bone_name] = parent_name
-        
-        # Process children
-        for child in bone_dict.get("children", []):
-            build_parent_map(child, parent_map, bone_name)
-
-parent_map = {}
-if isinstance(joint_mapping, dict):
-    build_parent_map(joint_mapping, parent_map)
-elif isinstance(joint_mapping, list):
-    for root_bone in joint_mapping:
-        build_parent_map(root_bone, parent_map)
-
-# ------------------------------------------------------------------------
-# BREADTH-FIRST TRAVERSAL AND POSE APPLICATION
-# ------------------------------------------------------------------------
-def find_bone_in_pose_data(pose_data, bone_name):
-    """Find bone dictionary in pose_data by name."""
-    if isinstance(pose_data, dict):
-        if pose_data.get("name") == bone_name:
-            return pose_data
-        for child in pose_data.get("children", []):
-            result = find_bone_in_pose_data(child, bone_name)
-            if result:
-                return result
-    elif isinstance(pose_data, list):
-        for bone in pose_data:
-            result = find_bone_in_pose_data(bone, bone_name)
-            if result:
-                return result
-    return None
-
 # Get pose bones
 blender_pose_bones = arm_obj.pose.bones
 
@@ -251,7 +209,6 @@ def reset_pose_bones(blender_pose_bones):
         p.rotation_quaternion = Quaternion((1,0,0,0))
         p.matrix_basis.identity()
     bpy.context.view_layer.update()
-
 
 # set frame 0 as the tpose to preserve the rest pose
 bpy.context.scene.frame_set(0)
@@ -463,6 +420,7 @@ def breadth_first_pose_application(joint_mapping, frame_idx):
                 print(f"  WARNING: [{bone_dict['name']}] has no rotation found for frame {frame_idx + 1}")
             else:
                 set_pose_from_global_rotation(pbone, R_global)
+                applied_bones.add(bone_dict['name'])
                 bpy.context.view_layer.update()
 
             for child in bone_dict.get("children", []):
@@ -482,6 +440,65 @@ for frame_idx in range(num_keyframes):
 
 bpy.ops.object.mode_set(mode="OBJECT")
 
+# ------------------------------------------------------------------------
+# APPLY ROOT MOTION
+# ------------------------------------------------------------------------
+"""
+bpy.ops.object.mode_set(mode="OBJECT")
+
+if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
+    # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
+    # apply keyframes to the armature, not any bone
+    arm_obj.rotation_mode = 'QUATERNION'
+    
+    for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
+        # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
+        cam_translation = root_motion_entry["pred_cam_t"]
+        arm_obj.location = Vector((cam_translation[0], -cam_translation[1], -cam_translation[2])) # Vector((cam_translation[0], -cam_translation[2], cam_translation[1]))
+
+        # Use rotation as-is, convert Euler to Quaternion to avoid gimbal lock
+        euler = root_motion_entry["global_rot"]
+        arm_obj.rotation_euler = euler
+
+        arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
+        arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
+
+bpy.ops.object.mode_set(mode="OBJECT")
+"""
+
+bpy.ops.object.mode_set(mode="OBJECT")
+
+# TODO: This is basically a hardcoded value for my default extracted armature's height to hip bone, in its rest pose
+# We should use extracted values from MHR to get height and reinforce armature scaling, height, weight, face values, etc.
+try:
+    rest_pose_hips_offset = rest_pose[list(rest_pose.keys())[0]]["offset"][1] / 100.0 # cm -> m
+except:
+    print("  WARNING: No rest pose hips offset (y value from floor) found, using default value of 0.0")
+    rest_pose_hips_offset = 0.0
+
+if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
+    # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
+    # apply keyframes to the armature, not any bone
+    arm_obj.rotation_mode = 'XYZ'
+    
+    for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
+        # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
+        cam_translation = root_motion_entry["pred_cam_t"]
+
+        arm_obj.location = Vector((cam_translation[0], cam_translation[2], cam_translation[1] - rest_pose_hips_offset))
+
+        # As far as I can tell, this value of global rotation is already passed to the root bone (hips), but if you'd rather 
+        # have rotation be a "root" motion, apply it here and skip in pose application
+        # euler = root_motion_entry["global_rot"]
+        
+        # Each keyframe does need to rotate by math.pi/2 x rotation to "stand up" in blender
+        arm_obj.rotation_euler = (math.pi/2, 0, 0)
+
+        arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
+        arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
+
+bpy.ops.object.mode_set(mode="OBJECT")
+
 # -----------------------------------------------------------------------------
 # FBXエクスポート
 # -----------------------------------------------------------------------------
@@ -494,7 +511,10 @@ bpy.ops.object.mode_set(mode="OBJECT")
 bpy.context.scene.frame_set(0)
 
 # After we've set all the rotations, we should rotate the entire armature to 90,0,0 (degrees) so that the rig "stands up" in blender
+arm_obj.location = Vector((0, 0, 0))
+# Convert 90° X rotation to quaternion
 arm_obj.rotation_euler = (math.pi/2, 0, 0)
+arm_obj.keyframe_insert(data_path="location", frame=0)
 arm_obj.keyframe_insert(data_path="rotation_euler", frame=0)
 
 bpy.ops.object.select_all(action='DESELECT')

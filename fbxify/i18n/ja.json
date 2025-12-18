@@ -1,0 +1,54 @@
+{
+  "app": {
+    "title": "SAM 3D Body → Unity FBX",
+    "heading": "🧍‍♂️ SAM 3D Body → Unity Humanoid FBX",
+    "features_title": "機能",
+    "features": [
+      "1枚の画像からUnity Humanoid互換のFBXファイルを生成",
+      "MP4動画から複数フレームのアニメーションを生成",
+      "3Dメッシュ + スケルトン + **アニメーション**"
+    ],
+    "usage_title": "使い方",
+    "usage": [
+      "画像またはMP4動画をアップロード",
+      "「FBXを生成」ボタンをクリック",
+      "生成されたFBXをダウンロード → Unityにインポート"
+    ]
+  },
+  "ui": {
+    "profile": "📊 プロファイル",
+    "input_file": "📁 画像/動画ファイル",
+    "use_bbox": "👥 人物を指定",
+    "bbox_file": "📁 BBOXファイル",
+    "num_people": "👥 人数",
+    "fov_method": "📷 FOV Estimation Method",
+    "fov_method_info": "None: Built-in runs every frame | File: Load from cameras.txt | Sample: Average from images",
+    "fov_file": "📁 Camera Intrinsics File (COLMAP cameras.txt or MoGe format)",
+    "sample_number": "📊 Sample Number",
+    "sample_number_info": "Number of images to sample and average for FOV estimation",
+    "use_root_motion": "🧭 ルートモーションを適用",
+    "generate_btn": "🚀 FBXを生成",
+    "output_files": "📦 生成されたファイル",
+    "developer_options": "開発者オプション",
+    "create_visualization": "視覚化を作成",
+    "debug_save_results": "💾 再エクスポート用に保存",
+    "debug_saved_timestamps": "📁 保存されたタイムスタンプ",
+    "debug_reexport_btn": "🔄 保存から再エクスポート",
+    "debug_clear_btn": "🗑️ すべての保存結果をクリア",
+    "debug_no_saved_results": "保存された結果はありません"
+  },
+  "progress": {
+    "processing_keyframes": "📦 キーフレームを処理中...",
+    "processing_person": "📦 人物を処理中...",
+    "creating_visualization": "🎨 視覚化を作成中...",
+    "reexporting": "🔄 保存された結果から再エクスポート中..."
+  },
+  "errors": {
+    "error_occurred": "エラーが発生しました ({error_type}): {error_msg}",
+    "error_occurred_no_msg": "エラーが発生しました: {error_type}",
+    "bbox_file_required": "「人物を指定」が有効な場合、BBOXファイルを提供する必要があります",
+    "num_people_required": "人数は0より大きい必要があります",
+    "camera_intrinsics_required": "FOV方法が「File」の場合、カメラ内部パラメータファイルを提供する必要があります",
+    "fov_estimator_required": "「Sample」方法を使用するには、FOV推定器を読み込む必要があります。FOV推定器が初期化されていることを確認してください。"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "app": {
+    "title": "SAM 3D Body → Unity FBX",
+    "heading": "🧍‍♂️ SAM 3D Body → Unity Humanoid FBX",
+    "features_title": "Features",
+    "features": [
+      "Generate Unity Humanoid-compatible FBX files from a single image",
+      "Generate multi-frame animations from MP4 videos",
+      "3D mesh + skeleton + **animation**"
+    ],
+    "usage_title": "Usage",
+    "usage": [
+      "Upload an image or MP4 video",
+      "Click the \"Generate FBX\" button",
+      "Download the generated FBX → Import to Unity"
+    ]
+  },
+  "ui": {
+    "profile": "📊 Armature Model",
+    "input_file": "📁 Image/Video File",
+    "use_bbox": "👥 Use BBOX File",
+    "bbox_file": "📁 BBOX File",
+    "num_people": "👥 Number of People",
+    "fov_method": "📷 FOV Estimation Method",
+    "fov_method_info": "Default: Built-in, runs every frame | File: Load from cameras.txt | Sample: Average from images",
+    "fov_file": "📁 Camera Intrinsics File (COLMAP cameras.txt or MoGe format)",
+    "sample_number": "📊 Sample Number",
+    "sample_number_info": "Number of images to sample and average for FOV estimation",
+    "use_root_motion": "🧭 Apply Root Motion",
+    "generate_btn": "🚀 Generate FBX",
+    "output_files": "📦 Generated Files",
+    "developer_options": "Developer Options",
+    "create_visualization": "Create Visualization",
+    "debug_save_results": "💾 Save Results for Re-export",
+    "debug_saved_timestamps": "📁 Saved Timestamps",
+    "debug_reexport_btn": "🔄 Re-export from Saved",
+    "debug_clear_btn": "🗑️ Clear All Saved Results",
+    "debug_no_saved_results": "No saved results"
+  },
+  "progress": {
+    "processing_keyframes": "📦 Processing keyframes...",
+    "processing_person": "📦 Processing person...",
+    "creating_visualization": "🎨 Creating visualization...",
+    "reexporting": "🔄 Re-exporting from saved results..."
+  },
+  "errors": {
+    "error_occurred": "An error occurred ({error_type}): {error_msg}",
+    "error_occurred_no_msg": "An error occurred: {error_type}",
+    "bbox_file_required": "BBOX file must be provided when 'use bbox' is enabled",
+    "num_people_required": "Number of people must be greater than 0",
+    "camera_intrinsics_required": "Camera intrinsics file must be provided when FOV method is 'File'",
+    "fov_estimator_required": "FOV estimator must be loaded to use 'Sample' method. Please ensure FOV estimator is initialized."
+  }
+}

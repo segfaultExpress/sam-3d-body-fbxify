@@ -25,26 +25,53 @@ MHR_EXTENDED_KEYPOINT_INDEX = {
 def get_profile(profile_name):
     return PROFILES[profile_name]
 
-def export_to_fbx(metadata, joint_mapping, rest_pose, vertices, faces):
+def to_serializable(obj, _seen=None):
+    """Recursively convert numpy types to plain Python for JSON dumping."""
+    if _seen is None:
+        _seen = set()
+    
+    # Check for circular references
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return f"<circular reference to {type(obj).__name__}>"
+    
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if isinstance(obj, np.generic):
+        return obj.item()
+    if isinstance(obj, dict):
+        _seen.add(obj_id)
+        result = {k: to_serializable(v, _seen) for k, v in obj.items()}
+        _seen.remove(obj_id)
+        return result
+    if isinstance(obj, (list, tuple)):
+        _seen.add(obj_id)
+        result = [to_serializable(v, _seen) for v in obj]
+        _seen.remove(obj_id)
+        return result
+    return obj
+
+
+def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
     try:
+        metadata_path = os.path.join(tmp_dir, "metadata.json")
         joint_mapping_path = os.path.join(tmp_dir, "armature_joint_mapping.json")
+        root_motion_path = os.path.join(tmp_dir, "root_motion.json")
         rest_pose_path = os.path.join(tmp_dir, "armature_rest_pose.json")
         faces_path = os.path.join(tmp_dir, "faces.json")
         script_path = os.path.join(tmp_dir, "blender_script.py")
-        vertices_path = os.path.join(tmp_dir, "vertices.json")
         fbx_path = os.path.join(tmp_dir, "output.fbx")
-        metadata_path = os.path.join(tmp_dir, "metadata.json")
         
         with open(metadata_path, "w") as f:
             json.dump({"metadata": metadata}, f)
         with open(joint_mapping_path, "w") as f:
             json.dump({"joint_mapping": joint_mapping}, f)
+        with open(root_motion_path, "w") as f:
+            json.dump({"root_motion": to_serializable(root_motion)}, f)
         with open(rest_pose_path, "w") as f:
             json.dump({"rest_pose": rest_pose}, f)
-        with open(vertices_path, "w") as f:
-            json.dump({"vertices": vertices}, f)
         with open(faces_path, "w") as f:
             json.dump({"faces": faces.tolist()}, f)
 
@@ -57,11 +84,14 @@ def export_to_fbx(metadata, joint_mapping, rest_pose, vertices, faces):
             "blender", "-b",
             "--python", script_path,
             "--",
-            metadata_path, joint_mapping_path, rest_pose_path, vertices_path, faces_path, fbx_path
+            metadata_path, joint_mapping_path, root_motion_path, rest_pose_path, faces_path, fbx_path
         ], check=True, cwd=tmp_dir)
         
+        # Use profile_name and id from metadata for filename
+        profile_name = metadata.get("profile_name", "unknown")
+        person_id = metadata.get("id", "unknown")
         timestamp = int(time.time())
-        final_path = f"/tmp/pose_{timestamp}.fbx"
+        final_path = f"/tmp/{profile_name}_{person_id}_{timestamp:010d}.fbx"
         shutil.copyfile(fbx_path, final_path)
         
         return final_path
