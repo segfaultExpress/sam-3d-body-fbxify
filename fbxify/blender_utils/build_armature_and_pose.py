@@ -443,34 +443,56 @@ bpy.ops.object.mode_set(mode="OBJECT")
 # ------------------------------------------------------------------------
 # APPLY ROOT MOTION
 # ------------------------------------------------------------------------
-
+"""
 bpy.ops.object.mode_set(mode="OBJECT")
 
 if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
     # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
     # apply keyframes to the armature, not any bone
-    arm_obj.rotation_mode = 'XYZ'
+    arm_obj.rotation_mode = 'QUATERNION'
+    
     for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
-
-        # Convert from Y-up (SAM) to Z-up (Blender)
+        # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
         cam_translation = root_motion_entry["pred_cam_t"]
-        cam_translation_blender = [
-            cam_translation[0],   # X stays X
-            -cam_translation[2],  # Z becomes -Y (forward/back)
-            cam_translation[1]    # Y becomes Z (up)
-        ]
-        arm_obj.matrix_world.translation = Vector(cam_translation_blender)
+        arm_obj.location = Vector((cam_translation[0], -cam_translation[1], -cam_translation[2])) # Vector((cam_translation[0], -cam_translation[2], cam_translation[1]))
 
-        # Convert global_rot from Y-up to Z-up
-        # Apply the 90° X rotation that converts Y-up to Z-up
-        global_rot = root_motion_entry["global_rot"]
-        arm_obj.rotation_euler = (
-            global_rot[0] + math.pi/2,  # Add base 90° X rotation
-            global_rot[1], 
-            global_rot[2]
-        )
+        # Use rotation as-is, convert Euler to Quaternion to avoid gimbal lock
+        euler = root_motion_entry["global_rot"]
+        arm_obj.rotation_euler = euler
 
-        print(f"arm_obj.rotation_euler is {arm_obj.rotation_euler}")
+        arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
+        arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
+
+bpy.ops.object.mode_set(mode="OBJECT")
+"""
+
+bpy.ops.object.mode_set(mode="OBJECT")
+
+# TODO: This is basically a hardcoded value for my default extracted armature's height to hip bone, in its rest pose
+# We should use extracted values from MHR to get height and reinforce armature scaling, height, weight, face values, etc.
+try:
+    rest_pose_hips_offset = rest_pose[list(rest_pose.keys())[0]]["offset"][1] / 100.0 # cm -> m
+except:
+    print("  WARNING: No rest pose hips offset (y value from floor) found, using default value of 0.0")
+    rest_pose_hips_offset = 0.0
+
+if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
+    # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
+    # apply keyframes to the armature, not any bone
+    arm_obj.rotation_mode = 'XYZ'
+    
+    for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
+        # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
+        cam_translation = root_motion_entry["pred_cam_t"]
+
+        arm_obj.location = Vector((cam_translation[0], cam_translation[2], cam_translation[1] - rest_pose_hips_offset))
+
+        # As far as I can tell, this value of global rotation is already passed to the root bone (hips), but if you'd rather 
+        # have rotation be a "root" motion, apply it here and skip in pose application
+        # euler = root_motion_entry["global_rot"]
+        
+        # Each keyframe does need to rotate by math.pi/2 x rotation to "stand up" in blender
+        arm_obj.rotation_euler = (math.pi/2, 0, 0)
 
         arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
         arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
@@ -490,6 +512,7 @@ bpy.context.scene.frame_set(0)
 
 # After we've set all the rotations, we should rotate the entire armature to 90,0,0 (degrees) so that the rig "stands up" in blender
 arm_obj.location = Vector((0, 0, 0))
+# Convert 90° X rotation to quaternion
 arm_obj.rotation_euler = (math.pi/2, 0, 0)
 arm_obj.keyframe_insert(data_path="location", frame=0)
 arm_obj.keyframe_insert(data_path="rotation_euler", frame=0)
