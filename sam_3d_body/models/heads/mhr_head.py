@@ -44,6 +44,7 @@ class MHRHead(nn.Module):
         ffn_zero_bias: bool = True,
         mlp_channel_div_factor: int = 8,
         enable_hand_model=False,
+        lod: int = 1,  # LOD level for MHR model (0-6, default 1)
     ):
         super().__init__()
 
@@ -104,17 +105,22 @@ class MHRHead(nn.Module):
             torch.zeros(145).long(), requires_grad=False
         )
 
+        # Store LOD for reference
+        self.lod = lod
+        
         # Load MHR itself
         if MOMENTUM_ENABLED:
             self.mhr = MHR.from_files(
                 device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-                lod=1,
+                lod=lod
             )
+            print(f"MHR model initialized with LOD={lod}")
         else:
             self.mhr = torch.jit.load(
                 mhr_model_path,
                 map_location=("cuda" if torch.cuda.is_available() else "cpu"),
             )
+            print(f"MHR model loaded from {mhr_model_path} (LOD parameter not applicable for torch.jit models)")
 
         for param in self.mhr.parameters():
             param.requires_grad = False

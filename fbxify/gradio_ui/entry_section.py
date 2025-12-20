@@ -81,6 +81,31 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
         value=True
     )
     
+    # Mesh options
+    components['include_mesh'] = gr.Checkbox(
+        label=translator.t("ui.include_mesh"),
+        value=False
+    )
+    
+    with gr.Row():
+        components['lod'] = gr.Slider(
+            label=translator.t("ui.lod"),
+            minimum=0,
+            maximum=6,
+            step=1,
+            value=0,
+            visible=False,
+            info=translator.t("ui.lod_info")
+        )
+        components['body_param_sample_num'] = gr.Number(
+            label=translator.t("ui.body_param_sample_num"),
+            value=5,
+            precision=0,
+            minimum=1,
+            visible=False,
+            info=translator.t("ui.body_param_sample_num_info")
+        )
+    
     # Generate button
     components['generate_btn'] = gr.Button(
         translator.t("ui.generate_btn"),
@@ -133,6 +158,22 @@ def toggle_fov_inputs(fov_method_value: str) -> Tuple[Any, Any]:
         )
 
 
+def toggle_mesh_inputs(include_mesh_value: bool) -> Tuple[Any, Any]:
+    """
+    Toggle visibility of lod and body_param_sample_num based on checkbox.
+    
+    Args:
+        include_mesh_value: Whether to include mesh
+        
+    Returns:
+        Tuple of updates for lod and body_param_sample_num
+    """
+    return (
+        gr.update(visible=include_mesh_value),
+        gr.update(visible=include_mesh_value)
+    )
+
+
 def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
     """
     Update entry section components with new language.
@@ -155,5 +196,8 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
         gr.update(label=t.t("ui.use_root_motion")),  # use_root_motion
+        gr.update(label=t.t("ui.include_mesh")),  # include_mesh
+        gr.update(label=t.t("ui.lod"), info=t.t("ui.lod_info")),  # lod
+        gr.update(label=t.t("ui.body_param_sample_num"), info=t.t("ui.body_param_sample_num_info")),  # body_param_sample_num
         gr.update(value=t.t("ui.generate_btn")),  # generate_btn
     )

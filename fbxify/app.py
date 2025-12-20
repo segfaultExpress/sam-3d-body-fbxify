@@ -13,7 +13,7 @@ from fbxify.pose_estimator import PoseEstimator
 from fbxify.fbxify_manager import FbxifyManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 from fbxify.gradio_ui.header_section import create_header_section, update_header_language
-from fbxify.gradio_ui.entry_section import create_entry_section, toggle_bbox_inputs, toggle_fov_inputs, update_entry_language
+from fbxify.gradio_ui.entry_section import create_entry_section, toggle_bbox_inputs, toggle_fov_inputs, toggle_mesh_inputs, update_entry_language
 from fbxify.gradio_ui.output_section import create_output_section, update_output_language
 from fbxify.gradio_ui.developer_section import create_developer_section, refresh_timestamps, update_developer_language
 from fbxify.gradio_ui.refinement_section import create_refinement_section, build_refinement_config_from_gui
@@ -61,8 +61,8 @@ def create_app(manager: FbxifyManager):
     translator = Translator(DEFAULT_LANGUAGE)
     
     def process(input_file, profile_name, use_bbox, bbox_file, num_people, fov_method, 
-                fov_file, sample_number, use_root_motion, create_visualization, 
-                debug_save_results, 
+                fov_file, sample_number, use_root_motion, include_mesh, lod, body_param_sample_num,
+                create_visualization, debug_save_results, 
                 # Refinement parameters
                 refinement_enabled, interpolate_missing_keyframes,
                 root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
@@ -127,6 +127,10 @@ def create_app(manager: FbxifyManager):
                 if progress is not None:
                     progress(progress_value, desc=description)
 
+            # Convert lod to int if it's a float from slider
+            lod_int = int(lod) if lod is not None else -1
+            body_param_sample_num_int = int(body_param_sample_num) if body_param_sample_num is not None else 5
+            
             process_result = manager.process_frames(
                 frame_paths,
                 profile_name,
@@ -135,7 +139,9 @@ def create_app(manager: FbxifyManager):
                 use_root_motion,
                 create_visualization,
                 fps,
-                progress_callback
+                progress_callback,
+                lod=lod_int if include_mesh else -1,
+                body_param_sample_num=body_param_sample_num_int if include_mesh else 5
             )
 
             # Save debug results if requested
@@ -179,13 +185,27 @@ def create_app(manager: FbxifyManager):
                 if progress is not None:
                     progress(0.5 + progress_value * 0.4, desc=description)
 
+            # Get LOD path if mesh is included
+            lod_fbx_path = None
+            if include_mesh and lod_int >= 0 and process_result.profile_name == "mhr":
+                from fbxify.metadata import PROFILES
+                profile = PROFILES.get(process_result.profile_name)
+                if profile:
+                    lod_key = f"lod{lod_int}_path"
+                    if lod_key in profile:
+                        lod_rel_path = profile[lod_key]
+                        lod_fbx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fbxify", lod_rel_path)
+            
             fbx_paths = manager.export_fbx_files(
                 process_result.profile_name,
                 process_result.joint_to_bone_mappings,
                 process_result.root_motions,
                 process_result.frame_paths,
                 process_result.fps,
-                export_progress
+                export_progress,
+                lod=lod_int if include_mesh else -1,
+                mesh_obj_path=process_result.mesh_obj_path,
+                lod_fbx_path=lod_fbx_path
             )
             output_files.extend(fbx_paths)
 
@@ -286,7 +306,7 @@ def create_app(manager: FbxifyManager):
         # Combine all updates
         return (
             *header_updates,  # heading, description
-            *entry_updates,   # profile, input_file, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, use_root_motion, generate_btn
+            *entry_updates,   # profile, input_file, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, use_root_motion, include_mesh, lod, body_param_sample_num, generate_btn
             output_update,    # output_files
             *developer_updates,  # create_visualization, debug_save_results, debug_saved_timestamps, debug_reexport_btn, debug_clear_btn
         )
@@ -330,7 +350,9 @@ def create_app(manager: FbxifyManager):
                 entry_components['use_bbox'], entry_components['bbox_file'],
                 entry_components['num_people'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
-                entry_components['use_root_motion'], entry_components['generate_btn'],  # entry
+                entry_components['use_root_motion'], entry_components['include_mesh'],
+                entry_components['lod'], entry_components['body_param_sample_num'],
+                entry_components['generate_btn'],  # entry
                 output_files,  # output
                 dev_components['create_visualization'], dev_components['debug_save_results'],
                 dev_components['debug_saved_timestamps'], dev_components['debug_reexport_btn'],
@@ -350,6 +372,13 @@ def create_app(manager: FbxifyManager):
             fn=toggle_fov_inputs,
             inputs=[entry_components['fov_method']],
             outputs=[entry_components['fov_file'], entry_components['sample_number']]
+        )
+        
+        # Mesh toggle
+        entry_components['include_mesh'].change(
+            fn=toggle_mesh_inputs,
+            inputs=[entry_components['include_mesh']],
+            outputs=[entry_components['lod'], entry_components['body_param_sample_num']]
         )
         
         # Collect refinement inputs
@@ -427,6 +456,9 @@ def create_app(manager: FbxifyManager):
                 entry_components['fov_file'],
                 entry_components['sample_number'],
                 entry_components['use_root_motion'],
+                entry_components['include_mesh'],
+                entry_components['lod'],
+                entry_components['body_param_sample_num'],
                 dev_components['create_visualization'],
                 dev_components['debug_save_results']
             ] + refinement_inputs,

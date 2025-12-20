@@ -52,7 +52,7 @@ def to_serializable(obj, _seen=None):
     return obj
 
 
-def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces):
+def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces, mesh_obj_path=None, lod_fbx_path=None):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
     try:
@@ -75,17 +75,40 @@ def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces):
         with open(faces_path, "w") as f:
             json.dump({"faces": faces.tolist()}, f)
 
+        # Copy mesh files if provided
+        lod_fbx_path_tmp = None
+        mesh_obj_path_tmp = None
+        
+        if mesh_obj_path and lod_fbx_path:
+            # Check if files exist and are not empty
+            if os.path.exists(mesh_obj_path) and os.path.getsize(mesh_obj_path) > 0:
+                mesh_obj_path_tmp = os.path.join(tmp_dir, "mesh.obj")
+                shutil.copyfile(mesh_obj_path, mesh_obj_path_tmp)
+            
+            if os.path.exists(lod_fbx_path) and os.path.getsize(lod_fbx_path) > 0:
+                lod_fbx_path_tmp = os.path.join(tmp_dir, "lod.fbx")
+                shutil.copyfile(lod_fbx_path, lod_fbx_path_tmp)
+
         # Copy the contents of blender_script.py to the temporary directory
         # This allows editing the file directly with IDE support
         script_source = os.path.join(os.path.dirname(__file__), "blender_utils", "build_armature_and_pose.py")
         shutil.copyfile(script_source, script_path)
         
-        subprocess.run([
+        # Build command line arguments
+        cmd_args = [
             "blender", "-b",
             "--python", script_path,
             "--",
             metadata_path, joint_mapping_path, root_motion_path, rest_pose_path, faces_path, fbx_path
-        ], check=True, cwd=tmp_dir)
+        ]
+        
+        # Add mesh paths if provided
+        if mesh_obj_path_tmp and lod_fbx_path_tmp:
+            cmd_args.extend([lod_fbx_path_tmp, mesh_obj_path_tmp])
+        else:
+            cmd_args.extend(["", ""])  # Empty strings to maintain argument count
+        
+        subprocess.run(cmd_args, check=True, cwd=tmp_dir)
         
         # Use profile_name and id from metadata for filename
         profile_name = metadata.get("profile_name", "unknown")

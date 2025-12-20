@@ -3,13 +3,28 @@ import json
 from mathutils import Vector, Matrix, Quaternion
 import sys
 import math
+import os
 
-metadata_path = sys.argv[-6]
-joint_mapping_path = sys.argv[-5]
-root_motion_path = sys.argv[-4]
-rest_pose_path = sys.argv[-3]
-faces_path = sys.argv[-2]
-fbx_path = sys.argv[-1]
+# Parse arguments - mesh paths are optional (last 2 args, may be empty strings)
+if len(sys.argv) >= 8:
+    metadata_path = sys.argv[-8]
+    joint_mapping_path = sys.argv[-7]
+    root_motion_path = sys.argv[-6]
+    rest_pose_path = sys.argv[-5]
+    faces_path = sys.argv[-4]
+    fbx_path = sys.argv[-3]
+    lod_fbx_path = sys.argv[-2] if sys.argv[-2] else None
+    mesh_obj_path = sys.argv[-1] if sys.argv[-1] else None
+else:
+    # Fallback for old argument format
+    metadata_path = sys.argv[-6]
+    joint_mapping_path = sys.argv[-5]
+    root_motion_path = sys.argv[-4]
+    rest_pose_path = sys.argv[-3]
+    faces_path = sys.argv[-2]
+    fbx_path = sys.argv[-1]
+    lod_fbx_path = None
+    mesh_obj_path = None
 
 with open(metadata_path, "r", encoding="utf-8") as f:
     metadata = json.load(f)["metadata"]
@@ -83,57 +98,410 @@ bpy.ops.object.select_all(action="SELECT")
 bpy.ops.object.delete()
 
 # ------------------------------------------------------------------------
-# CREATE NEW ARMATURE AND APPLY REST POSE
+# HELPER FUNCTIONS FOR ARMATURE CREATION AND MESH RESKINNING
 # ------------------------------------------------------------------------
 
-# Create armature data + object
-arm_data = bpy.data.armatures.new(armature_name)
-arm_obj = bpy.data.objects.new(armature_name, arm_data)
+def force_rebuild_via_mode_toggle(obj):
+    """
+    Mimics the exact 'Edit Mode -> Object Mode' nuke that makes Blender
+    commit mesh/shapekey data and refresh depsgraph for exporters.
+    """
+    if obj is None:
+        return
 
-# Link to current collection
-bpy.context.collection.objects.link(arm_obj)
-bpy.context.view_layer.objects.active = arm_obj
+    view_layer = bpy.context.view_layer
+    bpy.ops.object.select_all(action='DESELECT')
+    obj.select_set(True)
+    view_layer.objects.active = obj
 
-# Go to EDIT mode
-bpy.ops.object.mode_set(mode='EDIT')
-ebones = arm_data.edit_bones
+    # Must be in OBJECT mode before switching
+    if bpy.context.active_object and bpy.context.active_object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
 
-# First pass: create all edit bones
-edit_bones_map = {}
-for name in rest_pose.keys():
-    b = ebones.new(name)
-    edit_bones_map[name] = b
+    # The hammer
+    bpy.ops.object.mode_set(mode='EDIT')
+    bpy.ops.object.mode_set(mode='OBJECT')
 
-# Second pass: set heads, tails, parents, and rolls
-for name, info in computed.items():
-    b = edit_bones_map[name]
+    # Extra flush
+    if obj.data:
+        obj.data.update()
+    obj.update_tag()
+    view_layer.update()
+    bpy.context.evaluated_depsgraph_get().update()
 
-    head = info["head"]
-    tail = info["tail"]
-    roll = info.get("roll", 0.0)
+def create_armature_from_rest_pose(armature_name, rest_pose, computed):
+    """Create a new armature from rest_pose JSON data."""
+    # Create armature data + object
+    arm_data = bpy.data.armatures.new(armature_name)
+    arm_obj = bpy.data.objects.new(armature_name, arm_data)
+    
+    # Link to current collection
+    bpy.context.collection.objects.link(arm_obj)
+    bpy.context.view_layer.objects.active = arm_obj
+    
+    # Go to EDIT mode
+    bpy.ops.object.mode_set(mode='EDIT')
+    ebones = arm_data.edit_bones
+    
+    # First pass: create all edit bones
+    edit_bones_map = {}
+    for name in rest_pose.keys():
+        b = ebones.new(name)
+        edit_bones_map[name] = b
+    
+    # Second pass: set heads, tails, parents, and rolls
+    for name, info in computed.items():
+        b = edit_bones_map[name]
+        
+        head = info["head"]
+        tail = info["tail"]
+        roll = info.get("roll", 0.0)
+        
+        b.head = head
+        b.tail = tail
+        b.roll = roll
+        
+        parent_name = info["parent"]
+        if parent_name is not None:
+            b.parent = edit_bones_map[parent_name]
+            # Optionally connect if head ≈ parent tail
+            # if (head - computed[parent_name]["tail"]).length < 1e-3:
+            #     b.use_connect = True
+    
+    # Back to OBJECT mode
+    bpy.ops.object.mode_set(mode='OBJECT')
+    
+    # Set armature scale to 0.01 on all axes
+    arm_obj.scale = (0.01, 0.01, 0.01)
+    
+    print("Rebuilt armature from JSON:", rest_pose_path)
+    return arm_obj
 
-    b.head = head
-    b.tail = tail
-    b.roll = roll
+def check_mesh_compatibility(me_a, me_b):
+    """Check if two meshes are compatible for reskinning."""
+    if len(me_a.vertices) != len(me_b.vertices):
+        return False, f"Vertex count differs: {len(me_a.vertices)} vs {len(me_b.vertices)}"
+    if len(me_a.polygons) != len(me_b.polygons):
+        return False, f"Polygon count differs: {len(me_a.polygons)} vs {len(me_b.polygons)}"
+    
+    # Check face connectivity
+    sig_a = [tuple(p.vertices) for p in me_a.polygons]
+    sig_b = [tuple(p.vertices) for p in me_b.polygons]
+    if sig_a != sig_b:
+        return False, "Face connectivity/order differs"
+    
+    return True, "Meshes are compatible"
 
-    parent_name = info["parent"]
-    if parent_name is not None:
-        b.parent = edit_bones_map[parent_name]
-        # Optionally connect if head ≈ parent tail
-        # if (head - computed[parent_name]["tail"]).length < 1e-3:
-        #     b.use_connect = True
+def get_vert_coords(obj):
+    """Return vertex coordinates, handling shape keys if present."""
+    me = obj.data
+    if me.shape_keys and me.shape_keys.key_blocks:
+        kb = me.shape_keys.key_blocks.get("Basis") or me.shape_keys.key_blocks[0]
+        return kb.data
+    return me.vertices
 
-# Back to OBJECT mode
-bpy.ops.object.mode_set(mode='OBJECT')
+def set_dst_coords(obj, i, co):
+    """Write coordinates into destination, handling shape keys if present."""
+    me = obj.data
+    if me.shape_keys and me.shape_keys.key_blocks:
+        kb = me.shape_keys.key_blocks.get("Basis")
+        if kb is None:
+            raise RuntimeError(f"Destination '{obj.name}' has shape keys but no 'Basis' key.")
+        kb.data[i].co = co
+    else:
+        me.vertices[i].co = co
 
-# Set armature scale to 0.01 on all axes
-arm_obj.scale = (0.01, 0.01, 0.01)
+def import_armature_from_fbx(lod_fbx_path, armature_name):
+    """Import armature from LOD FBX file and return the armature object."""
+    bpy.ops.import_scene.fbx(filepath=lod_fbx_path)
+    imported_objects = bpy.context.selected_objects
+    armature_obj = None
+    for obj in imported_objects:
+        if obj.type == 'ARMATURE':
+            # Rename to match expected name
+            obj.name = armature_name
+            obj.data.name = armature_name
+            # Set armature scale to 0.01 on all axes (matching rest_pose creation)
+            obj.scale = (0.01, 0.01, 0.01)
+            armature_obj = obj
+            break
+    
+    # Ensure armature is selected and active after import
+    if armature_obj:
+        # Reset rotation to match generated armature (rotation will be applied later before export)
+        armature_obj.rotation_euler = (0, 0, 0)
+        bpy.ops.object.select_all(action='DESELECT')
+        armature_obj.select_set(True)
+        bpy.context.view_layer.objects.active = armature_obj
+        print(f"Imported armature from FBX: {lod_fbx_path}")
+        return armature_obj
+    return None
 
-print("Rebuilt armature from JSON:", rest_pose_path)
+def import_mesh_obj(mesh_obj_path):
+    """Import OBJ mesh and return the mesh object."""
+    # Blender 5.0+ uses wm.obj_import instead of import_scene.obj
+    try:
+        bpy.ops.wm.obj_import(filepath=mesh_obj_path)
+    except AttributeError:
+        # Fallback for older Blender versions
+        bpy.ops.import_scene.obj(filepath=mesh_obj_path)
+    imported_objects = bpy.context.selected_objects
+    for obj in imported_objects:
+        if obj.type == 'MESH':
+            return obj
+    return None
+
+def find_lod_mesh(lod_armature_obj, exclude_mesh_obj):
+    """Find the mesh object parented to the LOD armature."""
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and obj != exclude_mesh_obj:
+            if obj.parent == lod_armature_obj:
+                return obj
+    return None
+
+def reskin_mesh(source_mesh_obj, dst_mesh_obj):
+    """Reskin the destination mesh with coordinates from source mesh."""
+    # Ensure destination mesh is active and in OBJECT mode (critical for headless mode)
+    bpy.context.view_layer.objects.active = dst_mesh_obj
+    if bpy.context.active_object and bpy.context.active_object.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    
+    src_coords = get_vert_coords(source_mesh_obj)
+    
+    # Axis/scale fix (from reskin_mhr_rig.py)
+    AXIS_SCALE = Vector((1, -1, -1))
+    dst_me = dst_mesh_obj.data
+    src_me = source_mesh_obj.data
+
+    if len(dst_me.vertices) != len(src_me.vertices):
+        raise RuntimeError(f"Vertex count mismatch: dst={len(dst_me.vertices)} src={len(src_me.vertices)}")
+
+    src_mw = source_mesh_obj.matrix_world.copy()
+    dst_mw_inv = dst_mesh_obj.matrix_world.inverted_safe()
+
+    for i in range(len(dst_me.vertices)):
+        v = src_coords[i].co.copy()
+        
+        # Apply axis/scale fix in source local space
+        v.x *= AXIS_SCALE.x
+        v.y *= AXIS_SCALE.y
+        v.z *= AXIS_SCALE.z
+        
+        # Convert: src local -> world -> dst local
+        v_world = src_mw @ v
+        v_dst_local = dst_mw_inv @ v_world
+        
+        set_dst_coords(dst_mesh_obj, i, v_dst_local)
+    
+    # Force updates (vertex groups are preserved automatically - they're stored per-vertex, not per-position)
+    dst_me.update()
+    # Update the object to ensure changes are reflected
+    dst_mesh_obj.update_tag()
+    # Force view layer update in headless mode
+    bpy.context.view_layer.update()
+    # Force dependency graph update to ensure changes are visible
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    depsgraph.update()
+
+def parent_mesh_to_armature(mesh_obj, arm_obj):
+    """Parent mesh to armature and set up armature modifier."""
+    mesh_obj.parent = arm_obj
+    mesh_obj.parent_type = 'OBJECT'
+    
+    # Copy armature modifier if it exists, or create one
+    if mesh_obj.modifiers:
+        for mod in mesh_obj.modifiers:
+            if mod.type == 'ARMATURE':
+                mod.object = arm_obj
+                return
+    else:
+        arm_mod = mesh_obj.modifiers.new(name="Armature", type='ARMATURE')
+        arm_mod.object = arm_obj
+
+def load_and_reskin_mesh(arm_obj, mesh_obj_path):
+    """Main function to load and reskin mesh. Returns reskinned mesh object or None."""
+    # Check if files are valid
+    if not arm_obj or not mesh_obj_path:
+        return None
+    
+    print("Loading mesh files for reskinning...")
+    
+    source_mesh_obj = None
+    lod_mesh_obj = None
+    
+    try:
+        # Import OBJ mesh (source mesh with new shape)
+        source_mesh_obj = import_mesh_obj(mesh_obj_path)
+
+        # The mesh comes in upside down but weirdly (90,0,0) rotated. So we need to set the axis scale to (1,-1,-1) and need to rotate it back to (0,0,0)
+        source_mesh_obj.rotation_euler = (0,0,0)
+
+        if source_mesh_obj is None:
+            print("Warning: No mesh found in OBJ file, skipping mesh reskinning")
+            return None
+        
+        print(f"Found mesh in OBJ: {source_mesh_obj.name}")
+        
+        # Find LOD mesh parented to the imported armature (destination mesh to reskin)
+        lod_mesh_obj = find_lod_mesh(arm_obj, source_mesh_obj)
+        if lod_mesh_obj is None:
+            print("Warning: No mesh found parented to LOD armature, skipping mesh reskinning")
+            # Clean up imported source mesh
+            if source_mesh_obj:
+                try:
+                    bpy.data.objects.remove(source_mesh_obj, do_unlink=True)
+                except:
+                    pass
+            # Ensure armature is selected
+            bpy.ops.object.select_all(action='DESELECT')
+            arm_obj.select_set(True)
+            bpy.context.view_layer.objects.active = arm_obj
+            return None
+        
+        # Log vertex groups and weights before reskinning
+        lod_me = lod_mesh_obj.data
+        
+        # Check compatibility
+        new_me = source_mesh_obj.data
+        compatible, msg = check_mesh_compatibility(lod_me, new_me)
+        
+        if not compatible:
+            print(f"[Warning]: Meshes are not compatible: {msg}")
+            print("Skipping mesh reskinning, will export armature only")
+            # Clean up imported objects before returning
+            if source_mesh_obj:
+                try:
+                    bpy.data.objects.remove(source_mesh_obj, do_unlink=True)
+                except:
+                    pass
+            # Ensure armature is selected before returning
+            bpy.ops.object.select_all(action='DESELECT')
+            arm_obj.select_set(True)
+            bpy.context.view_layer.objects.active = arm_obj
+            return None
+        
+        # Ensure mesh is in OBJECT mode before reskinning (important for vertex group preservation)
+        # In headless mode, we need to be more explicit about context
+        bpy.ops.object.select_all(action='DESELECT')
+        lod_mesh_obj.select_set(True)
+        bpy.context.view_layer.objects.active = lod_mesh_obj
+        # Ensure we're in OBJECT mode (this is critical for vertex group preservation)
+        if bpy.context.active_object and bpy.context.active_object.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        
+        # Reskin mesh (this only changes vertex positions, not weights)
+        print("Reskinning mesh (copying vertex positions)...")
+        reskin_mesh(source_mesh_obj, lod_mesh_obj)
+        print("✓ Mesh reskinning complete")
+
+        # I swear to god sometimes Blender just puts something like this in just to mess with us?
+        # Why do meshes have visible changes that are not reflected until a hard mode toggle?
+        # Why are they visible for all intents and purposes until a headless export/import removes them?
+        force_rebuild_via_mode_toggle(lod_mesh_obj)
+        
+        # Ensure mesh data is updated after reskinning
+        # Force a view layer update in headless mode to ensure changes are reflected
+        lod_me.update()
+        lod_mesh_obj.update_tag()
+        bpy.context.view_layer.update()
+        # Force dependency graph update to ensure changes are visible
+        depsgraph = bpy.context.evaluated_depsgraph_get()
+        depsgraph.update()
+        
+        # Parent to new armature (vertex groups should be preserved)
+        parent_mesh_to_armature(lod_mesh_obj, arm_obj)
+        print(f"✓ Mesh parented to new armature")
+        
+        # Log armature modifier setup
+        arm_mod = None
+        for mod in lod_mesh_obj.modifiers:
+            if mod.type == 'ARMATURE':
+                arm_mod = mod
+                break
+        if arm_mod:
+            print(f"  Armature modifier found: object='{arm_mod.object.name if arm_mod.object else 'None'}'")
+            print(f"  Armature modifier use_deform_preserve_volume: {arm_mod.use_deform_preserve_volume}")
+        else:
+            print("  WARNING: No armature modifier found after parenting!")
+        
+        # Check if vertex group names match bone names
+        bone_names = set(b.name for b in arm_obj.data.bones)
+        vg_names = set(vg.name for vg in lod_mesh_obj.vertex_groups)
+        matching = bone_names & vg_names
+        missing_in_armature = vg_names - bone_names
+        missing_in_mesh = bone_names - vg_names
+        print(f"  Vertex group / bone name matching:")
+        print(f"    Matching: {len(matching)} groups")
+        if len(missing_in_armature) > 0:
+            print(f"    WARNING: {len(missing_in_armature)} vertex groups not found in armature: {list(missing_in_armature)[:5]}")
+        if len(missing_in_mesh) > 0:
+            print(f"    INFO: {len(missing_in_mesh)} bones have no vertex groups (may be normal for end bones)")
+        
+        # Clean up temporary source mesh object
+        bpy.data.objects.remove(source_mesh_obj, do_unlink=True)
+        
+        # Ensure armature is selected after successful reskinning
+        bpy.ops.object.select_all(action='DESELECT')
+        arm_obj.select_set(True)
+        bpy.context.view_layer.objects.active = arm_obj
+        
+        return lod_mesh_obj
+        
+    except Exception as e:
+        print(f"Error during mesh loading/reskinning: {e}")
+        import traceback
+        traceback.print_exc()
+        print("Continuing with armature-only export...")
+        
+        # Clean up any partially imported objects
+        if source_mesh_obj:
+            try:
+                bpy.data.objects.remove(source_mesh_obj, do_unlink=True)
+            except:
+                pass
+        
+        # Ensure armature is selected after error
+        bpy.ops.object.select_all(action='DESELECT')
+        arm_obj.select_set(True)
+        bpy.context.view_layer.objects.active = arm_obj
+        
+        return None
+
+# ------------------------------------------------------------------------
+# ARMATURE CREATION: FROM FBX OR FROM REST_POSE
+# ------------------------------------------------------------------------
+
+mesh_obj = None
+
+if lod_fbx_path and os.path.exists(lod_fbx_path) and os.path.getsize(lod_fbx_path) > 0:
+    # LOD FBX provided: Import armature from FBX and reskin mesh
+    print("LOD FBX provided: Importing armature from FBX and reskinning mesh")
+    
+    arm_obj = import_armature_from_fbx(lod_fbx_path, armature_name)
+    if arm_obj is None:
+        print("Warning: Failed to import armature from FBX, falling back to rest_pose creation")
+        arm_obj = create_armature_from_rest_pose(armature_name, rest_pose, computed)
+    else:
+        # Reskin mesh if mesh OBJ is also provided
+        mesh_obj = load_and_reskin_mesh(arm_obj, mesh_obj_path)
+        # Ensure armature is selected after mesh operations (in case selection changed or reskinning failed)
+        # This is important because load_and_reskin_mesh may have imported objects that changed selection
+        bpy.ops.object.select_all(action='DESELECT')
+        arm_obj.select_set(True)
+        bpy.context.view_layer.objects.active = arm_obj
+else:
+    # No LOD FBX: Build armature from scratch using rest_pose
+    print("No LOD FBX provided: Building armature from rest_pose JSON")
+    arm_obj = create_armature_from_rest_pose(armature_name, rest_pose, computed)
 
 # ------------------------------------------------------------------------
 # POSE ARMATURE WITH MATRICES
 # ------------------------------------------------------------------------
+
+# Ensure armature is selected and active before switching to pose mode
+bpy.ops.object.select_all(action='DESELECT')
+arm_obj.select_set(True)
+bpy.context.view_layer.objects.active = arm_obj
 
 # switch to pose mode
 bpy.ops.object.mode_set(mode='POSE')
@@ -517,6 +885,26 @@ arm_obj.keyframe_insert(data_path="rotation_euler", frame=0)
 
 bpy.ops.object.select_all(action='DESELECT')
 arm_obj.select_set(True)
+
+# Find and select mesh if it exists (could be from reskinning or already parented)
+export_mesh_obj = None
+if mesh_obj:
+    # Use the mesh_obj returned from load_and_reskin_mesh
+    export_mesh_obj = mesh_obj
+else:
+    # Try to find mesh parented to armature (in case mesh_obj wasn't tracked)
+    for obj in bpy.context.scene.objects:
+        if obj.type == 'MESH' and obj.parent == arm_obj:
+            export_mesh_obj = obj
+            break
+
+# Select mesh for export if found
+if export_mesh_obj:
+    export_mesh_obj.select_set(True)
+    print(f"✓ Mesh '{export_mesh_obj.name}' selected for export")
+else:
+    print("No mesh found for export (armature-only)")
+
 bpy.context.view_layer.objects.active = arm_obj
 
 bpy.context.scene.frame_set(0)
@@ -524,9 +912,18 @@ bpy.context.scene.frame_set(0)
 bpy.context.scene.frame_start = 1
 bpy.context.scene.frame_end   = num_keyframes
 
+# Ensure mesh is properly evaluated before export (critical for reskinned meshes)
+if export_mesh_obj:
+    export_mesh_obj.update_tag()
+    bpy.context.view_layer.update()
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+    depsgraph.update()
+
+print("=== EXPORTING FBX ===")
 bpy.ops.export_scene.fbx(
     filepath=fbx_path,
     use_selection=True,
+    use_mesh_modifiers=True,  # Bake mesh modifiers (including armature) into geometry
     bake_anim=True,
     bake_anim_use_nla_strips=True,
     bake_anim_simplify_factor=0.0,  # keep keys exact

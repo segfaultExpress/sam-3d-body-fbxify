@@ -29,6 +29,7 @@ class ProcessResult:
     frame_paths: List[str]
     profile_name: str
     fps: float
+    mesh_obj_path: Optional[str] = None
 
 
 @dataclass
@@ -163,7 +164,8 @@ class FbxifyManager:
     def process_frames(self, frame_paths: List[str], profile_name: str, num_people: int,
                       bbox_dict: Optional[Dict[int, List[Tuple]]] = None,
                       use_root_motion: bool = True, create_visualization: bool = False,
-                      fps: float = 30.0, progress_callback: Optional[callable] = None) -> ProcessResult:
+                      fps: float = 30.0, progress_callback: Optional[callable] = None,
+                      lod: int = -1, body_param_sample_num: int = 5) -> ProcessResult:
         """
         Process all frames and collect results.
         
@@ -176,6 +178,8 @@ class FbxifyManager:
             create_visualization: Whether to create visualization data
             fps: Frame rate of the animation (frames per second)
             progress_callback: Optional callback function(progress, description)
+            lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
+            body_param_sample_num: Number of frames to sample for body parameter averaging
             
         Returns:
             ProcessResult containing all processing results
@@ -185,6 +189,9 @@ class FbxifyManager:
         
         # Store outputs and images for visualization if needed
         visualization_data = [] if create_visualization else None
+        
+        # Collect body parameters for mesh generation (if enabled)
+        body_params_collection = {}  # person_id -> list of {scale_params, shape_params}
         
         # Process each frame
         for keyframe_index, frame_path in enumerate(frame_paths):
@@ -219,8 +226,24 @@ class FbxifyManager:
                     for identifier in results.keys():
                         result = results[identifier]
                         joint_to_bone_mappings[identifier] = result["joint_to_bone_mapping"]
+                        
+                        # Collect body parameters for mesh generation if enabled
+                        if lod >= 0 and profile_name == "mhr":
+                            if identifier not in body_params_collection:
+                                body_params_collection[identifier] = []
+                            
+                            scale_params = result.get("scale_params")
+                            shape_params = result.get("shape_params")
+                            if scale_params is not None and shape_params is not None:
+                                body_params_collection[identifier].append({
+                                    "scale_params": scale_params,
+                                    "shape_params": shape_params
+                                })
                 else:
                     print(f"  Warning: No people detected in frame {keyframe_index + 1}, skipping...")
+                
+                # Lightweight cleanup per frame: just delete references
+                del results, raw_outputs
             except ValueError as e:
                 # Handle "No people detected" or similar errors gracefully
                 if "No people detected" in str(e) or "person_index" in str(e):
@@ -230,13 +253,95 @@ class FbxifyManager:
                     # Re-raise other ValueError exceptions
                     raise
 
+        # Full GPU cache clear at the end of all frames (for video processing)
+        import gc
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+        gc.collect()
+        
+        # Generate mesh if enabled
+        mesh_obj_path = None  # Initialize to None
+        if lod >= 0 and profile_name == "mhr" and body_params_collection:
+            # Process mesh for each person
+            for identifier, params_list in body_params_collection.items():
+                if not params_list:
+                    continue
+                
+                # Sample N frames (min of body_param_sample_num and available frames)
+                num_samples = min(body_param_sample_num, len(params_list))
+                sampled_params = params_list[:num_samples]  # Take first N samples
+                
+                # Average scale_params and shape_params
+                scale_params_list = [p["scale_params"] for p in sampled_params]
+                shape_params_list = [p["shape_params"] for p in sampled_params]
+                
+                # Convert to numpy arrays and average
+                scale_params_avg = np.mean([np.array(sp) for sp in scale_params_list], axis=0)
+                shape_params_avg = np.mean([np.array(sp) for sp in shape_params_list], axis=0)
+                
+                # Log parameter statistics to check for zeros
+                print(f"Generating T-pose mesh for person {identifier}...")
+                print(f"  Averaged {num_samples} samples out of {len(params_list)} available frames")
+                print(f"  Scale params stats: shape={scale_params_avg.shape}, min={np.min(scale_params_avg):.6f}, max={np.max(scale_params_avg):.6f}, mean={np.mean(scale_params_avg):.6f}, non-zero count={np.count_nonzero(scale_params_avg)}/{len(scale_params_avg)}")
+                print(f"  Shape params stats: shape={shape_params_avg.shape}, min={np.min(shape_params_avg):.6f}, max={np.max(shape_params_avg):.6f}, mean={np.mean(shape_params_avg):.6f}, non-zero count={np.count_nonzero(shape_params_avg)}/{len(shape_params_avg)}")
+                
+                # Check if all zeros
+                if np.allclose(scale_params_avg, 0) and np.allclose(shape_params_avg, 0):
+                    print("  WARNING: Both scale_params and shape_params are all zeros!")
+                elif np.allclose(scale_params_avg, 0):
+                    print("  WARNING: scale_params are all zeros!")
+                elif np.allclose(shape_params_avg, 0):
+                    print("  WARNING: shape_params are all zeros!")
+                
+                # Generate T-pose mesh
+                import tempfile
+                import os
+                temp_obj = tempfile.NamedTemporaryFile(delete=False, suffix='.obj')
+                temp_obj.close()
+                
+                try:
+                    _, mesh_path = self.estimator.generate_tpose(
+                        scale_params=scale_params_avg,
+                        shape_params=shape_params_avg,
+                        output_obj_path=temp_obj.name
+                    )
+                    mesh_obj_path = mesh_path
+                    print(f"  Generated mesh saved to: {mesh_obj_path}")
+                    
+                    # Also save to project root for inspection
+                    project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                    root_obj_path = os.path.join(project_root, f"/workspace/tpose_person_{identifier}.obj")
+                    import shutil
+                    shutil.copyfile(mesh_path, root_obj_path)
+                    print(f"  Also saved to project root: {root_obj_path}")
+                    
+                    # Clean up GPU memory after mesh generation
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                    
+                    # Only process first person for now (can be extended later)
+                    break
+                except Exception as e:
+                    print(f"  Warning: Failed to generate mesh: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    mesh_obj_path = None  # Ensure it's None on error
+                    
+                    # Clean up GPU memory even on error
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
         return ProcessResult(
             joint_to_bone_mappings=joint_to_bone_mappings,
             root_motions=root_motions,
             visualization_data=visualization_data,
             frame_paths=frame_paths,
             profile_name=profile_name,
-            fps=fps
+            fps=fps,
+            mesh_obj_path=mesh_obj_path
         )
     
     def _convert_translation_to_list(self, trans_val) -> List[float]:
@@ -371,12 +476,15 @@ class FbxifyManager:
             visualization_data=process_result.visualization_data,
             frame_paths=process_result.frame_paths,
             profile_name=process_result.profile_name,
-            fps=process_result.fps
+            fps=process_result.fps,
+            mesh_obj_path=process_result.mesh_obj_path  # Preserve mesh_obj_path
         )
     
     def export_fbx_files(self, profile_name: str, joint_to_bone_mappings: Dict[str, Any],
                          root_motions: Optional[Dict[str, List[Dict]]], frame_paths: List[str],
-                         fps: float = 30.0, progress_callback: Optional[callable] = None) -> List[str]:
+                         fps: float = 30.0, progress_callback: Optional[callable] = None,
+                         lod: int = -1, mesh_obj_path: Optional[str] = None,
+                         lod_fbx_path: Optional[str] = None) -> List[str]:
         """
         Export FBX files for each person.
         
@@ -387,6 +495,9 @@ class FbxifyManager:
             frame_paths: List of frame paths (for metadata)
             fps: Frame rate of the animation (frames per second)
             progress_callback: Optional callback function(progress, description)
+            lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
+            mesh_obj_path: Path to generated mesh OBJ file
+            lod_fbx_path: Path to LOD FBX file
             
         Returns:
             List of exported FBX file paths
@@ -402,7 +513,9 @@ class FbxifyManager:
                 joint_to_bone_mappings[identifier],
                 root_motion,
                 self.estimator.get_armature_rest_pose(profile_name),
-                self.estimator.faces
+                self.estimator.faces,
+                mesh_obj_path=mesh_obj_path if lod >= 0 and profile_name == "mhr" else None,
+                lod_fbx_path=lod_fbx_path if lod >= 0 and profile_name == "mhr" else None
             )
             
             if fbx_path is not None:

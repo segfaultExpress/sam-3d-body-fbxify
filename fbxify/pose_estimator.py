@@ -7,6 +7,7 @@ from fbxify.metadata import JOINT_NAMES_TO_INDEX
 import json
 import os
 import random
+from fbxify.utils import to_serializable
 
 class PoseEstimator:
 
@@ -397,6 +398,9 @@ class PoseEstimator:
         ## IMPORTANT: process_one_image returns a list of dicts, in ORDER of bboxes passed in!
         outputs_raw = self.estimator.process_one_image(image_path, bboxes=bboxes_numpy, cam_int=self.cached_cam_int)
 
+        with open("outputs_raw.json", "w") as f:
+            json.dump(to_serializable(outputs_raw), f)
+
         all_results = {} # dict for each person: joint_to_bone_mapping, rest_pose, vertices, keypoints_3d
         for i, id in enumerate(ids):
             if bboxes is not None:
@@ -444,11 +448,32 @@ class PoseEstimator:
                 "pred_cam_t": outputs["pred_cam_t"], # colmap can and should be used to reverse this, assuming both camera and person are moving. But we assume static camera as far as outputs are concerned
             })
 
+            # Extract body parameters for mesh generation
+            scale_params = outputs.get("scale_params")
+            shape_params = outputs.get("shape_params")
+            
+            # Log what we got from outputs
+            if scale_params is None or shape_params is None:
+                print(f"  WARNING: Missing body params for person {id}")
+                print(f"    Available keys in outputs: {list(outputs.keys())}")
+                if scale_params is None:
+                    print(f"    scale_params is None")
+                if shape_params is None:
+                    print(f"    shape_params is None")
+            else:
+                # Log parameter info
+                if hasattr(scale_params, 'shape'):
+                    print(f"  Person {id} body params: scale={scale_params.shape}, shape={shape_params.shape}")
+                elif isinstance(scale_params, (list, np.ndarray)):
+                    print(f"  Person {id} body params: scale={len(scale_params) if isinstance(scale_params, list) else scale_params.shape}, shape={len(shape_params) if isinstance(shape_params, list) else shape_params.shape}")
+            
             # vertices = np.array([convert_to_blender_coords(v) for v in vertices]) # TODO: Not sure what to do with this for now - we're armature only
         
             all_results[id] = {
                 "joint_to_bone_mapping": joint_to_bone_mapping,
                 "root_motion": root_motion,
+                "scale_params": scale_params.tolist() if scale_params is not None and hasattr(scale_params, 'tolist') else (scale_params if scale_params is not None else None),
+                "shape_params": shape_params.tolist() if shape_params is not None and hasattr(shape_params, 'tolist') else (shape_params if shape_params is not None else None),
                 # "vertices": vertices.tolist(), # TODO: Not sure what to do with this for now - we're armature only
                 # "keypoints_3d": keypoints_3d.tolist(), # Not used downstream, maybe eventually?
             }
@@ -574,3 +599,349 @@ class PoseEstimator:
         sorted_indices = np.argsort(sizes)[::-1]  # Descending order
         selected_index = sorted_indices[person_index]
         return outputs[selected_index]
+    
+    def test_regenerate_vertices_from_outputs_raw(self, outputs_raw_path="outputs_raw.json", person_index=0, output_obj_path="test_regenerated.obj"):
+        """
+        Test method to regenerate vertices from outputs_raw.json and save as OBJ file.
+        
+        This verifies that outputs_raw contains enough information to regenerate
+        the mesh by calling mhr_head.mhr_forward() with the saved parameters.
+        
+        Args:
+            outputs_raw_path: Path to outputs_raw.json file
+            person_index: Index of person to regenerate (default: 0)
+            output_obj_path: Path to save the OBJ file
+            
+        Returns:
+            tuple: (vertices_np, output_obj_path)
+        """
+        import trimesh
+        
+        # Load outputs_raw.json
+        print(f"Loading {outputs_raw_path}...")
+        with open(outputs_raw_path, "r") as f:
+            outputs_raw = json.load(f)
+        
+        if person_index >= len(outputs_raw):
+            raise ValueError(f"person_index {person_index} out of range. Only {len(outputs_raw)} people found.")
+        
+        output = outputs_raw[person_index]
+        print(f"Processing person {person_index}...")
+        
+        # Get MHR head from estimator
+        mhr_head = self.estimator.model.head_pose
+        faces = self.estimator.faces
+        
+        # Convert numpy arrays to torch tensors
+        device = self.device
+        
+        # Extract parameters from outputs_raw
+        global_rot = torch.from_numpy(np.array(output["global_rot"])).float().to(device)
+        body_pose_params = torch.from_numpy(np.array(output["body_pose_params"])).float().to(device)
+        hand_pose_params = torch.from_numpy(np.array(output["hand_pose_params"])).float().to(device)
+        scale_params = torch.from_numpy(np.array(output["scale_params"])).float().to(device)
+        shape_params = torch.from_numpy(np.array(output["shape_params"])).float().to(device)
+        expr_params = torch.from_numpy(np.array(output["expr_params"])).float().to(device) if output.get("expr_params") is not None else None
+        
+        # global_trans is typically zeros (as set in mhr_head.forward)
+        global_trans = torch.zeros_like(global_rot).to(device)
+        
+        # Add batch dimension if needed
+        if len(global_rot.shape) == 1:
+            global_rot = global_rot.unsqueeze(0)
+        if len(body_pose_params.shape) == 1:
+            body_pose_params = body_pose_params.unsqueeze(0)
+        if len(hand_pose_params.shape) == 1:
+            hand_pose_params = hand_pose_params.unsqueeze(0)
+        if len(scale_params.shape) == 1:
+            scale_params = scale_params.unsqueeze(0)
+        if len(shape_params.shape) == 1:
+            shape_params = shape_params.unsqueeze(0)
+        if expr_params is not None and len(expr_params.shape) == 1:
+            expr_params = expr_params.unsqueeze(0)
+        if len(global_trans.shape) == 1:
+            global_trans = global_trans.unsqueeze(0)
+        
+        print("Calling mhr_forward...")
+        # Call mhr_forward to regenerate vertices
+        with torch.no_grad():
+            vertices = mhr_head.mhr_forward(
+                global_trans=global_trans,
+                global_rot=global_rot,
+                body_pose_params=body_pose_params,
+                hand_pose_params=hand_pose_params,
+                scale_params=scale_params,
+                shape_params=shape_params,
+                expr_params=expr_params,
+                return_keypoints=False,
+                do_pcblend=True,
+                return_joint_coords=False,
+                return_model_params=False,
+                return_joint_rotations=False,
+            )
+        
+        # Convert to numpy and apply camera system correction (same as in mhr_head.forward)
+        vertices_np = vertices.cpu().numpy()[0]  # Remove batch dimension
+        vertices_np[..., [1, 2]] *= -1  # Camera system difference
+        
+        print(f"Generated {len(vertices_np)} vertices")
+        if "pred_vertices" in output:
+            orig_shape = output["pred_vertices"]
+            if isinstance(orig_shape, list):
+                orig_shape = np.array(orig_shape).shape
+            print(f"Original vertices shape: {orig_shape}")
+        
+        # Create trimesh and save as OBJ
+        mesh = trimesh.Trimesh(vertices=vertices_np, faces=faces)
+        mesh.export(output_obj_path)
+        print(f"Saved regenerated mesh to {output_obj_path}")
+        
+        # Compare with original vertices if available
+        if "pred_vertices" in output:
+            orig_vertices = np.array(output["pred_vertices"])
+            if orig_vertices.shape == vertices_np.shape:
+                diff = np.abs(orig_vertices - vertices_np)
+                max_diff = np.max(diff)
+                mean_diff = np.mean(diff)
+                print(f"Comparison with original vertices:")
+                print(f"  Max difference: {max_diff:.6f}")
+                print(f"  Mean difference: {mean_diff:.6f}")
+                if max_diff < 1e-5:
+                    print("  ✓ Vertices match exactly!")
+                elif max_diff < 1e-3:
+                    print("  ✓ Vertices are very close (likely numerical precision)")
+                else:
+                    print("  ⚠ Vertices differ significantly")
+        
+        return vertices_np, output_obj_path
+    
+    def generate_tpose_from_outputs_raw(self, outputs_raw_path="outputs_raw.json", person_index=0, output_obj_path="tpose.obj"):
+        """
+        Generate a T-pose/A-pose mesh with the same body shape and scale from outputs_raw.json,
+        but with all pose parameters set to zero (no pose).
+        
+        This keeps the same body shape (shape_params) and scale (scale_params) but removes
+        all pose information (global_rot, body_pose_params, hand_pose_params, expr_params).
+        
+        Args:
+            outputs_raw_path: Path to outputs_raw.json file
+            person_index: Index of person to use (default: 0)
+            output_obj_path: Path to save the OBJ file
+            
+        Returns:
+            tuple: (vertices_np, output_obj_path)
+        """
+        import trimesh
+        
+        # Load outputs_raw.json
+        print(f"Loading {outputs_raw_path}...")
+        with open(outputs_raw_path, "r") as f:
+            outputs_raw = json.load(f)
+        
+        if person_index >= len(outputs_raw):
+            raise ValueError(f"person_index {person_index} out of range. Only {len(outputs_raw)} people found.")
+        
+        output = outputs_raw[person_index]
+        print(f"Processing person {person_index} for T-pose generation...")
+        
+        # Get MHR head from estimator
+        mhr_head = self.estimator.model.head_pose
+        faces = self.estimator.faces
+        
+        # Convert numpy arrays to torch tensors
+        device = self.device
+        
+        # Extract shape and scale parameters (keep these)
+        scale_params = torch.from_numpy(np.array(output["scale_params"])).float().to(device)
+        shape_params = torch.from_numpy(np.array(output["shape_params"])).float().to(device)
+        
+        # Set all pose parameters to zero (T-pose/A-pose)
+        # Global rotation: zeros (no rotation)
+        global_rot = torch.zeros(3).float().to(device)
+        global_trans = torch.zeros(3).float().to(device)
+        
+        # Body pose: zeros (T-pose)
+        body_pose_params = torch.zeros(133).float().to(device)
+        
+        # Hand pose: None (use body_pose_params zeros for hands, which should give straight fingers)
+        # If we pass zeros here, it adds hand_pose_mean which gives relaxed/bent fingers
+        # By passing None, we skip replace_hands_in_pose and use the zeros from body_pose_params
+        hand_pose_params = None
+        
+        # Expression: zeros (no facial expression)
+        expr_params = torch.zeros(72).float().to(device) if output.get("expr_params") is not None else None
+        
+        # Add batch dimension
+        global_rot = global_rot.unsqueeze(0)
+        global_trans = global_trans.unsqueeze(0)
+        body_pose_params = body_pose_params.unsqueeze(0)
+        scale_params = scale_params.unsqueeze(0) if len(scale_params.shape) == 1 else scale_params
+        shape_params = shape_params.unsqueeze(0) if len(shape_params.shape) == 1 else shape_params
+        if expr_params is not None:
+            expr_params = expr_params.unsqueeze(0)
+        
+        print("Generating T-pose mesh with mhr_forward...")
+        print(f"  Shape params: {shape_params.shape}")
+        print(f"  Scale params: {scale_params.shape}")
+        print(f"  Global rot: {global_rot.shape} (all zeros)")
+        print(f"  Body pose: {body_pose_params.shape} (all zeros)")
+        print(f"  Hand pose: None (using zeros from body_pose_params for straight fingers)")
+        
+        # Call mhr_forward to generate T-pose vertices
+        with torch.no_grad():
+            vertices = mhr_head.mhr_forward(
+                global_trans=global_trans,
+                global_rot=global_rot,
+                body_pose_params=body_pose_params,
+                hand_pose_params=hand_pose_params,
+                scale_params=scale_params,
+                shape_params=shape_params,
+                expr_params=expr_params,
+                return_keypoints=False,
+                do_pcblend=True,
+                return_joint_coords=False,
+                return_model_params=False,
+                return_joint_rotations=False,
+            )
+        
+        # Convert to numpy and apply camera system correction (same as in mhr_head.forward)
+        vertices_np = vertices.cpu().numpy()[0]  # Remove batch dimension
+        vertices_np[..., [1, 2]] *= -1  # Camera system difference
+        
+        print(f"Generated {len(vertices_np)} vertices in T-pose")
+        print(f"  Expected vertex counts by LOD:")
+        print(f"    LOD 0: ~18439 vertices (matches current output)")
+        print(f"    LOD 1: ~73639 vertices")
+        print(f"    LOD 2: ~294559 vertices")
+        print(f"  Note: MHR model is hardcoded to lod=1 in mhr_head.py line 111, but generates {len(vertices_np)} vertices")
+        print(f"  This suggests the model is actually using LOD 0, not LOD 1")
+        
+        # Create trimesh and save as OBJ
+        mesh = trimesh.Trimesh(vertices=vertices_np, faces=faces)
+        mesh.export(output_obj_path)
+        print(f"Saved T-pose mesh to {output_obj_path}")
+        
+        return vertices_np, output_obj_path
+    
+    def generate_tpose(self, scale_params, shape_params, output_obj_path="tpose.obj"):
+        # This is the main generate_tpose function (not generate_tpose_from_outputs_raw)
+        """
+        Generate a T-pose/A-pose mesh with the given body shape and scale parameters,
+        but with all pose parameters set to zero (no pose).
+        
+        This keeps the same body shape (shape_params) and scale (scale_params) but removes
+        all pose information (global_rot, body_pose_params, hand_pose_params, expr_params).
+        
+        Args:
+            scale_params: Scale parameters (numpy array or list)
+            shape_params: Shape parameters (numpy array or list)
+            output_obj_path: Path to save the OBJ file
+            
+        Returns:
+            tuple: (vertices_np, output_obj_path)
+        """
+        import trimesh
+        
+        # Get MHR head from estimator
+        mhr_head = self.estimator.model.head_pose
+        faces = self.estimator.faces
+        
+        # Log MHR model LOD information
+        print("Checking MHR model LOD...")
+        if hasattr(mhr_head, 'lod'):
+            print(f"  MHRHead LOD: {mhr_head.lod}")
+        if hasattr(mhr_head, 'mhr'):
+            mhr_model = mhr_head.mhr
+            # Try to get LOD from MHR model
+            if hasattr(mhr_model, 'lod'):
+                print(f"  MHR model LOD: {mhr_model.lod}")
+            elif hasattr(mhr_model, '_lod'):
+                print(f"  MHR model LOD (private): {mhr_model._lod}")
+            else:
+                print("  MHR model LOD: Not directly accessible from model object")
+                # Check vertex count from faces to infer LOD
+                if hasattr(faces, 'shape'):
+                    print(f"  Faces shape: {faces.shape}")
+                if hasattr(mhr_head, 'faces'):
+                    print(f"  MHRHead faces shape: {mhr_head.faces.shape}")
+        else:
+            print("  MHR model: Not using Momentum (using torch.jit.load)")
+        
+        # Convert numpy arrays to torch tensors
+        device = self.device
+        
+        # Convert to numpy arrays if needed, then to torch tensors
+        if isinstance(scale_params, list):
+            scale_params = np.array(scale_params)
+        if isinstance(shape_params, list):
+            shape_params = np.array(shape_params)
+        
+        scale_params = torch.from_numpy(scale_params).float().to(device)
+        shape_params = torch.from_numpy(shape_params).float().to(device)
+        
+        # Set all pose parameters to zero (T-pose/A-pose)
+        # Global rotation: zeros (no rotation)
+        global_rot = torch.zeros(3).float().to(device)
+        global_trans = torch.zeros(3).float().to(device)
+        
+        # Body pose: zeros (T-pose)
+        body_pose_params = torch.zeros(133).float().to(device)
+        
+        # Hand pose: None (use body_pose_params zeros for hands, which should give straight fingers)
+        # If we pass zeros here, it adds hand_pose_mean which gives relaxed/bent fingers
+        # By passing None, we skip replace_hands_in_pose and use the zeros from body_pose_params
+        hand_pose_params = None
+        
+        # Expression: zeros (no facial expression)
+        # We always zero this out since it's per-frame
+        expr_params = torch.zeros(72).float().to(device)
+        
+        # Add batch dimension
+        global_rot = global_rot.unsqueeze(0)
+        global_trans = global_trans.unsqueeze(0)
+        body_pose_params = body_pose_params.unsqueeze(0)
+        scale_params = scale_params.unsqueeze(0) if len(scale_params.shape) == 1 else scale_params
+        shape_params = shape_params.unsqueeze(0) if len(shape_params.shape) == 1 else shape_params
+        expr_params = expr_params.unsqueeze(0)
+        
+        print("Generating T-pose mesh with mhr_forward...")
+        print(f"  Shape params: {shape_params.shape}")
+        print(f"  Scale params: {scale_params.shape}")
+        print(f"  Global rot: {global_rot.shape} (all zeros)")
+        print(f"  Body pose: {body_pose_params.shape} (all zeros)")
+        print(f"  Hand pose: None (using zeros from body_pose_params for straight fingers)")
+        
+        # Call mhr_forward to generate T-pose vertices
+        with torch.no_grad():
+            vertices = mhr_head.mhr_forward(
+                global_trans=global_trans,
+                global_rot=global_rot,
+                body_pose_params=body_pose_params,
+                hand_pose_params=hand_pose_params,
+                scale_params=scale_params,
+                shape_params=shape_params,
+                expr_params=expr_params,
+                return_keypoints=False,
+                do_pcblend=True,
+                return_joint_coords=False,
+                return_model_params=False,
+                return_joint_rotations=False,
+            )
+        
+        # Convert to numpy and apply camera system correction (same as in mhr_head.forward)
+        vertices_np = vertices.cpu().numpy()[0]  # Remove batch dimension
+        vertices_np[..., [1, 2]] *= -1  # Camera system difference
+        
+        # Clean up GPU tensors
+        del vertices, scale_params, shape_params, global_rot, global_trans, body_pose_params, expr_params
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+        print(f"Generated {len(vertices_np)} vertices in T-pose")
+        
+        # Create trimesh and save as OBJ
+        mesh = trimesh.Trimesh(vertices=vertices_np, faces=faces)
+        mesh.export(output_obj_path)
+        print(f"Saved T-pose mesh to {output_obj_path}")
+        
+        return vertices_np, output_obj_path
