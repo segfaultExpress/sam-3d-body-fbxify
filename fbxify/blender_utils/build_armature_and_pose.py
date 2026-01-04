@@ -809,29 +809,6 @@ bpy.ops.object.mode_set(mode="OBJECT")
 # ------------------------------------------------------------------------
 # APPLY ROOT MOTION
 # ------------------------------------------------------------------------
-"""
-bpy.ops.object.mode_set(mode="OBJECT")
-
-if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
-    # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
-    # apply keyframes to the armature, not any bone
-    arm_obj.rotation_mode = 'QUATERNION'
-    
-    for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
-        # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
-        cam_translation = root_motion_entry["pred_cam_t"]
-        arm_obj.location = Vector((cam_translation[0], -cam_translation[1], -cam_translation[2])) # Vector((cam_translation[0], -cam_translation[2], cam_translation[1]))
-
-        # Use rotation as-is, convert Euler to Quaternion to avoid gimbal lock
-        euler = root_motion_entry["global_rot"]
-        arm_obj.rotation_euler = euler
-
-        arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
-        arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
-
-bpy.ops.object.mode_set(mode="OBJECT")
-"""
-
 bpy.ops.object.mode_set(mode="OBJECT")
 
 # TODO: This is basically a hardcoded value for my default extracted armature's height to hip bone, in its rest pose
@@ -842,7 +819,7 @@ except:
     print("  WARNING: No rest pose hips offset (y value from floor) found, using default value of 0.0")
     rest_pose_hips_offset = 0.0
 
-if len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
+if root_motion is not None and len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
     # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
     # apply keyframes to the armature, not any bone
     arm_obj.rotation_mode = 'XYZ'

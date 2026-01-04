@@ -1,6 +1,8 @@
 from fbxify.refinement.refinement_config import RefinementConfig
 import re
 import math
+import numpy as np
+from typing import Dict, Any, Optional
 
 # ============================================================================
 # Vector and Math Utilities
@@ -464,6 +466,7 @@ class RefinementManager:
 
     def configure(self, config: RefinementConfig, fps: float = 30.0):
         self.config = config
+        self.fps = fps
         self.dt = 1.0 / fps  # time step in seconds
     
     def _calculate_vector_change_percent(self, v_original, v_refined):
@@ -580,20 +583,210 @@ class RefinementManager:
         
         return total_angle_change / count
 
-    def apply(self, root_node, root_motion=None):
+    def apply(self, estimation_results: Dict[str, Dict[str, Any]], 
+             progress_callback: Optional[callable] = None) -> Dict[str, Dict[str, Any]]:
         """
-        Apply refinement and mocap-style smoothing to the animation.
-        - root_node: the root node of the animation (can be None if only refining root_motion)
-        - root_motion: the root motion of the animation
-        - returns: the refined root node (full joint_to_bone_mapping) and root motion
+        Apply refinement directly to estimation results (before joint mapping).
+        
+        This method refines:
+        - pred_global_rots: Joint rotations (array of 3x3 matrices per frame)
+        - global_rot: Root rotation (3x3 matrix per frame)
+        - pred_cam_t: Root translation (3D vector per frame)
+        
+        Args:
+            estimation_results: Dictionary in format {frame_X: {person_id: estimation_data}}
+            progress_callback: Optional callback function(progress, description)
+            
+        Returns:
+            Refined estimation results in the same format
         """
-        if root_node is not None:
-            self._refine_node_recursive(root_node)
-
-        if root_motion is not None and self.config.do_root_motion_fix:
-            root_motion = self._root_stabilization(root_motion)
-
-        return root_node, root_motion
+        if self.config is None:
+            return estimation_results
+        
+        if progress_callback:
+            progress_callback(0.0, "Applying refinement to estimation results...")
+        
+        # Get all person IDs across all frames
+        all_person_ids = set()
+        for frame_data in estimation_results.values():
+            for person_id in frame_data.keys():
+                all_person_ids.add(person_id)
+        
+        # Get all frame indices sorted
+        frame_indices = sorted([int(k) for k in estimation_results.keys()])
+        num_frames = len(frame_indices)
+        
+        if num_frames == 0:
+            return estimation_results
+        
+        refined_results = {}
+        
+        # Process each person separately
+        for person_index, person_id in enumerate(all_person_ids):
+            if progress_callback:
+                progress = person_index / len(all_person_ids)
+                progress_callback(progress, f"Refining person {person_index + 1} of {len(all_person_ids)}")
+            
+            # Collect data for this person across all frames
+            joint_rotations_series = []  # [T][num_joints][3][3]
+            root_rotations_series = []    # [T][3][3]
+            root_translations_series = [] # [T][3]
+            joint_coords_series = []      # [T][num_joints][3] (for foot planting if needed)
+            
+            # First pass: collect all data
+            for frame_idx in frame_indices:
+                frame_key = str(frame_idx)
+                frame_data = estimation_results.get(frame_key, {})
+                person_data = frame_data.get(str(person_id))
+                
+                if person_data is None:
+                    # Missing frame - add None placeholders
+                    joint_rotations_series.append(None)
+                    root_rotations_series.append(None)
+                    root_translations_series.append(None)
+                    joint_coords_series.append(None)
+                    continue
+                
+                # Extract data
+                pred_global_rots = person_data.get("pred_global_rots")
+                global_rot = person_data.get("global_rot")
+                pred_cam_t = person_data.get("pred_cam_t")
+                pred_joint_coords = person_data.get("pred_joint_coords")
+                
+                # Convert to lists if numpy arrays
+                if pred_global_rots is not None:
+                    if hasattr(pred_global_rots, 'tolist'):
+                        pred_global_rots = pred_global_rots.tolist()
+                    joint_rotations_series.append(pred_global_rots)
+                else:
+                    joint_rotations_series.append(None)
+                
+                if global_rot is not None:
+                    if hasattr(global_rot, 'tolist'):
+                        global_rot = global_rot.tolist()
+                    root_rotations_series.append(global_rot)
+                else:
+                    root_rotations_series.append(None)
+                
+                if pred_cam_t is not None:
+                    if hasattr(pred_cam_t, 'tolist'):
+                        pred_cam_t = pred_cam_t.tolist()
+                    root_translations_series.append(pred_cam_t)
+                else:
+                    root_translations_series.append(None)
+                
+                if pred_joint_coords is not None:
+                    if hasattr(pred_joint_coords, 'tolist'):
+                        pred_joint_coords = pred_joint_coords.tolist()
+                    joint_coords_series.append(pred_joint_coords)
+                else:
+                    joint_coords_series.append(None)
+            
+            # Refine joint rotations (each joint separately)
+            if joint_rotations_series and any(x is not None for x in joint_rotations_series):
+                # Get number of joints from first non-None frame
+                num_joints = None
+                for rot_frame in joint_rotations_series:
+                    if rot_frame is not None:
+                        num_joints = len(rot_frame)
+                        break
+                
+                if num_joints is not None:
+                    # Refine each joint separately
+                    refined_joint_rots = []
+                    for joint_idx in range(num_joints):
+                        # Extract rotation series for this joint: [T][3][3]
+                        joint_rot_series = []
+                        for t in range(num_frames):
+                            if joint_rotations_series[t] is not None and joint_idx < len(joint_rotations_series[t]):
+                                joint_rot = joint_rotations_series[t][joint_idx]
+                                # Parse rotation matrix to ensure it's in 3x3 format
+                                parsed = self._parse_rotation_matrix(joint_rot)
+                                joint_rot_series.append(parsed if parsed is not None else self._identity_matrix())
+                            else:
+                                joint_rot_series.append(None)
+                        
+                        # Refine this joint's rotation series
+                        refined_joint_rot = self._process_rotation_series(
+                            joint_rot_series, 
+                            self.config.profiles.get("*", self.config.profiles.get("root")),
+                            bone_name=f"joint_{joint_idx}"
+                        )
+                        refined_joint_rots.append(refined_joint_rot)
+                    
+                    # Reorganize: [num_joints][T][3][3] -> [T][num_joints][3][3]
+                    joint_rotations_series = []
+                    for t in range(num_frames):
+                        frame_joint_rots = []
+                        for joint_idx in range(num_joints):
+                            frame_joint_rots.append(refined_joint_rots[joint_idx][t])
+                        joint_rotations_series.append(frame_joint_rots)
+            
+            # Refine root rotation
+            if root_rotations_series and any(x is not None for x in root_rotations_series):
+                # Parse rotation matrices to ensure they're in 3x3 format
+                parsed_root_rotations = []
+                for rot in root_rotations_series:
+                    if rot is None:
+                        parsed_root_rotations.append(None)
+                    else:
+                        parsed = self._parse_rotation_matrix(rot)
+                        parsed_root_rotations.append(parsed if parsed is not None else self._identity_matrix())
+                
+                prof = self.config.profiles.get("root", self.config.profiles.get("*"))
+                root_rotations_series = self._process_rotation_series(
+                    parsed_root_rotations,
+                    prof,
+                    bone_name="root_rotation"
+                )
+            
+            # Refine root translation
+            if root_translations_series and any(x is not None for x in root_translations_series):
+                prof = self.config.profiles.get("root", self.config.profiles.get("*"))
+                root_translations_series = self._process_vector_series(
+                    root_translations_series,
+                    prof,
+                    bone_name="root_translation"
+                )
+            
+            # Apply root motion stabilization (combines rotation and translation)
+            if self.config.do_root_motion_fix and root_rotations_series and root_translations_series:
+                root_motion_dict = {
+                    "translation": root_translations_series,
+                    "rotation": root_rotations_series
+                }
+                root_motion_dict = self._root_stabilization(root_motion_dict)
+                root_translations_series = root_motion_dict["translation"]
+                root_rotations_series = root_motion_dict["rotation"]
+            
+            # Store refined data back into results
+            for frame_idx, frame_key in enumerate([str(f) for f in frame_indices]):
+                if frame_key not in refined_results:
+                    refined_results[frame_key] = {}
+                
+                # Get original person data to preserve other fields
+                original_frame_data = estimation_results.get(frame_key, {})
+                original_person_data = original_frame_data.get(str(person_id), {})
+                
+                # Create refined person data
+                refined_person_data = original_person_data.copy()
+                
+                # Update with refined values
+                if frame_idx < len(joint_rotations_series) and joint_rotations_series[frame_idx] is not None:
+                    refined_person_data["pred_global_rots"] = joint_rotations_series[frame_idx]
+                
+                if frame_idx < len(root_rotations_series) and root_rotations_series[frame_idx] is not None:
+                    refined_person_data["global_rot"] = root_rotations_series[frame_idx]
+                
+                if frame_idx < len(root_translations_series) and root_translations_series[frame_idx] is not None:
+                    refined_person_data["pred_cam_t"] = root_translations_series[frame_idx]
+                
+                refined_results[frame_key][str(person_id)] = refined_person_data
+        
+        if progress_callback:
+            progress_callback(1.0, "Refinement complete")
+        
+        return refined_results
 
     def _interpolate_missing_frames(self, series, is_rotation=False):
         """
@@ -704,44 +897,6 @@ class RefinementManager:
                 i += 1
         
         return result
-
-    def _refine_node_recursive(self, node):
-        """
-        Refine a node recursively.
-        - node: the node to refine
-        - returns: none - mutable data is modified in place
-        """
-        prof = self._profile_for(node["name"])
-
-        mapping = node.get("mapping") or node  # depending on your JSON shape
-        method = mapping.get("method")
-        data = mapping.get("data", {})
-
-        if method == "direct_rotation":
-            if "rotation" in data:
-                mats = data["rotation"]  # [T][3][3]
-                mats = self._process_rotation_series(mats, prof, bone_name=node["name"])
-                data["rotation"] = mats
-        elif method == "keypoint_with_global_rot_roll":
-            if "dir_vector" in data:
-                v = data["dir_vector"]   # [T][3]
-                v = self._process_vector_series(v, prof, bone_name=f"{node['name']}.dir_vector")
-                data["dir_vector"] = v
-
-            if "roll_vector" in data:
-                mats = data["roll_vector"]  # [T][3][3]
-                mats = self._process_rotation_series(mats, prof, bone_name=f"{node['name']}.roll_vector")
-                data["roll_vector"] = mats
-        else:
-            # Future mapping methods?
-            print(f"  WARNING: While refinining [{node['name']}] action, the bone has unknown mapping method: {method}")
-
-        # Recursively process children
-        if "children" in node:
-            for child in node["children"]:
-                self._refine_node_recursive(child)
-
-        return node
 
     def _process_vector_series(self, v_series, prof, bone_name=None):
         # CRITICAL: Interpolation must happen FIRST, before any other processing
@@ -963,6 +1118,36 @@ class RefinementManager:
                             filter_z(trans[t][2])
                         ])
                     stabilized["translation"] = filtered_trans
+                elif prof.method == "ema":
+                    # Apply EMA with separate cutoffs for XY vs Z
+                    # Extract components
+                    x_series = [trans[t][0] for t in range(T)]
+                    y_series = [trans[t][1] for t in range(T)]
+                    z_series = [trans[t][2] for t in range(T)]
+                    
+                    # Calculate alpha values for each cutoff
+                    alpha_xy = 1.0 - math.exp(-2.0 * math.pi * prof.root_cutoff_xy_hz * self.dt)
+                    alpha_z = 1.0 - math.exp(-2.0 * math.pi * prof.root_cutoff_z_hz * self.dt)
+                    
+                    # Apply EMA filter to each component separately
+                    filtered_x = [x_series[0]]
+                    filtered_y = [y_series[0]]
+                    filtered_z = [z_series[0]]
+                    
+                    for t in range(1, T):
+                        filtered_x.append(filtered_x[t-1] + alpha_xy * (x_series[t] - filtered_x[t-1]))
+                        filtered_y.append(filtered_y[t-1] + alpha_xy * (y_series[t] - filtered_y[t-1]))
+                        filtered_z.append(filtered_z[t-1] + alpha_z * (z_series[t] - filtered_z[t-1]))
+                    
+                    # Recombine
+                    filtered_trans = []
+                    for t in range(T):
+                        filtered_trans.append([
+                            filtered_x[t],
+                            filtered_y[t],
+                            filtered_z[t]
+                        ])
+                    stabilized["translation"] = filtered_trans
                 else:
                     # For other methods, use profile cutoffs (standard processing)
                     filtered = self._process_vector_series(trans, prof)
@@ -992,6 +1177,332 @@ class RefinementManager:
                 stabilized[key] = root_motion[key]
         
         return stabilized
+    
+    def _foot_planting_adjustment(self, root_motion, joint_to_bone_mapping):
+        """
+        Adjust root motion based on foot contact to reduce jitter.
+        
+        Args:
+            root_motion: dict with "translation" [T][3] and "rotation" [T][3][3]
+            joint_to_bone_mapping: joint-to-bone mapping structure (for accessing bone data)
+        
+        Returns:
+            Adjusted root_motion dict
+        """
+        
+        if not self.config.do_foot_planting:
+            return root_motion
+        
+        
+
+        return root_motion
+
+    def _foot_planting_ai_slopcode(self, root_motion, joint_to_bone_mapping):
+        """
+        Adjust root motion based on foot contact to reduce jitter.
+        
+        Args:
+            root_motion: dict with "translation" [T][3] and "rotation" [T][3][3]
+            joint_to_bone_mapping: joint-to-bone mapping structure (for accessing bone data)
+        
+        Returns:
+            Adjusted root_motion dict
+        """
+        if not self.config.do_foot_planting:
+            return root_motion
+        
+        fp_config = self.config.foot_planting_config
+        
+        # Debug: Check if we have the necessary data
+        print(f"\n=== FOOT PLANTING DEBUG ===")
+        print(f"Foot planting enabled: {self.config.do_foot_planting}")
+        print(f"Config: velocity_threshold={fp_config.foot_contact_velocity_threshold}, "
+              f"min_height={fp_config.foot_contact_min_height}, "
+              f"blend_factor={fp_config.blend_factor}")
+        
+        if root_motion is None:
+            print("ERROR: root_motion is None")
+            return root_motion
+        
+        if "translation" not in root_motion:
+            print("ERROR: root_motion missing 'translation' key")
+            return root_motion
+        
+        T = len(root_motion["translation"])
+        print(f"Number of frames: {T}")
+        print(f"joint_to_bone_mapping is None: {joint_to_bone_mapping is None}")
+        
+        if joint_to_bone_mapping is None:
+            print("WARNING: joint_to_bone_mapping is None - cannot compute foot positions")
+            print("Foot planting will be skipped.")
+            return root_motion
+        
+        # Try to find foot bones in the hierarchy
+        def find_bone_by_name(bone_dict, name):
+            """Recursively find a bone by name in the hierarchy."""
+            if not isinstance(bone_dict, dict):
+                return None
+            if bone_dict.get("name") == name:
+                return bone_dict
+            for child in bone_dict.get("children", []):
+                result = find_bone_by_name(child, name)
+                if result is not None:
+                    return result
+            return None
+        
+        left_foot_bone = find_bone_by_name(joint_to_bone_mapping, "l_foot")
+        right_foot_bone = find_bone_by_name(joint_to_bone_mapping, "r_foot")
+        
+        print(f"Left foot bone found: {left_foot_bone is not None}")
+        print(f"Right foot bone found: {right_foot_bone is not None}")
+        
+        if left_foot_bone is not None:
+            print(f"Left foot bone structure: {list(left_foot_bone.keys())}")
+            if "data" in left_foot_bone:
+                print(f"Left foot data keys: {list(left_foot_bone['data'].keys()) if isinstance(left_foot_bone.get('data'), dict) else 'N/A'}")
+                if "rotation" in left_foot_bone.get("data", {}):
+                    rot_data = left_foot_bone["data"]["rotation"]
+                    print(f"Left foot rotation data: {len(rot_data) if isinstance(rot_data, list) else 'N/A'} frames")
+        
+        if right_foot_bone is not None:
+            print(f"Right foot bone structure: {list(right_foot_bone.keys())}")
+            if "data" in right_foot_bone:
+                print(f"Right foot data keys: {list(right_foot_bone['data'].keys()) if isinstance(right_foot_bone.get('data'), dict) else 'N/A'}")
+        
+        # Try to find bones and check what data they have
+        def find_bone_data(bone_dict, name):
+            """Find bone and return all available data."""
+            bone = find_bone_by_name(bone_dict, name)
+            if bone is None:
+                return None, {}
+            data = bone.get("data", {})
+            return bone, data
+        
+        left_ankle_bone, left_ankle_data = find_bone_data(joint_to_bone_mapping, "l_lowleg")
+        right_ankle_bone, right_ankle_data = find_bone_data(joint_to_bone_mapping, "r_lowleg")
+        left_foot_bone_data = left_foot_bone.get("data", {}) if left_foot_bone else {}
+        right_foot_bone_data = right_foot_bone.get("data", {}) if right_foot_bone else {}
+        
+        print(f"Left ankle (l_lowleg) data keys: {list(left_ankle_data.keys())}")
+        print(f"Right ankle (r_lowleg) data keys: {list(right_ankle_data.keys())}")
+        print(f"Left foot data keys: {list(left_foot_bone_data.keys())}")
+        print(f"Right foot data keys: {list(right_foot_bone_data.keys())}")
+        
+        # Check for coords, joint_coords, or rotation data
+        left_ankle_coords = left_ankle_data.get("coords") or left_ankle_data.get("joint_coords")
+        right_ankle_coords = right_ankle_data.get("coords") or right_ankle_data.get("joint_coords")
+        left_foot_coords = left_foot_bone_data.get("coords") or left_foot_bone_data.get("joint_coords")
+        right_foot_coords = right_foot_bone_data.get("coords") or right_foot_bone_data.get("joint_coords")
+        
+        print(f"Left ankle coords available: {left_ankle_coords is not None and len(left_ankle_coords) > 0 if left_ankle_coords else False}")
+        print(f"Right ankle coords available: {right_ankle_coords is not None and len(right_ankle_coords) > 0 if right_ankle_coords else False}")
+        print(f"Left foot coords available: {left_foot_coords is not None and len(left_foot_coords) > 0 if left_foot_coords else False}")
+        print(f"Right foot coords available: {right_foot_coords is not None and len(right_foot_coords) > 0 if right_foot_coords else False}")
+        
+        # Validate we have the necessary data
+        if not left_ankle_coords or not right_ankle_coords:
+            print("WARNING: Missing ankle coordinate data - foot planting skipped")
+            return root_motion
+        
+        # Choose which keypoint to use for contact detection
+        if fp_config.use_mid_foot and left_foot_coords and right_foot_coords:
+            left_contact_coords = left_foot_coords
+            right_contact_coords = right_foot_coords
+            contact_name = "mid-foot"
+        else:
+            left_contact_coords = left_ankle_coords
+            right_contact_coords = right_ankle_coords
+            contact_name = "ankle"
+        
+        print(f"Using {contact_name} keypoints for contact detection")
+        
+        # Convert to numpy arrays for easier manipulation
+        root_trans = np.array(root_motion["translation"])  # [T, 3]
+        
+        # Build world-space foot positions: root_trans + relative_foot_pos
+        left_foot_world = np.zeros((T, 3))
+        right_foot_world = np.zeros((T, 3))
+        
+        for t in range(T):
+            root_t = root_trans[t]
+            
+            # Get relative foot positions
+            if t < len(left_contact_coords) and left_contact_coords[t] is not None:
+                left_rel = np.array(left_contact_coords[t][:3])
+                left_foot_world[t] = root_t + left_rel
+            else:
+                left_foot_world[t] = root_t  # Fallback to root if missing
+            
+            if t < len(right_contact_coords) and right_contact_coords[t] is not None:
+                right_rel = np.array(right_contact_coords[t][:3])
+                right_foot_world[t] = root_t + right_rel
+            else:
+                right_foot_world[t] = root_t  # Fallback to root if missing
+        
+        # Calculate foot velocities
+        # For contact detection, we want RELATIVE velocity (foot movement relative to root)
+        # because if the root moves forward, the foot's world position changes even if it's planted
+        left_foot_relative_velocity = np.zeros((T, 3))
+        right_foot_relative_velocity = np.zeros((T, 3))
+        
+        # Get relative foot positions (already in local/root space)
+        left_foot_relative = np.zeros((T, 3))
+        right_foot_relative = np.zeros((T, 3))
+        
+        for t in range(T):
+            if t < len(left_contact_coords) and left_contact_coords[t] is not None:
+                left_foot_relative[t] = np.array(left_contact_coords[t][:3])
+            if t < len(right_contact_coords) and right_contact_coords[t] is not None:
+                right_foot_relative[t] = np.array(right_contact_coords[t][:3])
+        
+        # Calculate relative velocity (change in relative position per frame)
+        for t in range(1, T):
+            left_foot_relative_velocity[t] = left_foot_relative[t] - left_foot_relative[t-1]
+            right_foot_relative_velocity[t] = right_foot_relative[t] - right_foot_relative[t-1]
+        
+        # Calculate speed (magnitude of relative velocity)
+        left_foot_speed = np.linalg.norm(left_foot_relative_velocity, axis=1)  # [T]
+        right_foot_speed = np.linalg.norm(right_foot_relative_velocity, axis=1)  # [T]
+        
+        # Also calculate world velocity for debugging
+        left_foot_world_velocity = np.zeros((T, 3))
+        right_foot_world_velocity = np.zeros((T, 3))
+        for t in range(1, T):
+            left_foot_world_velocity[t] = left_foot_world[t] - left_foot_world[t-1]
+            right_foot_world_velocity[t] = right_foot_world[t] - right_foot_world[t-1]
+        left_foot_world_speed = np.linalg.norm(left_foot_world_velocity, axis=1)
+        right_foot_world_speed = np.linalg.norm(right_foot_world_velocity, axis=1)
+        
+        # Find ground level (minimum Z across all frames for both feet)
+        # We'll use the lowest point as ground reference
+        all_foot_z = np.concatenate([left_foot_world[:, 2], right_foot_world[:, 2]])
+        ground_level = np.min(all_foot_z)
+        foot_height_above_ground = np.minimum(
+            left_foot_world[:, 2] - ground_level,
+            right_foot_world[:, 2] - ground_level
+        )
+        
+        print(f"Ground level (min Z): {ground_level:.4f}")
+        print(f"Foot height range: [{np.min(foot_height_above_ground):.4f}, {np.max(foot_height_above_ground):.4f}]")
+        
+        # Detect foot contact: low RELATIVE velocity AND low height
+        # Convert velocity threshold from m/s to m/frame
+        fps = self.fps
+        velocity_threshold_per_frame = fp_config.foot_contact_velocity_threshold / fps
+        print(f"Velocity threshold: {fp_config.foot_contact_velocity_threshold:.4f} m/s = {velocity_threshold_per_frame*1000:.2f} mm/frame")
+        print(f"Height threshold: {fp_config.foot_contact_min_height:.4f} m")
+        print(f"Min relative speed (left): {np.min(left_foot_speed[1:])*1000:.2f} mm/frame, Max: {np.max(left_foot_speed[1:])*1000:.2f} mm/frame")
+        print(f"Min relative speed (right): {np.min(right_foot_speed[1:])*1000:.2f} mm/frame, Max: {np.max(right_foot_speed[1:])*1000:.2f} mm/frame")
+        
+        left_in_contact = (left_foot_speed < velocity_threshold_per_frame) & \
+                          (left_foot_world[:, 2] - ground_level < fp_config.foot_contact_min_height)
+        right_in_contact = (right_foot_speed < velocity_threshold_per_frame) & \
+                           (right_foot_world[:, 2] - ground_level < fp_config.foot_contact_min_height)
+        
+        # Smooth contact detection using a moving window
+        window_size = fp_config.contact_smoothing_window
+        if window_size > 1:
+            # Use convolution to smooth (1 = contact, 0 = no contact)
+            kernel = np.ones(window_size) / window_size
+            left_contact_smooth = np.convolve(left_in_contact.astype(float), kernel, mode='same') > 0.5
+            right_contact_smooth = np.convolve(right_in_contact.astype(float), kernel, mode='same') > 0.5
+            left_in_contact = left_contact_smooth
+            right_in_contact = right_contact_smooth
+        
+        # Debug: print contact stats
+        left_contact_frames = np.sum(left_in_contact)
+        right_contact_frames = np.sum(right_in_contact)
+        print(f"Left foot in contact: {left_contact_frames}/{T} frames ({100*left_contact_frames/T:.1f}%)")
+        print(f"Right foot in contact: {right_contact_frames}/{T} frames ({100*right_contact_frames/T:.1f}%)")
+        
+        # Print per-frame debug for first few frames
+        num_debug_frames = min(10, T)
+        print(f"\n--- Per-frame debug (first {num_debug_frames} frames) ---")
+        for t in range(num_debug_frames):
+            root_t = root_trans[t]
+            left_world = left_foot_world[t]
+            right_world = right_foot_world[t]
+            left_vel = left_foot_speed[t]
+            right_vel = right_foot_speed[t]
+            left_contact = left_in_contact[t]
+            right_contact = right_in_contact[t]
+            
+            left_height = left_world[2] - ground_level
+            right_height = right_world[2] - ground_level
+            left_world_vel = left_foot_world_speed[t] if t < len(left_foot_world_speed) else 0
+            right_world_vel = right_foot_world_speed[t] if t < len(right_foot_world_speed) else 0
+            
+            print(f"Frame {t}:")
+            print(f"  Root: [{root_t[0]:.4f}, {root_t[1]:.4f}, {root_t[2]:.4f}]")
+            print(f"  Left foot: world=[{left_world[0]:.4f}, {left_world[1]:.4f}, {left_world[2]:.4f}], "
+                  f"rel_vel={left_vel*1000:.2f}mm/frame, world_vel={left_world_vel*1000:.2f}mm/frame, "
+                  f"height={left_height*1000:.2f}mm, contact={left_contact}")
+            print(f"  Right foot: world=[{right_world[0]:.4f}, {right_world[1]:.4f}, {right_world[2]:.4f}], "
+                  f"rel_vel={right_vel*1000:.2f}mm/frame, world_vel={right_world_vel*1000:.2f}mm/frame, "
+                  f"height={right_height*1000:.2f}mm, contact={right_contact}")
+        
+        # Adjust root motion based on foot contact
+        # When a foot is planted, we want to keep its world position stable
+        # Strategy: compute desired root position from planted foot's movement
+        adjusted_root_trans = root_trans.copy()
+        
+        for t in range(1, T):
+            # Check if either foot is in contact
+            left_contact = left_in_contact[t]
+            right_contact = right_in_contact[t]
+            
+            if not (left_contact or right_contact):
+                continue  # No contact, use original root motion
+            
+            # Compute desired root adjustment
+            # If a foot is planted, its world position should change minimally
+            # So if the foot moved in world space, adjust root to compensate
+            root_adjustment = np.zeros(3)
+            
+            # When a foot is planted, we want to lock its world position
+            # Strategy: if foot relative position changed, adjust root to compensate
+            # so the foot's world position stays stable
+            
+            if left_contact:
+                # Left foot relative position changed - adjust root to compensate
+                # The relative change should be minimal when planted, but if it changed,
+                # we adjust root in the opposite direction to keep world position stable
+                relative_change = left_foot_relative[t] - left_foot_relative[t-1]
+                root_adjustment -= relative_change * 0.5  # Partial compensation
+            
+            if right_contact:
+                # Right foot relative position changed - adjust root to compensate
+                relative_change = right_foot_relative[t] - right_foot_relative[t-1]
+                root_adjustment -= relative_change * 0.5  # Partial compensation
+            
+            if left_contact and right_contact:
+                # Both feet planted - average the adjustment
+                root_adjustment *= 0.5
+            
+            # Apply adjustment with blend factor
+            adjusted_root_trans[t] = root_trans[t] + root_adjustment * fp_config.blend_factor
+        
+        # Smooth the adjusted root motion
+        if fp_config.root_smoothing_window > 1:
+            window_size = fp_config.root_smoothing_window
+            kernel = np.ones(window_size) / window_size
+            for dim in range(3):
+                smoothed = np.convolve(adjusted_root_trans[:, dim], kernel, mode='same')
+                adjusted_root_trans[:, dim] = smoothed
+        
+        # Blend original and adjusted root motion
+        final_root_trans = root_trans * (1 - fp_config.blend_factor) + adjusted_root_trans * fp_config.blend_factor
+        
+        print(f"\nRoot motion adjustment stats:")
+        print(f"  Max adjustment: {np.max(np.abs(final_root_trans - root_trans)):.4f}m")
+        print(f"  Avg adjustment: {np.mean(np.abs(final_root_trans - root_trans)):.4f}m")
+        print(f"=== END FOOT PLANTING DEBUG ===\n")
+        
+        # Return adjusted root motion
+        return {
+            "translation": final_root_trans.tolist(),
+            "rotation": root_motion["rotation"]
+        }
 
 
 

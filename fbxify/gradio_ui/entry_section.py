@@ -7,7 +7,6 @@ file upload, profile selection, bbox options, FOV options, and generate button.
 import gradio as gr
 from typing import Dict, Any, Tuple
 from fbxify.i18n import Translator
-from fbxify.metadata import PROFILES
 
 
 def create_entry_section(translator: Translator) -> Dict[str, Any]:
@@ -22,18 +21,22 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
     """
     components = {}
     
-    # Profile dropdown
-    components['profile_name'] = gr.Dropdown(
-        label=translator.t("ui.profile"),
-        choices=list(PROFILES.keys()),
-        value=list(PROFILES.keys())[0]
-    )
-    
     # Input file
     components['input_file'] = gr.File(
         label=translator.t("ui.input_file"),
         file_types=["image", "video"]
     )
+    
+    # Estimate Pose button (Step 1) - moved here, right after input file
+    components['estimate_pose_btn'] = gr.Button(
+        translator.t("ui.step_1_estimate_pose"),
+        variant="primary",
+        interactive=False  # Disabled by default until file is uploaded
+    )
+    
+    # Estimation Options section header
+    with gr.Group():
+        gr.Markdown(f"## {translator.t('ui.estimation_options_title')}")
     
     # Bbox options
     components['use_bbox'] = gr.Checkbox(
@@ -73,43 +76,6 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
         minimum=1,
         visible=False,
         info=translator.t("ui.sample_number_info")
-    )
-    
-    # Root motion checkbox
-    components['use_root_motion'] = gr.Checkbox(
-        label=translator.t("ui.use_root_motion"),
-        value=True
-    )
-    
-    # Mesh options
-    components['include_mesh'] = gr.Checkbox(
-        label=translator.t("ui.include_mesh"),
-        value=False
-    )
-    
-    with gr.Row():
-        components['lod'] = gr.Slider(
-            label=translator.t("ui.lod"),
-            minimum=0,
-            maximum=6,
-            step=1,
-            value=0,
-            visible=False,
-            info=translator.t("ui.lod_info")
-        )
-        components['body_param_sample_num'] = gr.Number(
-            label=translator.t("ui.body_param_sample_num"),
-            value=5,
-            precision=0,
-            minimum=1,
-            visible=False,
-            info=translator.t("ui.body_param_sample_num_info")
-        )
-    
-    # Generate button
-    components['generate_btn'] = gr.Button(
-        translator.t("ui.generate_btn"),
-        variant="primary"
     )
     
     return components
@@ -158,22 +124,6 @@ def toggle_fov_inputs(fov_method_value: str) -> Tuple[Any, Any]:
         )
 
 
-def toggle_mesh_inputs(include_mesh_value: bool) -> Tuple[Any, Any]:
-    """
-    Toggle visibility of lod and body_param_sample_num based on checkbox.
-    
-    Args:
-        include_mesh_value: Whether to include mesh
-        
-    Returns:
-        Tuple of updates for lod and body_param_sample_num
-    """
-    return (
-        gr.update(visible=include_mesh_value),
-        gr.update(visible=include_mesh_value)
-    )
-
-
 def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
     """
     Update entry section components with new language.
@@ -187,7 +137,6 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
     """
     t = Translator(lang)
     return (
-        gr.update(label=t.t("ui.profile")),  # profile_name
         gr.update(label=t.t("ui.input_file")),  # input_file
         gr.update(label=t.t("ui.use_bbox")),  # use_bbox
         gr.update(label=t.t("ui.bbox_file")),  # bbox_file
@@ -195,9 +144,5 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.fov_method"), info=t.t("ui.fov_method_info")),  # fov_method
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
-        gr.update(label=t.t("ui.use_root_motion")),  # use_root_motion
-        gr.update(label=t.t("ui.include_mesh")),  # include_mesh
-        gr.update(label=t.t("ui.lod"), info=t.t("ui.lod_info")),  # lod
-        gr.update(label=t.t("ui.body_param_sample_num"), info=t.t("ui.body_param_sample_num_info")),  # body_param_sample_num
-        gr.update(value=t.t("ui.generate_btn")),  # generate_btn
+        gr.update(value=t.t("ui.step_1_estimate_pose")),  # estimate_pose_btn
     )

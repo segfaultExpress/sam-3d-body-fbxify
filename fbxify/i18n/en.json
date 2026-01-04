@@ -2,6 +2,8 @@
   "app": {
     "title": "SAM 3D Body → Unity FBX",
     "heading": "🧍‍♂️ SAM 3D Body → Unity Humanoid FBX",
+    "program_tab": "Program",
+    "about_tab": "About",
     "features_title": "Features",
     "features": [
       "Generate Unity Humanoid-compatible FBX files from a single image",
@@ -11,12 +13,14 @@
     "usage_title": "Usage",
     "usage": [
       "Upload an image or MP4 video",
+      "Click the \"Estimate Pose\" button",
+      "(Optional) Download the generated JSON for future use, tuning refinement, etc.",
       "Click the \"Generate FBX\" button",
       "Download the generated FBX → Import to Unity",
       "The following are optional features:",
       "Upload your own bboxes and camera intrinsics file from gta-link, boxmot, colmap",
       "For video, you may or may not want root motion for your armature - check the box if you do",
-      "Apply standard mocap-style smoothing to the animation via Refinement. Enabled by defaultwith some customizable settings.",
+      "Apply standard mocap-style smoothing to the animation via Refinement. Enabled by default with some customizable settings.",
       "You may also create a visualization video of the animation for debugging purposes."
     ]
   },
@@ -37,7 +41,15 @@
     "lod_info": "Level of Detail for mesh (0-6)",
     "body_param_sample_num": "📊 Body Parameter Sample Number",
     "body_param_sample_num_info": "Number of frames to sample and average for body parameters",
-    "generate_btn": "🚀 Generate FBX",
+    "estimate_pose_btn": "🎯 Estimate Pose",
+    "step_1_estimate_pose": "1. Estimate Pose",
+    "generate_fbx_btn": "🚀 Generate FBX",
+    "step_2_generate_fbx": "2. Generate FBX",
+    "options_title": "Options",
+    "estimation_options_title": "Estimation Options",
+    "fbx_options_title": "FBX Options",
+    "pose_json_file": "📄 Pose Estimation JSON",
+    "pose_json_file_info": "Upload a pose estimation JSON file, or it will be auto-populated after estimation",
     "output_files": "📦 Generated Files",
     "developer_options": "Developer Options",
     "create_visualization": "Create Visualization",
@@ -90,7 +102,26 @@
       "root_cutoff_z_hz": "Root Cutoff Z (Hz)",
       "root_cutoff_z_hz_info": "Cutoff frequency for vertical (Z) root motion",
       "interpolate_missing_keyframes": "Interpolate Missing Keyframes",
-      "interpolate_missing_keyframes_info": "When enabled, missing frames (where no people were detected) will be interpolated using slerp for rotations and linear interpolation for vectors. When disabled, missing frames are skipped during refinement."
+      "interpolate_missing_keyframes_info": "When enabled, missing frames (where no people were detected) will be interpolated using slerp for rotations and linear interpolation for vectors. When disabled, missing frames are skipped during refinement.",
+      "use_foot_planting": "Use Foot Planting",
+      "use_foot_planting_info": "Enable foot planting to adjust root motion based on foot contact, reducing jitter and creating more natural walking/running motion",
+      "foot_planting": {
+        "title": "Foot Planting",
+        "foot_contact_velocity_threshold": "Foot Contact Velocity Threshold (m/s)",
+        "foot_contact_velocity_threshold_info": "Foot is considered 'planted' if its velocity is below this threshold",
+        "foot_contact_min_height": "Foot Contact Min Height (m)",
+        "foot_contact_min_height_info": "Foot must be below this height (Y coordinate) to be considered in contact",
+        "contact_smoothing_window": "Contact Smoothing Window",
+        "contact_smoothing_window_info": "Number of frames to use for smoothing contact detection (reduces flickering)",
+        "blend_factor": "Blend Factor",
+        "blend_factor_info": "How much to blend foot-based root adjustment with original root motion (0-1, higher = more adjustment)",
+        "root_smoothing_window": "Root Smoothing Window",
+        "root_smoothing_window_info": "Number of frames to use for smoothing the adjusted root motion",
+        "use_mid_foot": "Use Mid Foot",
+        "use_mid_foot_info": "Use mid_foot (average of heel/toes) instead of ankle for foot position",
+        "apply_before_root_smoothing": "Apply Before Root Smoothing",
+        "apply_before_root_smoothing_info": "Apply foot planting before root motion smoothing (otherwise applies after)"
+      }
     }
   },
   "progress": {

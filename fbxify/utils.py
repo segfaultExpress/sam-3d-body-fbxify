@@ -52,7 +52,7 @@ def to_serializable(obj, _seen=None):
     return obj
 
 
-def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces, mesh_obj_path=None, lod_fbx_path=None):
+def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_obj_path=None, lod_fbx_path=None):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
     try:

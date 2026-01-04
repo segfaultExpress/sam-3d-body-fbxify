@@ -159,6 +159,7 @@ def create_filter_profile_ui(profile: FilterProfile, section_name: str, translat
 def build_refinement_config_from_gui(
     enabled: bool,
     interpolate_missing_keyframes: bool,
+    use_foot_planting: bool,
     translator: Translator,
     # Root profile values
     root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
@@ -179,6 +180,11 @@ def build_refinement_config_from_gui(
     # Default profile values
     default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
     default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
+    # Foot planting values
+    foot_planting_velocity_threshold=None, foot_planting_min_height=None,
+    foot_planting_contact_window=None, foot_planting_blend_factor=None,
+    foot_planting_root_window=None, foot_planting_use_mid_foot=None,
+    foot_planting_apply_before=None,
 ) -> Optional[RefinementConfig]:
     """
     Build a RefinementConfig from GUI values.
@@ -285,6 +291,20 @@ def build_refinement_config_from_gui(
     config.do_vector_smoothing = True
     config.do_root_motion_fix = True
     config.do_interpolate_missing_keyframes = interpolate_missing_keyframes
+    config.do_foot_planting = use_foot_planting
+    
+    # Set foot planting config if enabled
+    if use_foot_planting:
+        from fbxify.refinement.foot_planting_config import FootPlantingConfig
+        config.foot_planting_config = FootPlantingConfig(
+            foot_contact_velocity_threshold=foot_planting_velocity_threshold if foot_planting_velocity_threshold is not None else 0.05,
+            foot_contact_min_height=foot_planting_min_height if foot_planting_min_height is not None else 0.02,
+            contact_smoothing_window=int(foot_planting_contact_window) if foot_planting_contact_window is not None else 3,
+            blend_factor=foot_planting_blend_factor if foot_planting_blend_factor is not None else 0.3,
+            root_smoothing_window=int(foot_planting_root_window) if foot_planting_root_window is not None else 5,
+            use_mid_foot=foot_planting_use_mid_foot if foot_planting_use_mid_foot is not None else True,
+            apply_before_root_smoothing=foot_planting_apply_before if foot_planting_apply_before is not None else False,
+        )
     
     return config
 
@@ -356,6 +376,12 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
                     value=False,
                     info=translator.t("ui.refinement.interpolate_missing_keyframes_info")
                 )
+                
+                use_foot_planting = gr.Checkbox(
+                    label=translator.t("ui.refinement.use_foot_planting"),
+                    value=False,
+                    info=translator.t("ui.refinement.use_foot_planting_info")
+                )
             
             config_file_upload = gr.File(
                 label=translator.t("ui.refinement.load_config"),
@@ -370,6 +396,78 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
             interactive=False,
             visible=False
         )
+    
+    # Foot Planting section (conditionally visible)
+    from fbxify.refinement.foot_planting_config import FootPlantingConfig
+    default_foot_planting_config = FootPlantingConfig()
+    
+    with gr.Group(visible=False) as foot_planting_group:
+        gr.Markdown(f"### {translator.t('ui.refinement.foot_planting.title')}", elem_classes=["refinement-profile-header"])
+        
+        foot_planting_velocity_threshold = gr.Number(
+            label=translator.t("ui.refinement.foot_planting.foot_contact_velocity_threshold"),
+            value=default_foot_planting_config.foot_contact_velocity_threshold,
+            minimum=0.001,
+            step=0.01,
+            info=translator.t("ui.refinement.foot_planting.foot_contact_velocity_threshold_info")
+        )
+        
+        foot_planting_min_height = gr.Number(
+            label=translator.t("ui.refinement.foot_planting.foot_contact_min_height"),
+            value=default_foot_planting_config.foot_contact_min_height,
+            minimum=0.0,
+            step=0.01,
+            info=translator.t("ui.refinement.foot_planting.foot_contact_min_height_info")
+        )
+        
+        foot_planting_contact_window = gr.Number(
+            label=translator.t("ui.refinement.foot_planting.contact_smoothing_window"),
+            value=default_foot_planting_config.contact_smoothing_window,
+            minimum=1,
+            step=1,
+            precision=0,
+            info=translator.t("ui.refinement.foot_planting.contact_smoothing_window_info")
+        )
+        
+        foot_planting_blend_factor = gr.Slider(
+            label=translator.t("ui.refinement.foot_planting.blend_factor"),
+            value=default_foot_planting_config.blend_factor,
+            minimum=0.0,
+            maximum=1.0,
+            step=0.05,
+            info=translator.t("ui.refinement.foot_planting.blend_factor_info")
+        )
+        
+        foot_planting_root_window = gr.Number(
+            label=translator.t("ui.refinement.foot_planting.root_smoothing_window"),
+            value=default_foot_planting_config.root_smoothing_window,
+            minimum=1,
+            step=1,
+            precision=0,
+            info=translator.t("ui.refinement.foot_planting.root_smoothing_window_info")
+        )
+        
+        foot_planting_use_mid_foot = gr.Checkbox(
+            label=translator.t("ui.refinement.foot_planting.use_mid_foot"),
+            value=default_foot_planting_config.use_mid_foot,
+            info=translator.t("ui.refinement.foot_planting.use_mid_foot_info")
+        )
+        
+        foot_planting_apply_before = gr.Checkbox(
+            label=translator.t("ui.refinement.foot_planting.apply_before_root_smoothing"),
+            value=default_foot_planting_config.apply_before_root_smoothing,
+            info=translator.t("ui.refinement.foot_planting.apply_before_root_smoothing_info")
+        )
+    
+    # Show/hide foot planting section based on checkbox
+    def toggle_foot_planting(use_foot_planting_value):
+        return gr.update(visible=use_foot_planting_value)
+    
+    use_foot_planting.change(
+        fn=toggle_foot_planting,
+        inputs=[use_foot_planting],
+        outputs=[foot_planting_group]
+    )
     
     # Create profile sections in a row layout
     profile_components = {}
@@ -452,6 +550,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
     def save_configuration(
         enabled: bool,
         interpolate_missing_keyframes: bool,
+        use_foot_planting: bool,
         # Root profile values
         root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
         root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
@@ -471,6 +570,11 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         # Default profile values
         default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
         default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
+        # Foot planting values
+        foot_planting_velocity_threshold=None, foot_planting_min_height=None,
+        foot_planting_contact_window=None, foot_planting_blend_factor=None,
+        foot_planting_root_window=None, foot_planting_use_mid_foot=None,
+        foot_planting_apply_before=None,
     ) -> str:
         """Save current configuration to JSON."""
         def translate_method_to_internal(method_str):
@@ -572,7 +676,22 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
             "do_vector_smoothing": True,
             "do_root_motion_fix": True,
             "do_interpolate_missing_keyframes": interpolate_missing_keyframes,
+            "do_foot_planting": use_foot_planting,
         }
+        
+        # Add foot planting config if enabled
+        if use_foot_planting:
+            from fbxify.refinement.foot_planting_config import FootPlantingConfig
+            foot_planting_config = FootPlantingConfig(
+                foot_contact_velocity_threshold=foot_planting_velocity_threshold if foot_planting_velocity_threshold is not None else 0.05,
+                foot_contact_min_height=foot_planting_min_height if foot_planting_min_height is not None else 0.02,
+                contact_smoothing_window=int(foot_planting_contact_window) if foot_planting_contact_window is not None else 3,
+                blend_factor=foot_planting_blend_factor if foot_planting_blend_factor is not None else 0.3,
+                root_smoothing_window=int(foot_planting_root_window) if foot_planting_root_window is not None else 5,
+                use_mid_foot=foot_planting_use_mid_foot if foot_planting_use_mid_foot is not None else True,
+                apply_before_root_smoothing=foot_planting_apply_before if foot_planting_apply_before is not None else False,
+            )
+            config["foot_planting_config"] = foot_planting_config.to_dict()
         
         # Create a temporary file with the JSON
         temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
@@ -581,7 +700,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         return temp_file.name
     
     # Collect all inputs for save function
-    save_inputs = [refinement_enabled, interpolate_missing_keyframes]
+    save_inputs = [refinement_enabled, interpolate_missing_keyframes, use_foot_planting]
     
     # Add root profile inputs
     save_inputs.extend([
@@ -638,6 +757,17 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         default_components['one_euro_d_cutoff'],
     ])
     
+    # Add foot planting inputs
+    save_inputs.extend([
+        foot_planting_velocity_threshold,
+        foot_planting_min_height,
+        foot_planting_contact_window,
+        foot_planting_blend_factor,
+        foot_planting_root_window,
+        foot_planting_use_mid_foot,
+        foot_planting_apply_before,
+    ])
+    
     # Wire up save button - show config file download when clicked
     def save_and_show_config(*args):
         """Save configuration and show the download file."""
@@ -670,6 +800,9 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         
         # Update interpolate_missing_keyframes checkbox
         updates.append(gr.update(value=config.get("do_interpolate_missing_keyframes", False)))
+        
+        # Update use_foot_planting checkbox
+        updates.append(gr.update(value=config.get("do_foot_planting", False)))
         
         # Update each profile
         profiles = config.get("profiles", {})
@@ -734,20 +867,129 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
                        'method', 'cutoff_hz', 'one_euro_min_cutoff', 'one_euro_beta', 'one_euro_d_cutoff']
         updates.extend(get_profile_updates("*", default_keys, is_root=False))
         
+        # Foot planting parameters
+        foot_planting_config = config.get("foot_planting_config", {})
+        updates.append(gr.update(value=foot_planting_config.get("foot_contact_velocity_threshold", 0.05)))
+        updates.append(gr.update(value=foot_planting_config.get("foot_contact_min_height", 0.02)))
+        updates.append(gr.update(value=foot_planting_config.get("contact_smoothing_window", 3)))
+        updates.append(gr.update(value=foot_planting_config.get("blend_factor", 0.3)))
+        updates.append(gr.update(value=foot_planting_config.get("root_smoothing_window", 5)))
+        updates.append(gr.update(value=foot_planting_config.get("use_mid_foot", True)))
+        updates.append(gr.update(value=foot_planting_config.get("apply_before_root_smoothing", False)))
+        
         return updates
     
     # Wire up load file
-    load_outputs = [refinement_enabled, interpolate_missing_keyframes] + save_inputs[2:]  # enabled, interpolate_missing_keyframes, then all profile fields
+    load_outputs = [refinement_enabled, interpolate_missing_keyframes, use_foot_planting] + save_inputs[3:]  # enabled, interpolate_missing_keyframes, use_foot_planting, then all profile fields
     config_file_upload.change(
         fn=load_configuration,
         inputs=[config_file_upload],
         outputs=load_outputs
     )
     
+    # Create a hidden State component to store the built config
+    # We'll use a wrapper function to build the config from all inputs
+    refinement_config_state = gr.State(value=None)
+    
+    # Function to build config from all refinement inputs
+    def build_refinement_config_wrapper(*args):
+        """Wrapper that takes all refinement inputs and builds the config."""
+        # Unpack all arguments in the correct order
+        (enabled, interpolate_missing_keyframes, use_foot_planting,
+         root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
+         root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
+         root_cutoff_xy_hz, root_cutoff_z_hz,
+         hands_max_pos_speed, hands_max_pos_accel, hands_max_ang_speed_deg, hands_max_ang_accel_deg,
+         hands_method, hands_cutoff_hz, hands_one_euro_min_cutoff, hands_one_euro_beta, hands_one_euro_d_cutoff,
+         fingers_max_pos_speed, fingers_max_pos_accel, fingers_max_ang_speed_deg, fingers_max_ang_accel_deg,
+         fingers_method, fingers_cutoff_hz, fingers_one_euro_min_cutoff, fingers_one_euro_beta, fingers_one_euro_d_cutoff,
+         head_max_pos_speed, head_max_pos_accel, head_max_ang_speed_deg, head_max_ang_accel_deg,
+         head_method, head_cutoff_hz, head_one_euro_min_cutoff, head_one_euro_beta, head_one_euro_d_cutoff,
+         legs_max_pos_speed, legs_max_pos_accel, legs_max_ang_speed_deg, legs_max_ang_accel_deg,
+         legs_method, legs_cutoff_hz, legs_one_euro_min_cutoff, legs_one_euro_beta, legs_one_euro_d_cutoff,
+         default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
+         default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
+         foot_planting_velocity_threshold, foot_planting_min_height,
+         foot_planting_contact_window, foot_planting_blend_factor,
+         foot_planting_root_window, foot_planting_use_mid_foot,
+         foot_planting_apply_before) = args
+        
+        return build_refinement_config_from_gui(
+            enabled, interpolate_missing_keyframes, use_foot_planting, translator,
+            root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
+            root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
+            root_cutoff_xy_hz, root_cutoff_z_hz,
+            hands_max_pos_speed, hands_max_pos_accel, hands_max_ang_speed_deg, hands_max_ang_accel_deg,
+            hands_method, hands_cutoff_hz, hands_one_euro_min_cutoff, hands_one_euro_beta, hands_one_euro_d_cutoff,
+            fingers_max_pos_speed, fingers_max_pos_accel, fingers_max_ang_speed_deg, fingers_max_ang_accel_deg,
+            fingers_method, fingers_cutoff_hz, fingers_one_euro_min_cutoff, fingers_one_euro_beta, fingers_one_euro_d_cutoff,
+            head_max_pos_speed, head_max_pos_accel, head_max_ang_speed_deg, head_max_ang_accel_deg,
+            head_method, head_cutoff_hz, head_one_euro_min_cutoff, head_one_euro_beta, head_one_euro_d_cutoff,
+            legs_max_pos_speed, legs_max_pos_accel, legs_max_ang_speed_deg, legs_max_ang_accel_deg,
+            legs_method, legs_cutoff_hz, legs_one_euro_min_cutoff, legs_one_euro_beta, legs_one_euro_d_cutoff,
+            default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
+            default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
+            foot_planting_velocity_threshold, foot_planting_min_height,
+            foot_planting_contact_window, foot_planting_blend_factor,
+            foot_planting_root_window, foot_planting_use_mid_foot,
+            foot_planting_apply_before,
+        )
+    
+    # Collect all refinement inputs in the correct order
+    all_refinement_inputs = [
+        refinement_enabled, interpolate_missing_keyframes, use_foot_planting,
+        root_components['max_pos_speed'], root_components['max_pos_accel'],
+        root_components['max_ang_speed_deg'], root_components['max_ang_accel_deg'],
+        root_components['method'], root_components['cutoff_hz'],
+        root_components['one_euro_min_cutoff'], root_components['one_euro_beta'],
+        root_components['one_euro_d_cutoff'],
+        root_components['root_cutoff_xy_hz'], root_components['root_cutoff_z_hz'],
+        hands_components['max_pos_speed'], hands_components['max_pos_accel'],
+        hands_components['max_ang_speed_deg'], hands_components['max_ang_accel_deg'],
+        hands_components['method'], hands_components['cutoff_hz'],
+        hands_components['one_euro_min_cutoff'], hands_components['one_euro_beta'],
+        hands_components['one_euro_d_cutoff'],
+        fingers_components['max_pos_speed'], fingers_components['max_pos_accel'],
+        fingers_components['max_ang_speed_deg'], fingers_components['max_ang_accel_deg'],
+        fingers_components['method'], fingers_components['cutoff_hz'],
+        fingers_components['one_euro_min_cutoff'], fingers_components['one_euro_beta'],
+        fingers_components['one_euro_d_cutoff'],
+        head_components['max_pos_speed'], head_components['max_pos_accel'],
+        head_components['max_ang_speed_deg'], head_components['max_ang_accel_deg'],
+        head_components['method'], head_components['cutoff_hz'],
+        head_components['one_euro_min_cutoff'], head_components['one_euro_beta'],
+        head_components['one_euro_d_cutoff'],
+        legs_components['max_pos_speed'], legs_components['max_pos_accel'],
+        legs_components['max_ang_speed_deg'], legs_components['max_ang_accel_deg'],
+        legs_components['method'], legs_components['cutoff_hz'],
+        legs_components['one_euro_min_cutoff'], legs_components['one_euro_beta'],
+        legs_components['one_euro_d_cutoff'],
+        default_components['max_pos_speed'], default_components['max_pos_accel'],
+        default_components['max_ang_speed_deg'], default_components['max_ang_accel_deg'],
+        default_components['method'], default_components['cutoff_hz'],
+        default_components['one_euro_min_cutoff'], default_components['one_euro_beta'],
+        default_components['one_euro_d_cutoff'],
+        foot_planting_velocity_threshold, foot_planting_min_height,
+        foot_planting_contact_window, foot_planting_blend_factor,
+        foot_planting_root_window, foot_planting_use_mid_foot,
+        foot_planting_apply_before,
+    ]
+    
     # Return components dictionary for integration
     return {
+        "all_refinement_inputs": all_refinement_inputs,
+        "refinement_config_state": refinement_config_state,
+        "build_refinement_config_wrapper": build_refinement_config_wrapper,
         "refinement_enabled": refinement_enabled,
         "interpolate_missing_keyframes": interpolate_missing_keyframes,
+        "use_foot_planting": use_foot_planting,
+        "foot_planting_velocity_threshold": foot_planting_velocity_threshold,
+        "foot_planting_min_height": foot_planting_min_height,
+        "foot_planting_contact_window": foot_planting_contact_window,
+        "foot_planting_blend_factor": foot_planting_blend_factor,
+        "foot_planting_root_window": foot_planting_root_window,
+        "foot_planting_use_mid_foot": foot_planting_use_mid_foot,
+        "foot_planting_apply_before": foot_planting_apply_before,
         "config_file_upload": config_file_upload,
         "config_file_download": config_file_download,
         "save_config_btn": save_config_btn,

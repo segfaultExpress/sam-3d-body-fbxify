@@ -8,19 +8,22 @@ import os
 import argparse
 import tempfile
 import shutil
+import json
 import gradio as gr
-from fbxify.pose_estimator import PoseEstimator
+from fbxify.pose_estimation_manager import PoseEstimationManager
+from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.fbxify_manager import FbxifyManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 from fbxify.gradio_ui.header_section import create_header_section, update_header_language
-from fbxify.gradio_ui.entry_section import create_entry_section, toggle_bbox_inputs, toggle_fov_inputs, toggle_mesh_inputs, update_entry_language
-from fbxify.gradio_ui.output_section import create_output_section, update_output_language
-from fbxify.gradio_ui.developer_section import create_developer_section, refresh_timestamps, update_developer_language
+from fbxify.gradio_ui.entry_section import create_entry_section, toggle_bbox_inputs, toggle_fov_inputs, update_entry_language
+from fbxify.gradio_ui.fbx_processing_section import create_fbx_processing_section, update_fbx_processing_language, toggle_generate_fbx_button
+from fbxify.gradio_ui.fbx_options_section import create_fbx_options_section, toggle_mesh_inputs, update_fbx_options_language
+from fbxify import VERSION
+from fbxify.gradio_ui.developer_section import create_developer_section, update_developer_language
 from fbxify.gradio_ui.refinement_section import create_refinement_section, build_refinement_config_from_gui
 
 VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
 DINOV3_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-dinov3"
-DEBUG_RESULTS_DIR = "/workspace/temp/sam3d_debug_results"
 
 
 def parse_args():
@@ -60,32 +63,18 @@ def create_app(manager: FbxifyManager):
     # Initialize translator with default language
     translator = Translator(DEFAULT_LANGUAGE)
     
-    def process(input_file, profile_name, use_bbox, bbox_file, num_people, fov_method, 
-                fov_file, sample_number, use_root_motion, include_mesh, lod, body_param_sample_num,
-                create_visualization, debug_save_results, 
-                # Refinement parameters
-                refinement_enabled, interpolate_missing_keyframes,
-                root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
-                root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
-                root_cutoff_xy_hz, root_cutoff_z_hz,
-                hands_max_pos_speed, hands_max_pos_accel, hands_max_ang_speed_deg, hands_max_ang_accel_deg,
-                hands_method, hands_cutoff_hz, hands_one_euro_min_cutoff, hands_one_euro_beta, hands_one_euro_d_cutoff,
-                fingers_max_pos_speed, fingers_max_pos_accel, fingers_max_ang_speed_deg, fingers_max_ang_accel_deg,
-                fingers_method, fingers_cutoff_hz, fingers_one_euro_min_cutoff, fingers_one_euro_beta, fingers_one_euro_d_cutoff,
-                head_max_pos_speed, head_max_pos_accel, head_max_ang_speed_deg, head_max_ang_accel_deg,
-                head_method, head_cutoff_hz, head_one_euro_min_cutoff, head_one_euro_beta, head_one_euro_d_cutoff,
-                legs_max_pos_speed, legs_max_pos_accel, legs_max_ang_speed_deg, legs_max_ang_accel_deg,
-                legs_method, legs_cutoff_hz, legs_one_euro_min_cutoff, legs_one_euro_beta, legs_one_euro_d_cutoff,
-                default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
-                default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
-                progress=None):
-        """Process image or video file using FbxifyManager."""
-        output_files = []
+    def estimate_pose(input_file, profile_name, use_bbox, bbox_file, num_people, fov_method, 
+                     fov_file, sample_number, progress=gr.Progress()):
+        """Estimate pose from image or video file - Step 1."""
         temp_dir = None
         
         try:
             if input_file is None:
-                return None
+                return (
+                    gr.update(),  # pose_json_file
+                    gr.update(interactive=False),  # generate_fbx_btn
+                    gr.update(interactive=False)   # estimate_pose_btn
+                )
 
             # Validate inputs
             if use_bbox and bbox_file is None:
@@ -122,69 +111,99 @@ def create_app(manager: FbxifyManager):
             fov_file_path = fov_file.name if fov_file else None
             manager.set_camera_intrinsics(fov_method, fov_file_path, frame_paths, sample_number)
 
-            # Process frames
+            # Process frames - only estimation
+            # Use Gradio's progress tracker
             def progress_callback(progress_value, description):
                 if progress is not None:
                     progress(progress_value, desc=description)
 
-            # Convert lod to int if it's a float from slider
-            lod_int = int(lod) if lod is not None else -1
-            body_param_sample_num_int = int(body_param_sample_num) if body_param_sample_num is not None else 5
+            # Save estimation JSON to temp file
+            estimation_json_path = tempfile.NamedTemporaryFile(delete=False, suffix='.json').name
             
-            process_result = manager.process_frames(
+            # Only estimate poses, don't generate FBX yet
+            estimation_results = manager.estimation_manager.estimate_all_frames(
                 frame_paths,
+                num_people=num_people,
+                bbox_dict=bbox_dict,
+                progress_callback=progress_callback
+            )
+            
+            # Extract source name for metadata
+            source_name = os.path.basename(file_path)
+            
+            # Save estimation results
+            manager.estimation_manager.save_estimation_results(
+                estimation_results,
+                estimation_json_path,
+                source_name=source_name
+            )
+
+        except Exception as e:
+            error_type = type(e).__name__
+            error_msg = str(e)
+            if error_msg:
+                raise gr.Error(translator.t("errors.error_occurred", error_type=error_type, error_msg=error_msg))
+            else:
+                raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
+        finally:
+            # Clean up temp directory if created
+            if temp_dir and os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir, ignore_errors=True)
+        
+        # Return JSON file for the dropdown (update both value and enable button)
+        # Re-enable buttons now that estimation is complete
+        # Note: input_file.change handler will disable estimate_pose_btn if file is removed
+        return (
+            gr.update(value=estimation_json_path),  # pose_json_file
+            gr.update(interactive=True),  # generate_fbx_btn
+            gr.update(interactive=(input_file is not None))   # estimate_pose_btn (re-enable only if file still exists)
+        )
+    
+    def generate_fbx(pose_json_file, profile_name, use_root_motion, include_mesh, lod, body_param_sample_num,
+                    create_visualization, input_file,
+                    refinement_config,  # Single refinement config object from state
+                    progress=gr.Progress()):
+        """Generate FBX from pose estimation JSON - Step 2."""
+        output_files = []
+        
+        try:
+            if pose_json_file is None:
+                raise ValueError("Please provide a pose estimation JSON file")
+            
+            # Get file path
+            if pose_json_file is None:
+                raise ValueError("Please provide a pose estimation JSON file")
+            json_path = pose_json_file.name if hasattr(pose_json_file, 'name') else pose_json_file
+            
+            # Refinement config is already built and stored in state
+            # If it's None, build it on-demand from current inputs (fallback)
+            if refinement_config is None:
+                # Fallback: build config from current state if state wasn't updated
+                refinement_config = build_refinement_config_wrapper(*[comp.value if hasattr(comp, 'value') else None for comp in all_refinement_inputs])
+            
+            # Load from estimation JSON and apply refinement if enabled (refinement happens before joint mapping)
+            def processing_progress(progress_value, description):
+                if progress is not None:
+                    progress(progress_value * 0.3, desc=description)
+            
+            process_result = manager.process_from_estimation_json(
+                json_path,
                 profile_name,
-                num_people,
-                bbox_dict,
                 use_root_motion,
-                create_visualization,
-                fps,
-                progress_callback,
-                lod=lod_int if include_mesh else -1,
-                body_param_sample_num=body_param_sample_num_int if include_mesh else 5
+                fps=30.0,
+                refinement_config=refinement_config,
+                progress_callback=processing_progress
             )
-
-            # Save debug results if requested
-            if debug_save_results:
-                manager.save_debug_results(process_result)
-
-            # Build refinement config from GUI values
-            refinement_config = build_refinement_config_from_gui(
-                refinement_enabled,
-                interpolate_missing_keyframes,
-                translator,
-                root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
-                root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
-                root_cutoff_xy_hz, root_cutoff_z_hz,
-                hands_max_pos_speed, hands_max_pos_accel, hands_max_ang_speed_deg, hands_max_ang_accel_deg,
-                hands_method, hands_cutoff_hz, hands_one_euro_min_cutoff, hands_one_euro_beta, hands_one_euro_d_cutoff,
-                fingers_max_pos_speed, fingers_max_pos_accel, fingers_max_ang_speed_deg, fingers_max_ang_accel_deg,
-                fingers_method, fingers_cutoff_hz, fingers_one_euro_min_cutoff, fingers_one_euro_beta, fingers_one_euro_d_cutoff,
-                head_max_pos_speed, head_max_pos_accel, head_max_ang_speed_deg, head_max_ang_accel_deg,
-                head_method, head_cutoff_hz, head_one_euro_min_cutoff, head_one_euro_beta, head_one_euro_d_cutoff,
-                legs_max_pos_speed, legs_max_pos_accel, legs_max_ang_speed_deg, legs_max_ang_accel_deg,
-                legs_method, legs_cutoff_hz, legs_one_euro_min_cutoff, legs_one_euro_beta, legs_one_euro_d_cutoff,
-                default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
-                default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
-            )
-
-            # Apply refinement if enabled
-            if refinement_config is not None:
-                def refinement_progress(progress_value, description):
-                    if progress is not None:
-                        progress(0.4 + progress_value * 0.1, desc=description)
-                
-                process_result = manager.apply_refinement(
-                    process_result,
-                    refinement_config,
-                    refinement_progress
-                )
 
             # Export FBX files
             def export_progress(progress_value, description):
+                base_progress = 0.3
                 if progress is not None:
-                    progress(0.5 + progress_value * 0.4, desc=description)
+                    progress(base_progress + progress_value * 0.6, desc=description)
 
+            # Convert lod to int if it's a float from slider
+            lod_int = int(lod) if lod is not None else -1
+            
             # Get LOD path if mesh is included
             lod_fbx_path = None
             if include_mesh and lod_int >= 0 and process_result.profile_name == "mhr":
@@ -204,23 +223,13 @@ def create_app(manager: FbxifyManager):
                 process_result.fps,
                 export_progress,
                 lod=lod_int if include_mesh else -1,
-                mesh_obj_path=process_result.mesh_obj_path,
+                mesh_obj_path=None,  # Mesh generation not available from JSON
                 lod_fbx_path=lod_fbx_path
             )
             output_files.extend(fbx_paths)
 
-            # Export visualization if requested
-            if create_visualization and process_result.visualization_data:
-                def vis_progress(progress_value, description):
-                    if progress is not None:
-                        progress(0.9 + progress_value * 0.1, desc=description)
-
-                visualization_output = manager.export_visualization(
-                    process_result.visualization_data,
-                    progress_callback=vis_progress
-                )
-                if visualization_output is not None:
-                    output_files.append(visualization_output)
+            # Note: Visualization is not available when loading from JSON
+            # since we don't have the original images
 
         except Exception as e:
             error_type = type(e).__name__
@@ -229,68 +238,13 @@ def create_app(manager: FbxifyManager):
                 raise gr.Error(translator.t("errors.error_occurred", error_type=error_type, error_msg=error_msg))
             else:
                 raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
-        finally:
-            # Clean up temp directory if created
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-                
-        return output_files if output_files else None
-
-    def debug_reexport_results(timestamp, use_root_motion, create_visualization,
-                                # Refinement parameters
-                                refinement_enabled, interpolate_missing_keyframes,
-                                root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
-                                root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
-                                root_cutoff_xy_hz, root_cutoff_z_hz,
-                                hands_max_pos_speed, hands_max_pos_accel, hands_max_ang_speed_deg, hands_max_ang_accel_deg,
-                                hands_method, hands_cutoff_hz, hands_one_euro_min_cutoff, hands_one_euro_beta, hands_one_euro_d_cutoff,
-                                fingers_max_pos_speed, fingers_max_pos_accel, fingers_max_ang_speed_deg, fingers_max_ang_accel_deg,
-                                fingers_method, fingers_cutoff_hz, fingers_one_euro_min_cutoff, fingers_one_euro_beta, fingers_one_euro_d_cutoff,
-                                head_max_pos_speed, head_max_pos_accel, head_max_ang_speed_deg, head_max_ang_accel_deg,
-                                head_method, head_cutoff_hz, head_one_euro_min_cutoff, head_one_euro_beta, head_one_euro_d_cutoff,
-                                legs_max_pos_speed, legs_max_pos_accel, legs_max_ang_speed_deg, legs_max_ang_accel_deg,
-                                legs_method, legs_cutoff_hz, legs_one_euro_min_cutoff, legs_one_euro_beta, legs_one_euro_d_cutoff,
-                                default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
-                                default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
-                                progress=None):
-        """Re-export results from saved debug data."""
-        if timestamp is None or timestamp == "" or timestamp == translator.t("ui.debug_no_saved_results"):
-            raise ValueError("Please select a timestamp to re-export")
         
-        def progress_callback(progress_value, description):
-            if progress is not None:
-                progress(progress_value, desc=description)
-
-        # Build refinement config from GUI values
-        refinement_config = build_refinement_config_from_gui(
-            refinement_enabled,
-            interpolate_missing_keyframes,
-            translator,
-            root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
-            root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
-            root_cutoff_xy_hz, root_cutoff_z_hz,
-            hands_max_pos_speed, hands_max_pos_accel, hands_max_ang_speed_deg, hands_max_ang_accel_deg,
-            hands_method, hands_cutoff_hz, hands_one_euro_min_cutoff, hands_one_euro_beta, hands_one_euro_d_cutoff,
-            fingers_max_pos_speed, fingers_max_pos_accel, fingers_max_ang_speed_deg, fingers_max_ang_accel_deg,
-            fingers_method, fingers_cutoff_hz, fingers_one_euro_min_cutoff, fingers_one_euro_beta, fingers_one_euro_d_cutoff,
-            head_max_pos_speed, head_max_pos_accel, head_max_ang_speed_deg, head_max_ang_accel_deg,
-            head_method, head_cutoff_hz, head_one_euro_min_cutoff, head_one_euro_beta, head_one_euro_d_cutoff,
-            legs_max_pos_speed, legs_max_pos_accel, legs_max_ang_speed_deg, legs_max_ang_accel_deg,
-            legs_method, legs_cutoff_hz, legs_one_euro_min_cutoff, legs_one_euro_beta, legs_one_euro_d_cutoff,
-            default_max_pos_speed, default_max_pos_accel, default_max_ang_speed_deg, default_max_ang_accel_deg,
-            default_method, default_cutoff_hz, default_one_euro_min_cutoff, default_one_euro_beta, default_one_euro_d_cutoff,
+        # Return output files and re-enable estimate_pose_btn (only if input_file still exists)
+        return (
+            output_files if output_files else None,
+            gr.update(interactive=(input_file is not None))  # estimate_pose_btn (re-enable only if file still exists)
         )
-
-        output_files = manager.reexport_debug_results(
-            int(timestamp),
-            use_root_motion,
-            create_visualization,
-            refinement_config,
-            progress_callback
-        )
-        
-        return output_files if output_files else None
-
+    
     def on_lang_change(lang):
         """Update all UI components when language changes."""
         # Update translator
@@ -300,15 +254,17 @@ def create_app(manager: FbxifyManager):
         # Get updates from each section
         header_updates = update_header_language(lang)
         entry_updates = update_entry_language(lang, translator)
-        output_update = update_output_language(lang)
+        fbx_processing_updates = update_fbx_processing_language(lang)
+        fbx_options_updates = update_fbx_options_language(lang, translator)
         developer_updates = update_developer_language(lang)
         
         # Combine all updates
         return (
-            *header_updates,  # heading, description
-            *entry_updates,   # profile, input_file, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, use_root_motion, include_mesh, lod, body_param_sample_num, generate_btn
-            output_update,    # output_files
-            *developer_updates,  # create_visualization, debug_save_results, debug_saved_timestamps, debug_reexport_btn, debug_clear_btn
+            *header_updates,  # heading, description, tabs
+            *entry_updates,   # input_file, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, estimate_pose_btn
+            *fbx_processing_updates,    # profile_name, pose_json_file, generate_fbx_btn, output_files
+            *fbx_options_updates,  # use_root_motion, include_mesh, lod, body_param_sample_num
+            *developer_updates,  # create_visualization
         )
 
     def detect_and_set_language():
@@ -317,8 +273,8 @@ def create_app(manager: FbxifyManager):
 
     # Create UI sections
     with gr.Blocks(title=translator.t("app.title")) as app:
-        # Header section
-        heading_md, description_md, lang_selector = create_header_section(translator)
+        # Header section (now returns heading_md, description_md, tabs, lang_selector)
+        heading_md, description_md, tabs, lang_selector = create_header_section(translator)
         
         # Layout: Two columns
         with gr.Row():
@@ -327,14 +283,14 @@ def create_app(manager: FbxifyManager):
                 entry_components = create_entry_section(translator)
                 
                 # Developer section - creates its own accordion
-                dev_components = create_developer_section(
-                    translator,
-                    lambda: manager.get_saved_timestamps()
-                )
+                dev_components = create_developer_section(translator)
                 
             with gr.Column():
-                # Output section
-                output_files = create_output_section(translator)
+                # FBX processing section (returns dict with profile_name, pose_json_file, generate_fbx_btn, output_files)
+                fbx_processing_components = create_fbx_processing_section(translator)
+                
+                # FBX options section
+                fbx_options_components = create_fbx_options_section(translator)
                 
                 # Refinement section
                 refinement_components = create_refinement_section(translator)
@@ -345,18 +301,16 @@ def create_app(manager: FbxifyManager):
             fn=on_lang_change,
             inputs=[lang_selector],
             outputs=[
-                heading_md, description_md,  # header
-                entry_components['profile_name'], entry_components['input_file'],
+                heading_md, description_md, tabs,  # header (heading, description, tabs)
+                entry_components['input_file'],
                 entry_components['use_bbox'], entry_components['bbox_file'],
                 entry_components['num_people'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
-                entry_components['use_root_motion'], entry_components['include_mesh'],
-                entry_components['lod'], entry_components['body_param_sample_num'],
-                entry_components['generate_btn'],  # entry
-                output_files,  # output
-                dev_components['create_visualization'], dev_components['debug_save_results'],
-                dev_components['debug_saved_timestamps'], dev_components['debug_reexport_btn'],
-                dev_components['debug_clear_btn']  # developer
+                entry_components['estimate_pose_btn'],  # entry
+                fbx_processing_components['profile_name'], fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], fbx_processing_components['output_files'],  # fbx processing
+                fbx_options_components['use_root_motion'], fbx_options_components['include_mesh'],
+                fbx_options_components['lod'], fbx_options_components['body_param_sample_num'],  # fbx options
+                dev_components['create_visualization']  # developer
             ]
         )
         
@@ -375,127 +329,119 @@ def create_app(manager: FbxifyManager):
         )
         
         # Mesh toggle
-        entry_components['include_mesh'].change(
+        fbx_options_components['include_mesh'].change(
             fn=toggle_mesh_inputs,
-            inputs=[entry_components['include_mesh']],
-            outputs=[entry_components['lod'], entry_components['body_param_sample_num']]
+            inputs=[fbx_options_components['include_mesh']],
+            outputs=[fbx_options_components['lod'], fbx_options_components['body_param_sample_num']]
         )
         
-        # Collect refinement inputs
-        refinement_inputs = [
-            refinement_components['refinement_enabled'],
-            refinement_components['interpolate_missing_keyframes'],
-            refinement_components['profile_components']['root']['max_pos_speed'],
-            refinement_components['profile_components']['root']['max_pos_accel'],
-            refinement_components['profile_components']['root']['max_ang_speed_deg'],
-            refinement_components['profile_components']['root']['max_ang_accel_deg'],
-            refinement_components['profile_components']['root']['method'],
-            refinement_components['profile_components']['root']['cutoff_hz'],
-            refinement_components['profile_components']['root']['one_euro_min_cutoff'],
-            refinement_components['profile_components']['root']['one_euro_beta'],
-            refinement_components['profile_components']['root']['one_euro_d_cutoff'],
-            refinement_components['profile_components']['root']['root_cutoff_xy_hz'],
-            refinement_components['profile_components']['root']['root_cutoff_z_hz'],
-            refinement_components['profile_components']['hands']['max_pos_speed'],
-            refinement_components['profile_components']['hands']['max_pos_accel'],
-            refinement_components['profile_components']['hands']['max_ang_speed_deg'],
-            refinement_components['profile_components']['hands']['max_ang_accel_deg'],
-            refinement_components['profile_components']['hands']['method'],
-            refinement_components['profile_components']['hands']['cutoff_hz'],
-            refinement_components['profile_components']['hands']['one_euro_min_cutoff'],
-            refinement_components['profile_components']['hands']['one_euro_beta'],
-            refinement_components['profile_components']['hands']['one_euro_d_cutoff'],
-            refinement_components['profile_components']['fingers']['max_pos_speed'],
-            refinement_components['profile_components']['fingers']['max_pos_accel'],
-            refinement_components['profile_components']['fingers']['max_ang_speed_deg'],
-            refinement_components['profile_components']['fingers']['max_ang_accel_deg'],
-            refinement_components['profile_components']['fingers']['method'],
-            refinement_components['profile_components']['fingers']['cutoff_hz'],
-            refinement_components['profile_components']['fingers']['one_euro_min_cutoff'],
-            refinement_components['profile_components']['fingers']['one_euro_beta'],
-            refinement_components['profile_components']['fingers']['one_euro_d_cutoff'],
-            refinement_components['profile_components']['head']['max_pos_speed'],
-            refinement_components['profile_components']['head']['max_pos_accel'],
-            refinement_components['profile_components']['head']['max_ang_speed_deg'],
-            refinement_components['profile_components']['head']['max_ang_accel_deg'],
-            refinement_components['profile_components']['head']['method'],
-            refinement_components['profile_components']['head']['cutoff_hz'],
-            refinement_components['profile_components']['head']['one_euro_min_cutoff'],
-            refinement_components['profile_components']['head']['one_euro_beta'],
-            refinement_components['profile_components']['head']['one_euro_d_cutoff'],
-            refinement_components['profile_components']['legs']['max_pos_speed'],
-            refinement_components['profile_components']['legs']['max_pos_accel'],
-            refinement_components['profile_components']['legs']['max_ang_speed_deg'],
-            refinement_components['profile_components']['legs']['max_ang_accel_deg'],
-            refinement_components['profile_components']['legs']['method'],
-            refinement_components['profile_components']['legs']['cutoff_hz'],
-            refinement_components['profile_components']['legs']['one_euro_min_cutoff'],
-            refinement_components['profile_components']['legs']['one_euro_beta'],
-            refinement_components['profile_components']['legs']['one_euro_d_cutoff'],
-            refinement_components['profile_components']['default']['max_pos_speed'],
-            refinement_components['profile_components']['default']['max_pos_accel'],
-            refinement_components['profile_components']['default']['max_ang_speed_deg'],
-            refinement_components['profile_components']['default']['max_ang_accel_deg'],
-            refinement_components['profile_components']['default']['method'],
-            refinement_components['profile_components']['default']['cutoff_hz'],
-            refinement_components['profile_components']['default']['one_euro_min_cutoff'],
-            refinement_components['profile_components']['default']['one_euro_beta'],
-            refinement_components['profile_components']['default']['one_euro_d_cutoff'],
-        ]
+        # Get refinement components for building config
+        all_refinement_inputs = refinement_components['all_refinement_inputs']
+        build_refinement_config_wrapper = refinement_components['build_refinement_config_wrapper']
+        refinement_config_state = refinement_components['refinement_config_state']
 
-        # Generate button
-        entry_components['generate_btn'].click(
-            fn=process,
+        def toggle_estimate_pose_button(input_file):
+            """Enable/disable Estimate Pose button based on whether file is uploaded."""
+            return gr.update(interactive=(input_file is not None))
+        
+        # Enable/disable Estimate Pose button based on file upload
+        entry_components['input_file'].change(
+            fn=toggle_estimate_pose_button,
+            inputs=[entry_components['input_file']],
+            outputs=[entry_components['estimate_pose_btn']]
+        )
+        
+        # Estimate Pose button (Step 1)
+        # Disable both Estimate Pose and Generate FBX buttons immediately when Estimate Pose is clicked
+        entry_components['estimate_pose_btn'].click(
+            fn=lambda: (gr.update(), gr.update(interactive=False), gr.update(interactive=False)),  # Disable both buttons immediately
+            inputs=[],
+            outputs=[fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], entry_components['estimate_pose_btn']]
+        ).then(
+            fn=estimate_pose,
             inputs=[
                 entry_components['input_file'],
-                entry_components['profile_name'],
+                fbx_processing_components['profile_name'],
                 entry_components['use_bbox'],
                 entry_components['bbox_file'],
                 entry_components['num_people'],
                 entry_components['fov_method'],
                 entry_components['fov_file'],
-                entry_components['sample_number'],
-                entry_components['use_root_motion'],
-                entry_components['include_mesh'],
-                entry_components['lod'],
-                entry_components['body_param_sample_num'],
-                dev_components['create_visualization'],
-                dev_components['debug_save_results']
-            ] + refinement_inputs,
-            outputs=[output_files]
+                entry_components['sample_number']
+            ],
+            outputs=[fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], entry_components['estimate_pose_btn']]  # Update file and re-enable buttons when done
         )
         
-        # Debug handlers
-        def refresh_timestamps_wrapper():
-            return refresh_timestamps(
-                lambda: manager.get_saved_timestamps(),
-                translator
-            )
+        def validate_json_file_on_upload(pose_json_file):
+            """
+            Validate JSON file when uploaded and check version compatibility.
+            Returns button state and shows warning if version mismatch.
+            """
+            if pose_json_file is None:
+                return gr.update(interactive=False)
+            
+            try:
+                # Get file path
+                json_path = pose_json_file.name if hasattr(pose_json_file, 'name') else pose_json_file
+                
+                # Load and check version
+                with open(json_path, 'r') as f:
+                    data = json.load(f)
+                
+                # Check if it's new format (has metadata keys) or old format (direct frames)
+                if isinstance(data, dict) and "frames" in data and "version" in data:
+                    file_version = data.get("version", "unknown")
+                    if file_version != VERSION:
+                        # Show warning using Gradio's warning mechanism
+                        warning_msg = (
+                            f"⚠️ WARNING: Estimation file version ({file_version}) differs from current version ({VERSION}). "
+                            f"File may have been created with a different version of the software. "
+                            f"Proceeding with caution - errors may occur if formats are incompatible."
+                        )
+                        print(warning_msg)
+                        # Also raise a Gradio warning that will be displayed to the user
+                        gr.Warning(warning_msg)
+                
+            except Exception as e:
+                # If validation fails, still enable the button (let generate_fbx handle the error)
+                print(f"Warning: Could not validate JSON file: {e}")
+            
+            # Enable button if file is provided
+            return gr.update(interactive=(pose_json_file is not None))
         
-        def clear_and_refresh():
-            manager.clear_saved_results()
-            return refresh_timestamps_wrapper()
+        # Enable/disable Generate FBX button based on JSON file and validate version
+        fbx_processing_components['pose_json_file'].change(
+            fn=validate_json_file_on_upload,
+            inputs=[fbx_processing_components['pose_json_file']],
+            outputs=[fbx_processing_components['generate_fbx_btn']]
+        )
         
-        dev_components['debug_refresh_btn'].click(
-            fn=refresh_timestamps_wrapper,
+        # Generate FBX button (Step 2)
+        # Disable Estimate Pose button immediately when Generate FBX is clicked
+        fbx_processing_components['generate_fbx_btn'].click(
+            fn=lambda: gr.update(interactive=False),  # Disable Estimate Pose button immediately
             inputs=[],
-            outputs=[dev_components['debug_saved_timestamps']]
-        )
-        
-        dev_components['debug_clear_btn'].click(
-            fn=clear_and_refresh,
-            inputs=[],
-            outputs=[dev_components['debug_saved_timestamps']]
-        )
-        
-        dev_components['debug_reexport_btn'].click(
-            fn=debug_reexport_results,
+            outputs=[entry_components['estimate_pose_btn']]
+        ).then(
+            # First, build the refinement config from all inputs
+            fn=build_refinement_config_wrapper,
+            inputs=all_refinement_inputs,
+            outputs=[refinement_config_state]
+        ).then(
+            # Then, call generate_fbx with the built config
+            fn=generate_fbx,
             inputs=[
-                dev_components['debug_saved_timestamps'],
-                entry_components['use_root_motion'],
-                dev_components['create_visualization']
-            ] + refinement_inputs,
-            outputs=[output_files]
+                fbx_processing_components['pose_json_file'],
+                fbx_processing_components['profile_name'],
+                fbx_options_components['use_root_motion'],
+                fbx_options_components['include_mesh'],
+                fbx_options_components['lod'],
+                fbx_options_components['body_param_sample_num'],
+                dev_components['create_visualization'],
+                entry_components['input_file'],  # Add input_file to check if it still exists
+                refinement_config_state,
+            ],
+            outputs=[fbx_processing_components['output_files'], entry_components['estimate_pose_btn']]  # Re-enable Estimate Pose when done
         )
         
         # Language detection on page load
@@ -565,7 +511,7 @@ if __name__ == "__main__":
     # Get FOV path from args or environment variable
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
     
-    estimator = PoseEstimator(
+    estimation_manager = PoseEstimationManager(
         checkpoint_path=checkpoint_path,
         mhr_path=mhr_path,
         detector_name=args.detector_name,
@@ -574,8 +520,10 @@ if __name__ == "__main__":
         fov_path=fov_path
     )
     
-    # Create manager with estimator
-    manager = FbxifyManager(estimator, DEBUG_RESULTS_DIR)
+    data_prep_manager = FbxDataPrepManager()
+    
+    # Create manager with both managers
+    manager = FbxifyManager(estimation_manager, data_prep_manager)
 
     app = create_app(manager)
     app.launch(
