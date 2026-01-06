@@ -791,8 +791,12 @@ def breadth_first_pose_application(joint_mapping, frame_idx):
 
     # Print grouped warning if there are missing rotations
     if missing_rotation_bones:
-        bones_list = ", ".join(missing_rotation_bones)
-        print(f"  WARNING: No rotation found for frame {frame_idx + 1} on the following bones: [{bones_list}]")
+        # If no bones were applied, all bones are missing - use simplified message
+        if len(applied_bones) == 0:
+            print(f"  WARNING: No rotations found for frame {frame_idx + 1}")
+        else:
+            bones_list = ", ".join(missing_rotation_bones)
+            print(f"  WARNING: No rotation found for frame {frame_idx + 1} on the following bones: [{bones_list}]")
 
     for bone in blender_pose_bones:
         bone.keyframe_insert("rotation_quaternion", frame=frame_idx + 1)

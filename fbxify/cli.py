@@ -91,6 +91,13 @@ def parse_args():
         default=None,
         help="Path to bounding box file (CSV format)"
     )
+    parser.add_argument(
+        "--missing_bbox_behavior",
+        type=str,
+        default="Run Detection",
+        choices=["Run Detection", "Skip Frame"],
+        help="What to do when bbox data is missing for a frame: Run Detection (use num_people to detect) or Skip Frame (skip pose estimation for that frame) (default: Run Detection)"
+    )
     
     # FOV options
     parser.add_argument(
@@ -329,7 +336,8 @@ def main():
             args.use_root_motion,
             fps,
             progress_callback,
-            save_estimation_json=args.save_estimation_json
+            save_estimation_json=args.save_estimation_json,
+            missing_bbox_behavior=args.missing_bbox_behavior
         )
         
         # Print estimation JSON path if saved

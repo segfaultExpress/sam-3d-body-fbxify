@@ -63,7 +63,7 @@ def create_app(manager: FbxifyManager):
     # Initialize translator with default language
     translator = Translator(DEFAULT_LANGUAGE)
     
-    def estimate_pose(input_file, profile_name, use_bbox, bbox_file, num_people, fov_method, 
+    def estimate_pose(input_file, profile_name, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method, 
                      fov_file, sample_number, progress=gr.Progress()):
         """Estimate pose from image or video file - Step 1."""
         temp_dir = None
@@ -125,7 +125,9 @@ def create_app(manager: FbxifyManager):
                 frame_paths,
                 num_people=num_people,
                 bbox_dict=bbox_dict,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                missing_bbox_behavior=missing_bbox_behavior if use_bbox else "Run Detection",
+                lang=translator.lang
             )
             
             # Extract source name for metadata
@@ -135,7 +137,8 @@ def create_app(manager: FbxifyManager):
             manager.estimation_manager.save_estimation_results(
                 estimation_results,
                 estimation_json_path,
-                source_name=source_name
+                source_name=source_name,
+                num_people=num_people
             )
 
         except Exception as e:
@@ -169,11 +172,11 @@ def create_app(manager: FbxifyManager):
         
         try:
             if pose_json_file is None:
-                raise ValueError("Please provide a pose estimation JSON file")
+                raise ValueError(translator.t("errors.pose_json_file_required"))
             
             # Get file path
             if pose_json_file is None:
-                raise ValueError("Please provide a pose estimation JSON file")
+                raise ValueError(translator.t("errors.pose_json_file_required"))
             json_path = pose_json_file.name if hasattr(pose_json_file, 'name') else pose_json_file
             
             # Load from estimation JSON and apply refinement if enabled (refinement happens before joint mapping)
@@ -187,7 +190,8 @@ def create_app(manager: FbxifyManager):
                 use_root_motion,
                 fps=30.0,
                 refinement_config=refinement_config,
-                progress_callback=processing_progress
+                progress_callback=processing_progress,
+                lang=translator.lang
             )
 
             # Export FBX files
@@ -224,7 +228,8 @@ def create_app(manager: FbxifyManager):
                 export_progress,
                 lod=lod_int if include_mesh else -1,
                 mesh_obj_path=None,  # Mesh generation not available from JSON
-                lod_fbx_path=lod_fbx_path
+                lod_fbx_path=lod_fbx_path,
+                lang=translator.lang
             )
             output_files.extend(fbx_paths)
 
@@ -258,7 +263,7 @@ def create_app(manager: FbxifyManager):
         # Combine all updates
         return (
             *header_updates,  # heading, description, tabs
-            *entry_updates,   # input_file, use_bbox, bbox_file, num_people, fov_method, fov_file, sample_number, estimate_pose_btn
+            *entry_updates,   # input_file, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method, fov_file, sample_number, estimate_pose_btn
             *fbx_processing_updates,    # profile_name, pose_json_file, generate_fbx_btn, output_files
             *fbx_options_updates,  # use_root_motion, include_mesh, lod, body_param_sample_num
             *developer_updates,  # (empty now)
@@ -301,7 +306,7 @@ def create_app(manager: FbxifyManager):
                 heading_md, description_md, tabs,  # header (heading, description, tabs)
                 entry_components['input_file'],
                 entry_components['use_bbox'], entry_components['bbox_file'],
-                entry_components['num_people'], entry_components['fov_method'],
+                entry_components['num_people'], entry_components['missing_bbox_behavior'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
                 entry_components['estimate_pose_btn'],  # entry
                 fbx_processing_components['profile_name'], fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], fbx_processing_components['output_files'],  # fbx processing
@@ -314,7 +319,7 @@ def create_app(manager: FbxifyManager):
         entry_components['use_bbox'].change(
             fn=toggle_bbox_inputs,
             inputs=[entry_components['use_bbox']],
-            outputs=[entry_components['bbox_file'], entry_components['num_people']]
+            outputs=[entry_components['bbox_file'], entry_components['num_people'], entry_components['missing_bbox_behavior']]
         )
         
         # FOV toggle
@@ -371,6 +376,7 @@ def create_app(manager: FbxifyManager):
                 entry_components['use_bbox'],
                 entry_components['bbox_file'],
                 entry_components['num_people'],
+                entry_components['missing_bbox_behavior'],
                 entry_components['fov_method'],
                 entry_components['fov_file'],
                 entry_components['sample_number']

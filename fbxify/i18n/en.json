@@ -29,6 +29,8 @@
     "use_bbox": "👥 Use BBOX File",
     "bbox_file": "📁 BBOX File",
     "num_people": "👥 Number of People",
+    "missing_bbox_behavior": "On Missing Frame",
+    "missing_bbox_behavior_info": "What to do when bbox data is missing for a frame: Run Detection (use num_people to detect) or Skip Frame (skip pose estimation for that frame)",
     "fov_method": "📷 FOV Estimation Method",
     "fov_method_info": "Default: Built-in, runs every frame | File: Load from cameras.txt | Sample: Average from images",
     "fov_file": "📁 Camera Intrinsics File (COLMAP cameras.txt or MoGe format)",
@@ -124,7 +126,14 @@
   "progress": {
     "processing_keyframes": "📦 Processing keyframes...",
     "processing_person": "📦 Processing person...",
-    "reexporting": "🔄 Re-exporting from saved results..."
+    "reexporting": "🔄 Re-exporting from saved results...",
+    "applying_refinement": "Applying refinement to estimation results...",
+    "preparing_fbx_data": "Preparing FBX data...",
+    "preprocessing_complete": "Pre-processing complete",
+    "refining_person": "Refining person {person_index} of {total_people}",
+    "refinement_complete": "Refinement complete",
+    "applying_poses": "Applying poses: {frame_num}/{total_frames}",
+    "estimating_frame": "Estimating frame {frame_index} of {total_frames}"
   },
   "errors": {
     "error_occurred": "An error occurred ({error_type}): {error_msg}",
@@ -132,6 +141,7 @@
     "bbox_file_required": "BBOX file must be provided when 'use bbox' is enabled",
     "num_people_required": "Number of people must be greater than 0",
     "camera_intrinsics_required": "Camera intrinsics file must be provided when FOV method is 'File'",
-    "fov_estimator_required": "FOV estimator must be loaded to use 'Sample' method. Please ensure FOV estimator is initialized."
+    "fov_estimator_required": "FOV estimator must be loaded to use 'Sample' method. Please ensure FOV estimator is initialized.",
+    "pose_json_file_required": "Please provide a pose estimation JSON file"
   }
 }

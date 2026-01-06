@@ -16,6 +16,7 @@ from fbxify.pose_estimation_manager import PoseEstimationManager
 from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.utils import export_to_fbx, to_serializable
 from fbxify.refinement.refinement_manager import RefinementManager
+from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 
 
 @dataclass
@@ -153,7 +154,9 @@ class FbxifyManager:
                       fps: float = 30.0, progress_callback: Optional[callable] = None,
                       lod: int = -1, body_param_sample_num: int = 5,
                       save_estimation_json: Optional[str] = None,
-                      refinement_config=None) -> ProcessResult:
+                      refinement_config=None,
+                      missing_bbox_behavior: str = "Run Detection",
+                      lang: str = DEFAULT_LANGUAGE) -> ProcessResult:
         """
         Process all frames and collect results.
         
@@ -202,21 +205,23 @@ class FbxifyManager:
             num_people=num_people,
             bbox_dict=bbox_dict,
             progress_callback=estimation_progress,
-            source_name=source_name
+            source_name=source_name,
+            missing_bbox_behavior=missing_bbox_behavior
         )
         
         # Save estimation results if requested
         if save_estimation_json:
-            self.estimation_manager.save_estimation_results(estimation_results, save_estimation_json, source_name=source_name)
+            self.estimation_manager.save_estimation_results(estimation_results, save_estimation_json, source_name=source_name, num_people=num_people)
         
         # Step 2: Apply refinement to estimation results if enabled (before joint mapping)
+        translator = Translator(lang)
         print(f"FbxifyManager.process_frames(): refinement_config is {'None' if refinement_config is None else 'not None'}")
         if refinement_config is not None:
             print(f"FbxifyManager.process_frames(): Creating RefinementManager with config")
             if progress_callback:
-                progress_callback(0.5, "Applying refinement to estimation results...")
+                progress_callback(0.5, translator.t("progress.applying_refinement"))
             
-            refinement_manager = RefinementManager(refinement_config, fps)
+            refinement_manager = RefinementManager(refinement_config, fps, lang=lang)
             estimation_results = refinement_manager.apply(
                 estimation_results,
                 progress_callback=lambda p, d: progress_callback(0.5 + p * 0.1, d) if progress_callback else None
@@ -227,7 +232,7 @@ class FbxifyManager:
         # Step 3: Transform estimation results into FBX-ready data
         if progress_callback:
             base_progress = 0.6 if refinement_config is not None else 0.5
-            progress_callback(base_progress, "Preparing FBX data...")
+            progress_callback(base_progress, translator.t("progress.preparing_fbx_data"))
         
         fbx_data = self.data_prep_manager.prepare_from_estimation(
             estimation_results,
@@ -319,7 +324,8 @@ class FbxifyManager:
     
     def process_from_estimation_json(self, estimation_json_path: str, profile_name: str,
                                     use_root_motion: bool = True, fps: float = 30.0,
-                                    refinement_config=None, progress_callback: Optional[callable] = None) -> ProcessResult:
+                                    refinement_config=None, progress_callback: Optional[callable] = None,
+                                    lang: str = DEFAULT_LANGUAGE) -> ProcessResult:
         """
         Process from saved estimation JSON file.
         
@@ -350,13 +356,14 @@ class FbxifyManager:
             # The error will be caught and shown if validation fails
         
         # Apply refinement to estimation results if enabled (before joint mapping)
+        translator = Translator(lang)
         print(f"FbxifyManager.process_from_estimation_json(): refinement_config is {'None' if refinement_config is None else 'not None'}")
         if refinement_config is not None:
             print(f"FbxifyManager.process_from_estimation_json(): Creating RefinementManager with config")
             if progress_callback:
-                progress_callback(0.0, "Applying refinement to estimation results...")
+                progress_callback(0.0, translator.t("progress.applying_refinement"))
             
-            refinement_manager = RefinementManager(refinement_config, fps)
+            refinement_manager = RefinementManager(refinement_config, fps, lang=lang)
             estimation_results = refinement_manager.apply(
                 estimation_results,
                 progress_callback=progress_callback
@@ -367,12 +374,13 @@ class FbxifyManager:
         # Transform estimation results into FBX-ready data
         if progress_callback:
             base_progress = 0.5 if refinement_config is not None else 0.3
-            progress_callback(base_progress, "Preparing FBX data...")
+            progress_callback(base_progress, translator.t("progress.preparing_fbx_data"))
         
         fbx_data = self.data_prep_manager.prepare_from_estimation(
             estimation_results,
             profile_name,
-            use_root_motion=use_root_motion
+            use_root_motion=use_root_motion,
+            metadata=metadata
         )
         
         # Extract frame paths from estimation results (we don't have original paths, so use frame indices)
@@ -380,7 +388,7 @@ class FbxifyManager:
         frame_paths = [f"frame_{i:06d}" for i in range(num_frames)]
         
         if progress_callback:
-            progress_callback(1.0, "Processing complete")
+            progress_callback(1.0, translator.t("progress.preprocessing_complete"))
         
         return ProcessResult(
             joint_to_bone_mappings=fbx_data["joint_to_bone_mappings"],
@@ -467,7 +475,7 @@ class FbxifyManager:
                          root_motions: Optional[Dict[str, List[Dict]]], frame_paths: List[str],
                          fps: float = 30.0, progress_callback: Optional[callable] = None,
                          lod: int = -1, mesh_obj_path: Optional[str] = None,
-                         lod_fbx_path: Optional[str] = None) -> List[str]:
+                         lod_fbx_path: Optional[str] = None, lang: str = DEFAULT_LANGUAGE) -> List[str]:
         """
         Export FBX files for each person.
         
@@ -518,7 +526,8 @@ class FbxifyManager:
                 self.estimation_manager.faces,
                 mesh_obj_path=mesh_obj_path if lod >= 0 and profile_name == "mhr" else None,
                 lod_fbx_path=lod_fbx_path if lod >= 0 and profile_name == "mhr" else None,
-                progress_callback=person_progress_callback
+                progress_callback=person_progress_callback,
+                lang=lang
             )
             
             if fbx_path is not None:

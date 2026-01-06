@@ -9,6 +9,7 @@ import re
 from tqdm import tqdm
 
 from fbxify.metadata import PROFILES, MHR_KEYPOINT_INDEX
+from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 
 MHR_EXTENDED_KEYPOINT_INDEX = {
     **MHR_KEYPOINT_INDEX,
@@ -55,7 +56,7 @@ def to_serializable(obj, _seen=None):
 
 
 def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_obj_path=None, lod_fbx_path=None, 
-                  progress_callback=None):
+                  progress_callback=None, lang=DEFAULT_LANGUAGE):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
     try:
@@ -113,6 +114,7 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
         
         # Get num_keyframes for progress bar
         num_keyframes = metadata.get("num_keyframes", 0)
+        translator = Translator(lang)
         
         # Run subprocess with stdout capture to parse progress
         process = subprocess.Popen(
@@ -125,7 +127,7 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
         )
         
         # Create progress bar
-        progress_bar = tqdm(total=num_keyframes, desc="Applying poses", unit="keyframe") if num_keyframes > 0 else None
+        progress_bar = tqdm(total=num_keyframes, desc=translator.t("progress.applying_poses", frame_num=0, total_frames=num_keyframes), unit="keyframe") if num_keyframes > 0 else None
         
         # Parse output line by line
         progress_pattern = re.compile(r'PROGRESS: (\d+)/(\d+)')
@@ -150,7 +152,7 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
                     # Pass normalized progress (0.0 to 1.0) - caller will handle weighing
                     if progress_callback and total_frames > 0:
                         tqdm_progress = frame_num / total_frames
-                        progress_callback(tqdm_progress, f"Applying poses: {frame_num}/{total_frames}")
+                        progress_callback(tqdm_progress, translator.t("progress.applying_poses", frame_num=frame_num, total_frames=total_frames))
                     
                     # Skip printing the PROGRESS line
                     continue
@@ -223,11 +225,17 @@ def add_helper_keypoints(joints_3d):
     kp = lambda name: get_keypoint(joints_3d, name)
     safe_kp = lambda name: safe_get_keypoint(joints_3d, name)
     
-    # Hips
-    left_hip = kp("left_hip")
-    right_hip = kp("right_hip")
+    # Hips - require both hips to be valid
+    left_hip = safe_kp("left_hip")
+    right_hip = safe_kp("right_hip")
+    if left_hip is None or right_hip is None:
+        raise ValueError("Missing required keypoints: left_hip or right_hip is None. Frame may have incomplete pose estimation data.")
     hips = (left_hip + right_hip) * 0.5
-    neck = kp("neck")
+    
+    # Neck - required for body calculations
+    neck = safe_kp("neck")
+    if neck is None:
+        raise ValueError("Missing required keypoint: neck is None. Frame may have incomplete pose estimation data.")
     
     # Body up
     body_up = neck - hips
@@ -241,8 +249,10 @@ def add_helper_keypoints(joints_3d):
     spine = hips + body_up * (torso_len * 0.30)
     
     # Upper spine (between spine and chest, used by mixamo)
-    left_shoulder = kp("left_shoulder")
-    right_shoulder = kp("right_shoulder")
+    left_shoulder = safe_kp("left_shoulder")
+    right_shoulder = safe_kp("right_shoulder")
+    if left_shoulder is None or right_shoulder is None:
+        raise ValueError("Missing required keypoints: left_shoulder or right_shoulder is None. Frame may have incomplete pose estimation data.")
     shoulder_center = (left_shoulder + right_shoulder) * 0.5
     chest_hint = (shoulder_center * 2 + neck) / 3
     upper_spine = _interpolate_curve_smooth(spine, chest_hint, neck, 0.5)
@@ -256,15 +266,24 @@ def add_helper_keypoints(joints_3d):
     # Lower Head
     occipital = _compute_occipital(neck, head, kp("nose"), kp("right_ear"), ratio=0.8, down_offset_ratio=0.08)
     
-    # Shoulders
-    left_shoulder = kp("left_shoulder")
-    right_shoulder = kp("right_shoulder")
+    # Shoulders (already computed above, but keeping for consistency)
     left_shoulder_root = neck * 0.4 + left_shoulder * 0.6
     right_shoulder_root = neck * 0.4 + right_shoulder * 0.6
         
     # The mid point between the heel, big toe and little toe for each foot
-    left_mid_foot = (kp("left_heel") + kp("left_big_toe") + kp("left_small_toe")) * 0.33
-    right_mid_foot = (kp("right_heel") + kp("right_big_toe") + kp("right_small_toe")) * 0.33
+    left_heel = safe_kp("left_heel")
+    left_big_toe = safe_kp("left_big_toe")
+    left_small_toe = safe_kp("left_small_toe")
+    if left_heel is None or left_big_toe is None or left_small_toe is None:
+        raise ValueError("Missing required keypoints for left foot. Frame may have incomplete pose estimation data.")
+    left_mid_foot = (left_heel + left_big_toe + left_small_toe) * 0.33
+    
+    right_heel = safe_kp("right_heel")
+    right_big_toe = safe_kp("right_big_toe")
+    right_small_toe = safe_kp("right_small_toe")
+    if right_heel is None or right_big_toe is None or right_small_toe is None:
+        raise ValueError("Missing required keypoints for right foot. Frame may have incomplete pose estimation data.")
+    right_mid_foot = (right_heel + right_big_toe + right_small_toe) * 0.33
 
     helper_keypoints = {
         "hips": hips,

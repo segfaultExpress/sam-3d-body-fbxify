@@ -88,7 +88,8 @@ class FbxDataPrepManager:
             raise ValueError(error_msg)
     
     def prepare_from_estimation(self, estimation_results: Dict[str, Dict[str, Any]], 
-                                profile_name: str, use_root_motion: bool = True) -> Dict[str, Any]:
+                                profile_name: str, use_root_motion: bool = True,
+                                metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         Prepare FBX data from estimation results.
         
@@ -96,6 +97,7 @@ class FbxDataPrepManager:
             estimation_results: Dictionary in format {frame_X: {person_id: estimation_data}}
             profile_name: Profile name (e.g., "mixamo", "unity", "mhr")
             use_root_motion: Whether to track root motion
+            metadata: Optional metadata dict containing num_people for validation
             
         Returns:
             Dictionary containing:
@@ -117,6 +119,16 @@ class FbxDataPrepManager:
             for person_id in frame_data.keys():
                 all_person_ids.add(person_id)
         
+        # Validate num_people from metadata if available
+        if metadata is not None and metadata.get("num_people") is not None:
+            metadata_num_people = metadata["num_people"]
+            actual_num_people = len(all_person_ids)
+            if metadata_num_people != actual_num_people:
+                print(f"  [WARNING] Metadata num_people ({metadata_num_people}) does not match actual person IDs found ({actual_num_people})")
+                print(f"  [INFO] This may indicate frames were skipped or person IDs changed during processing")
+            else:
+                print(f"  [INFO] Verified num_people from metadata: {metadata_num_people} person(s)")
+        
         # Initialize joint mappings and root motions for each person
         for person_id in all_person_ids:
             joint_to_bone_mappings[person_id] = self.get_joint_to_bone_mapping(profile_name, use_cache=False)
@@ -127,20 +139,62 @@ class FbxDataPrepManager:
         for frame_index_str, frame_data in estimation_results.items():
             frame_index = int(frame_index_str)
             
+            # Skip empty frames
+            if not frame_data:
+                continue
+            
             # Process each person in this frame
             for person_id_str, estimation_data in frame_data.items():
                 person_id = str(person_id_str)
+                
+                # Skip if estimation_data is None or empty
+                if not estimation_data or not isinstance(estimation_data, dict):
+                    print(f"  [WARNING] Frame {frame_index}, person {person_id}: empty or invalid data, skipping")
+                    continue
                 
                 # Skip if required data is None (missing frame)
                 if (estimation_data.get("pred_joint_coords") is None or 
                     estimation_data.get("pred_global_rots") is None or 
                     estimation_data.get("pred_keypoints_3d") is None):
+                    print(f"  [WARNING] Frame {frame_index}, person {person_id}: missing required keys, skipping")
                     continue
                 
                 # Convert estimation data back to numpy arrays for processing
-                joint_coords = np.array(estimation_data["pred_joint_coords"])
-                joint_rotations = np.array(estimation_data["pred_global_rots"])
-                keypoints_3d = np.array(estimation_data["pred_keypoints_3d"])
+                try:
+                    joint_coords = np.array(estimation_data["pred_joint_coords"])
+                    joint_rotations = np.array(estimation_data["pred_global_rots"])
+                    keypoints_3d = np.array(estimation_data["pred_keypoints_3d"])
+                except (ValueError, TypeError) as e:
+                    print(f"  [WARNING] Frame {frame_index}, person {person_id}: failed to convert to numpy arrays: {e}, skipping")
+                    continue
+                
+                # Validate that arrays are valid (not empty, correct shape, no None values)
+                def is_valid_array(arr, name):
+                    """Check if numpy array is valid for processing."""
+                    if arr is None or arr.size == 0:
+                        return False, f"{name} is empty or None"
+                    if arr.dtype == object:
+                        # Object arrays might contain None - check for them
+                        if any(x is None for x in arr.flatten()):
+                            return False, f"{name} contains None values"
+                    # Check for NaN in numeric arrays
+                    if np.issubdtype(arr.dtype, np.number) and np.any(np.isnan(arr)):
+                        return False, f"{name} contains NaN values"
+                    return True, None
+                
+                # Validate all arrays
+                validation_failed = False
+                for arr, name in [(joint_coords, "joint_coords"), 
+                                  (joint_rotations, "joint_rotations"), 
+                                  (keypoints_3d, "keypoints_3d")]:
+                    is_valid, error_msg = is_valid_array(arr, name)
+                    if not is_valid:
+                        print(f"  [WARNING] Frame {frame_index}, person {person_id}: {error_msg}, skipping")
+                        validation_failed = True
+                        break
+                
+                if validation_failed:
+                    continue
                 
                 # Add the helper keypoints to the keypoints_3d array before calculating the joint mapping
                 keypoints_3d = add_helper_keypoints(keypoints_3d)

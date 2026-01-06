@@ -29,6 +29,8 @@
     "use_bbox": "👥 Usar Archivo BBOX",
     "bbox_file": "📁 Archivo BBOX",
     "num_people": "👥 Número de Personas",
+    "missing_bbox_behavior": "En Fotograma Faltante",
+    "missing_bbox_behavior_info": "Qué hacer cuando faltan datos de bbox para un fotograma: Ejecutar Detección (usar num_people para detectar) u Omitir Fotograma (omitir estimación de pose para ese fotograma)",
     "fov_method": "📷 Método de Estimación FOV",
     "fov_method_info": "Por defecto: Integrado, se ejecuta en cada fotograma | Archivo: Cargar desde cameras.txt | Muestra: Promedio de imágenes",
     "fov_file": "📁 Archivo de Intrínsecos de Cámara (COLMAP cameras.txt o formato MoGe)",
@@ -124,7 +126,14 @@
   "progress": {
     "processing_keyframes": "📦 Procesando fotogramas clave...",
     "processing_person": "📦 Procesando persona...",
-    "reexporting": "🔄 Re-exportando desde resultados guardados..."
+    "reexporting": "🔄 Re-exportando desde resultados guardados...",
+    "applying_refinement": "Aplicando refinamiento a los resultados de estimación...",
+    "preparing_fbx_data": "Preparando datos FBX...",
+    "preprocessing_complete": "Preprocesamiento completo",
+    "refining_person": "Refinando persona {person_index} de {total_people}",
+    "refinement_complete": "Refinamiento completo",
+    "applying_poses": "Aplicando poses: {frame_num}/{total_frames}",
+    "estimating_frame": "Estimando fotograma {frame_index} de {total_frames}"
   },
   "errors": {
     "error_occurred": "Ocurrió un error ({error_type}): {error_msg}",
@@ -132,6 +141,7 @@
     "bbox_file_required": "Se debe proporcionar un archivo BBOX cuando 'usar bbox' está habilitado",
     "num_people_required": "El número de personas debe ser mayor que 0",
     "camera_intrinsics_required": "Se debe proporcionar un archivo de intrínsecos de cámara cuando el método FOV es 'Archivo'",
-    "fov_estimator_required": "Se debe cargar el estimador FOV para usar el método 'Muestra'. Por favor, asegúrate de que el estimador FOV esté inicializado."
+    "fov_estimator_required": "Se debe cargar el estimador FOV para usar el método 'Muestra'. Por favor, asegúrate de que el estimador FOV esté inicializado.",
+    "pose_json_file_required": "Por favor, proporciona un archivo JSON de estimación de poses"
   }
 }

@@ -13,6 +13,7 @@ from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
 from sam_3d_body.data.utils.io import load_image
 from fbxify.utils import to_serializable
 from fbxify import VERSION
+from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 import json
 import os
 import random
@@ -266,7 +267,9 @@ class PoseEstimationManager:
     def estimate_all_frames(self, frame_paths: List[str], num_people: int = 1,
                            bbox_dict: Optional[Dict[int, List[Tuple]]] = None,
                            progress_callback: Optional[callable] = None,
-                           source_name: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+                           source_name: Optional[str] = None,
+                           missing_bbox_behavior: str = "Run Detection",
+                           lang: str = DEFAULT_LANGUAGE) -> Dict[str, Dict[str, Any]]:
         """
         Estimate poses for all frames.
         
@@ -276,6 +279,9 @@ class PoseEstimationManager:
             bbox_dict: Optional dictionary mapping frame_index (1-based) to list of bbox tuples
             progress_callback: Optional callback function(progress, description)
             source_name: Optional source filename for metadata
+            missing_bbox_behavior: What to do when bbox is missing for a frame.
+                                  "Run Detection" (default): Use num_people to run detection.
+                                  "Skip Frame": Skip pose estimation for that frame (store empty dict).
             
         Returns:
             Dictionary in format: {frame_X: {person_id: estimation_data}}
@@ -283,24 +289,31 @@ class PoseEstimationManager:
         """
         total_start = time.time()
         estimation_results = {}
-        
-        print(f"[TIMER] Starting estimation for {len(frame_paths)} frames...")
-        
-        for frame_index, frame_path in enumerate(frame_paths):
-            # Always print frame number to console
-            print(f"Estimating frame {frame_index + 1} of {len(frame_paths)}")
-            
+        translator = Translator(lang)
+                
+        for frame_index, frame_path in enumerate(frame_paths):            
             # Update progress bar if callback is provided
             if progress_callback:
                 progress = frame_index / len(frame_paths)
-                progress_callback(progress, f"Estimating frame {frame_index + 1} of {len(frame_paths)}")
+                progress_callback(progress, translator.t("progress.estimating_frame", frame_index=frame_index + 1, total_frames=len(frame_paths)))
             
             # Get bboxes for this frame (bbox_dict uses 1-based indexing for MOT format)
             bboxes = None
-            if bbox_dict is not None and (frame_index + 1) in bbox_dict:
-                bboxes = bbox_dict[frame_index + 1]
+            bbox_missing = False
+            if bbox_dict is not None:
+                if (frame_index + 1) in bbox_dict:
+                    bboxes = bbox_dict[frame_index + 1]
+                else:
+                    bbox_missing = True
             
-            # Process this frame
+            # Handle missing bbox based on behavior
+            if bbox_missing and missing_bbox_behavior == "Skip Frame":
+                print(f"  [INFO] Bbox missing for frame {frame_index + 1}, skipping (behavior: Skip Frame)")
+                # Store empty dict to skip this frame
+                estimation_results[str(frame_index)] = {}
+                continue
+            
+            # Process this frame (either bbox exists, or missing_bbox_behavior is "Run Detection")
             frame_results = self._estimate_single_frame(
                 frame_path,
                 num_people=num_people,
@@ -313,7 +326,6 @@ class PoseEstimationManager:
         total_end = time.time()
         total_time = total_end - total_start
         avg_time_per_frame = total_time / len(frame_paths) if frame_paths else 0
-        print(f"[TIMER] Total estimation time: {total_time:.3f}s ({len(frame_paths)} frames, avg {avg_time_per_frame:.3f}s/frame)")
         
         return estimation_results
     
@@ -389,8 +401,6 @@ class PoseEstimationManager:
         
         timer_filter_end = time.time()
         filter_time = timer_filter_end - timer_filter_start
-        print(f"  [TIMER] Filtering/serialization: {filter_time:.3f}s")
-        print(f"  [TIMER] Total frame processing: {process_time + filter_time:.3f}s")
         
         # If no people detected, return empty dict (but frame is still present)
         return frame_results
@@ -529,7 +539,7 @@ class PoseEstimationManager:
         return filtered
     
     def save_estimation_results(self, estimation_results: Dict[str, Dict[str, Any]], file_path: str,
-                               source_name: Optional[str] = None):
+                               source_name: Optional[str] = None, num_people: Optional[int] = None):
         """
         Save estimation results to JSON file with metadata wrapper.
         
@@ -537,12 +547,23 @@ class PoseEstimationManager:
             estimation_results: Dictionary in format {frame_X: {person_id: estimation_data}}
             file_path: Path to save JSON file
             source_name: Optional source filename for metadata
+            num_people: Optional number of people (from bbox file or user input)
         """
+        # Count unique person IDs from estimation results if num_people not provided
+        if num_people is None:
+            unique_person_ids = set()
+            for frame_data in estimation_results.values():
+                if isinstance(frame_data, dict):
+                    for person_id in frame_data.keys():
+                        unique_person_ids.add(person_id)
+            num_people = len(unique_person_ids) if unique_person_ids else 0
+        
         # Create metadata structure
         metadata = {
             "source": source_name or "unknown",
             "creation_date": datetime.utcnow().isoformat() + "Z",
             "version": VERSION,
+            "num_people": num_people,
             "frames": estimation_results
         }
         
@@ -577,7 +598,8 @@ class PoseEstimationManager:
             metadata = {
                 "source": data.get("source", "unknown"),
                 "creation_date": data.get("creation_date", "unknown"),
-                "version": data.get("version", "unknown")
+                "version": data.get("version", "unknown"),
+                "num_people": data.get("num_people", None)
             }
             frames = data["frames"]
             
@@ -598,6 +620,8 @@ class PoseEstimationManager:
             print(f"  Source: {metadata['source']}")
             print(f"  Created: {metadata['creation_date']}")
             print(f"  Version: {file_version}")
+            if metadata.get("num_people") is not None:
+                print(f"  Number of people: {metadata['num_people']}")
             return frames, metadata
         else:
             # Old format (direct frames dict) - wrap in metadata
@@ -605,7 +629,8 @@ class PoseEstimationManager:
             metadata = {
                 "source": "unknown",
                 "creation_date": "unknown",
-                "version": "unknown"
+                "version": "unknown",
+                "num_people": None
             }
             return data, metadata
     

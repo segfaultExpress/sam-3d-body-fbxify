@@ -29,6 +29,8 @@
     "use_bbox": "👥 Utiliser le Fichier BBOX",
     "bbox_file": "📁 Fichier BBOX",
     "num_people": "👥 Nombre de Personnes",
+    "missing_bbox_behavior": "En Cas d'Image Manquante",
+    "missing_bbox_behavior_info": "Que faire lorsque les données de bbox sont manquantes pour une image : Exécuter la Détection (utiliser num_people pour détecter) ou Ignorer l'Image (ignorer l'estimation de pose pour cette image)",
     "fov_method": "📷 Méthode d'Estimation FOV",
     "fov_method_info": "Par défaut : Intégré, s'exécute à chaque image | Fichier : Charger depuis cameras.txt | Échantillon : Moyenne des images",
     "fov_file": "📁 Fichier d'Intrinsèques de Caméra (COLMAP cameras.txt ou format MoGe)",
@@ -124,7 +126,14 @@
   "progress": {
     "processing_keyframes": "📦 Traitement des images clés...",
     "processing_person": "📦 Traitement de la personne...",
-    "reexporting": "🔄 Ré-exportation depuis les résultats enregistrés..."
+    "reexporting": "🔄 Ré-exportation depuis les résultats enregistrés...",
+    "applying_refinement": "Application du raffinement aux résultats d'estimation...",
+    "preparing_fbx_data": "Préparation des données FBX...",
+    "preprocessing_complete": "Pré-traitement terminé",
+    "refining_person": "Raffinement de la personne {person_index} sur {total_people}",
+    "refinement_complete": "Raffinement terminé",
+    "applying_poses": "Application des poses : {frame_num}/{total_frames}",
+    "estimating_frame": "Estimation de l'image {frame_index} sur {total_frames}"
   },
   "errors": {
     "error_occurred": "Une erreur s'est produite ({error_type}): {error_msg}",
@@ -132,6 +141,7 @@
     "bbox_file_required": "Le fichier BBOX doit être fourni lorsque 'utiliser bbox' est activé",
     "num_people_required": "Le nombre de personnes doit être supérieur à 0",
     "camera_intrinsics_required": "Le fichier d'intrinsèques de caméra doit être fourni lorsque la méthode FOV est 'Fichier'",
-    "fov_estimator_required": "L'estimateur FOV doit être chargé pour utiliser la méthode 'Échantillon'. Veuillez vous assurer que l'estimateur FOV est initialisé."
+    "fov_estimator_required": "L'estimateur FOV doit être chargé pour utiliser la méthode 'Échantillon'. Veuillez vous assurer que l'estimateur FOV est initialisé.",
+    "pose_json_file_required": "Veuillez fournir un fichier JSON d'estimation de pose"
   }
 }

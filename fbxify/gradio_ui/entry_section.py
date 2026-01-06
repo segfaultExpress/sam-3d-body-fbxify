@@ -57,6 +57,15 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
             visible=True
         )
     
+    # Missing bbox behavior option (only visible when use_bbox is checked)
+    components['missing_bbox_behavior'] = gr.Dropdown(
+        label=translator.t("ui.missing_bbox_behavior"),
+        choices=["Run Detection", "Skip Frame"],
+        value="Run Detection",
+        visible=False,
+        info=translator.t("ui.missing_bbox_behavior_info")
+    )
+    
     # FOV Estimation Options
     components['fov_method'] = gr.Dropdown(
         label=translator.t("ui.fov_method"),
@@ -81,19 +90,20 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
     return components
 
 
-def toggle_bbox_inputs(use_bbox_value: bool) -> Tuple[Any, Any]:
+def toggle_bbox_inputs(use_bbox_value: bool) -> Tuple[Any, Any, Any]:
     """
-    Toggle visibility of bbox_file and num_people based on checkbox.
+    Toggle visibility of bbox_file, num_people, and missing_bbox_behavior based on checkbox.
     
     Args:
         use_bbox_value: Whether to use bbox file
         
     Returns:
-        Tuple of updates for bbox_file and num_people
+        Tuple of updates for bbox_file, num_people, and missing_bbox_behavior
     """
     return (
         gr.update(visible=use_bbox_value),
-        gr.update(visible=not use_bbox_value)
+        gr.update(visible=not use_bbox_value),
+        gr.update(visible=use_bbox_value)
     )
 
 
@@ -141,6 +151,7 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.use_bbox")),  # use_bbox
         gr.update(label=t.t("ui.bbox_file")),  # bbox_file
         gr.update(label=t.t("ui.num_people")),  # num_people
+        gr.update(label=t.t("ui.missing_bbox_behavior"), info=t.t("ui.missing_bbox_behavior_info")),  # missing_bbox_behavior
         gr.update(label=t.t("ui.fov_method"), info=t.t("ui.fov_method_info")),  # fov_method
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number

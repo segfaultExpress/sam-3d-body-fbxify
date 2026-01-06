@@ -7,6 +7,7 @@ import os
 from datetime import datetime
 
 from fbxify.metadata import JOINT_NAMES
+from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 
 # ============================================================================
 # Vector and Math Utilities
@@ -462,24 +463,20 @@ class RefinementManager:
     """
     RefinementManager is a class that applies refinement and mocap-style smoothing to the animation.
     """
-    def __init__(self, config: RefinementConfig = None, fps: float = 30.0):
+    # Threshold for high change warning (in degrees)
+    HIGH_CHANGE_THRESHOLD_DEG = 30.0
+    
+    def __init__(self, config: RefinementConfig = None, fps: float = 30.0, lang: str = DEFAULT_LANGUAGE):
         if config is None:
             # use default config
             config = RefinementConfig()
+        self.lang = lang
         self.configure(config, fps)
 
     def configure(self, config: RefinementConfig, fps: float = 30.0):
         self.config = config
         self.fps = fps
         self.dt = 1.0 / fps  # time step in seconds
-        # Debug: print config structure
-        print(f"  DEBUG: RefinementManager.configure(): Config profiles keys: {list(config.profiles.keys())}")
-        if "*arm*" in config.profiles:
-            arm_prof = config.profiles["*arm*"]
-            print(f"  DEBUG: ARMS_PROFILE in config: min_cutoff={arm_prof.one_euro_min_cutoff}, beta={arm_prof.one_euro_beta}, d_cutoff={arm_prof.one_euro_d_cutoff}")
-        if "*" in config.profiles:
-            default_prof = config.profiles["*"]
-            print(f"  DEBUG: DEFAULT_PROFILE in config: min_cutoff={default_prof.one_euro_min_cutoff}, beta={default_prof.one_euro_beta}, d_cutoff={default_prof.one_euro_d_cutoff}")
     
     def _calculate_vector_change_percent(self, v_original, v_refined):
         """
@@ -661,9 +658,10 @@ class RefinementManager:
             print("RefinementManager.apply(): All refinement features are disabled, skipping refinement")
             return estimation_results
         
+        translator = Translator(self.lang)
         print("RefinementManager.apply(): Proceeding with refinement...")
         if progress_callback:
-            progress_callback(0.0, "Applying refinement to estimation results...")
+            progress_callback(0.0, translator.t("progress.applying_refinement"))
         
         # Setup logging
         log_file, log_path = self._setup_refinement_log()
@@ -687,6 +685,10 @@ class RefinementManager:
             log_print(f"  - Foot planting: {self.config.do_foot_planting}")
             log_print(f"  - Interpolate missing: {self.config.do_interpolate_missing_keyframes}")
             log_print("="*80 + "\n")
+            
+            # Track changes per profile and per bone for summary
+            profile_changes = {}  # {profile_name: [list of changes in degrees]}
+            bone_changes = {}  # {bone_name: change in degrees}
             
             # Get all person IDs across all frames
             all_person_ids = set()
@@ -712,7 +714,7 @@ class RefinementManager:
             for person_index, person_id in enumerate(all_person_ids):
                 if progress_callback:
                     progress = person_index / len(all_person_ids)
-                    progress_callback(progress, f"Refining person {person_index + 1} of {len(all_person_ids)}")
+                    progress_callback(progress, translator.t("progress.refining_person", person_index=person_index + 1, total_people=len(all_person_ids)))
                 
                 # Collect data for this person across all frames
                 joint_rotations_series = []  # [T][num_joints][3][3]
@@ -731,6 +733,10 @@ class RefinementManager:
                         template_person_data = person_data
                         break
                 
+                # Track which frames originally had this person and map series indices to frame indices
+                original_frame_indices = set()
+                series_to_frame_map = []  # Maps series index -> frame index
+                
                 # First pass: collect all data
                 for frame_idx in frame_indices:
                     frame_key = str(frame_idx)
@@ -738,13 +744,21 @@ class RefinementManager:
                     person_data = frame_data.get(str(person_id))
                     
                     if person_data is None:
-                        # Missing frame - add None placeholders
-                        joint_rotations_series.append(None)
-                        root_rotations_series.append(None)
-                        root_translations_series.append(None)
-                        joint_coords_series.append(None)
-                        keypoints_3d_series.append(None)
+                        # Missing frame - add None placeholders only if interpolation is enabled
+                        # Otherwise, skip this frame entirely for this person
+                        if self.config.do_interpolate_missing_keyframes:
+                            joint_rotations_series.append(None)
+                            root_rotations_series.append(None)
+                            root_translations_series.append(None)
+                            joint_coords_series.append(None)
+                            keypoints_3d_series.append(None)
+                            series_to_frame_map.append(frame_idx)
+                        # Don't track as original frame
                         continue
+                    
+                    # Track that this person existed in the original data for this frame
+                    original_frame_indices.add(frame_idx)
+                    series_to_frame_map.append(frame_idx)
                     
                     # Extract data
                     pred_global_rots = person_data.get("pred_global_rots")
@@ -804,7 +818,7 @@ class RefinementManager:
                         for joint_idx in range(num_joints):
                             # Extract rotation series for this joint: [T][3][3]
                             joint_rot_series = []
-                            for t in range(num_frames):
+                            for t in range(len(joint_rotations_series)):
                                 if joint_rotations_series[t] is not None and joint_idx < len(joint_rotations_series[t]):
                                     joint_rot = joint_rotations_series[t][joint_idx]
                                     # Parse rotation matrix to ensure it's in 3x3 format
@@ -817,16 +831,21 @@ class RefinementManager:
                             # Get the appropriate profile for this bone using pattern matching
                             bone_name = JOINT_NAMES[joint_idx]
                             prof = self._profile_for(bone_name)
+                            profile_name = self._profile_name_for(bone_name)
                             refined_joint_rot = self._process_rotation_series(
                                 joint_rot_series, 
                                 prof,
-                                bone_name=bone_name
+                                bone_name=bone_name,
+                                profile_name=profile_name,
+                                profile_changes=profile_changes,
+                                bone_changes=bone_changes
                             )
                             refined_joint_rots.append(refined_joint_rot)
                         
                         # Reorganize: [num_joints][T][3][3] -> [T][num_joints][3][3]
                         joint_rotations_series = []
-                        for t in range(num_frames):
+                        series_length = len(refined_joint_rots[0]) if refined_joint_rots and refined_joint_rots[0] else 0
+                        for t in range(series_length):
                             frame_joint_rots = []
                             for joint_idx in range(num_joints):
                                 frame_joint_rots.append(refined_joint_rots[joint_idx][t])
@@ -847,8 +866,14 @@ class RefinementManager:
                     root_rotations_series = self._process_rotation_series(
                         parsed_root_rotations,
                         prof,
-                        bone_name="root_rotation"
+                        bone_name="root_rotation",
+                        profile_name="ROOT",
+                        profile_changes=profile_changes,
+                        bone_changes=bone_changes
                     )
+                
+                # Collect vector adjustment messages for summary
+                vector_adjustment_messages = []
                 
                 # Refine root translation
                 if root_translations_series and any(x is not None for x in root_translations_series):
@@ -856,7 +881,8 @@ class RefinementManager:
                     root_translations_series = self._process_vector_series(
                         root_translations_series,
                         prof,
-                        bone_name="root_translation"
+                        bone_name="root_translation",
+                        adjustment_messages=vector_adjustment_messages
                     )
                 
                 # Refine joint coordinates (each joint separately) - CRITICAL for foot planting velocity calculations
@@ -874,7 +900,7 @@ class RefinementManager:
                         for joint_idx in range(num_joints):
                             # Extract coordinate series for this joint: [T][3]
                             joint_coord_series = []
-                            for t in range(num_frames):
+                            for t in range(len(joint_coords_series)):
                                 if joint_coords_series[t] is not None and joint_idx < len(joint_coords_series[t]):
                                     joint_coord = joint_coords_series[t][joint_idx]
                                     # Ensure it's a 3D vector
@@ -890,13 +916,15 @@ class RefinementManager:
                             refined_joint_coord = self._process_vector_series(
                                 joint_coord_series,
                                 prof,
-                                bone_name=JOINT_NAMES[joint_idx] if joint_idx < len(JOINT_NAMES) else f"joint_{joint_idx}"
+                                bone_name=JOINT_NAMES[joint_idx] if joint_idx < len(JOINT_NAMES) else f"joint_{joint_idx}",
+                                adjustment_messages=vector_adjustment_messages
                             )
                             refined_joint_coords.append(refined_joint_coord)
                         
                         # Reorganize: [num_joints][T][3] -> [T][num_joints][3]
                         joint_coords_series = []
-                        for t in range(num_frames):
+                        series_length = len(refined_joint_coords[0]) if refined_joint_coords and refined_joint_coords[0] else 0
+                        for t in range(series_length):
                             frame_joint_coords = []
                             for joint_idx in range(num_joints):
                                 frame_joint_coords.append(refined_joint_coords[joint_idx][t])
@@ -917,7 +945,7 @@ class RefinementManager:
                         for kp_idx in range(num_keypoints):
                             # Extract keypoint series for this keypoint: [T][3]
                             kp_series = []
-                            for t in range(num_frames):
+                            for t in range(len(keypoints_3d_series)):
                                 if keypoints_3d_series[t] is not None and kp_idx < len(keypoints_3d_series[t]):
                                     kp = keypoints_3d_series[t][kp_idx]
                                     # Ensure it's a 3D vector
@@ -933,17 +961,30 @@ class RefinementManager:
                             refined_kp = self._process_vector_series(
                                 kp_series,
                                 prof,
-                                bone_name=f"keypoint_{kp_idx}"
+                                bone_name=f"keypoint_{kp_idx}",
+                                adjustment_messages=vector_adjustment_messages
                             )
                             refined_keypoints_3d.append(refined_kp)
                         
                         # Reorganize: [num_keypoints][T][3] -> [T][num_keypoints][3]
                         keypoints_3d_series = []
-                        for t in range(num_frames):
+                        series_length = len(refined_keypoints_3d[0]) if refined_keypoints_3d and refined_keypoints_3d[0] else 0
+                        for t in range(series_length):
                             frame_keypoints = []
                             for kp_idx in range(num_keypoints):
                                 frame_keypoints.append(refined_keypoints_3d[kp_idx][t])
                             keypoints_3d_series.append(frame_keypoints)
+                
+                # Print vector stabilization summary if there are any adjustments
+                if vector_adjustment_messages:
+                    log_print("\n" + "="*80)
+                    log_print("VECTOR STABILIZATION")
+                    log_print("="*80)
+                    # Sort messages alphabetically by bone name for consistency
+                    sorted_messages = sorted(vector_adjustment_messages)
+                    for message in sorted_messages:
+                        log_print(message)
+                    log_print("="*80 + "\n")
                 
                 # Apply root motion stabilization (combines rotation and translation)
                 if self.config.do_root_motion_fix and root_rotations_series and root_translations_series:
@@ -970,49 +1011,131 @@ class RefinementManager:
                     root_rotations_series = root_motion_dict["rotation"]
                 
                 # Store refined data back into results
-                for frame_idx, frame_key in enumerate([str(f) for f in frame_indices]):
-                    # Get refined person data (already copied from original, or create from template if missing)
+                # Only write to frames where person originally existed, OR where interpolation successfully filled in values
+                for series_idx, frame_idx in enumerate(series_to_frame_map):
+                    frame_key = str(frame_idx)
+                    
+                    # Check if this person existed in the original data for this frame
+                    was_original = frame_idx in original_frame_indices
+                    
+                    # If interpolation is enabled, check if we have valid interpolated data for this frame
+                    has_interpolated_data = False
+                    if self.config.do_interpolate_missing_keyframes and not was_original:
+                        # Check if interpolation successfully filled in this frame
+                        if (series_idx < len(joint_rotations_series) and joint_rotations_series[series_idx] is not None and
+                            series_idx < len(keypoints_3d_series) and keypoints_3d_series[series_idx] is not None):
+                            has_interpolated_data = True
+                    
+                    # Only process if person existed originally OR we have valid interpolated data
+                    if not was_original and not has_interpolated_data:
+                        # Skip this frame - person didn't exist and interpolation didn't fill it in
+                        continue
+                    
+                    # Get or create frame entry
                     if frame_key not in refined_results:
                         refined_results[frame_key] = {}
                     
+                    # Get or create person entry
                     if str(person_id) not in refined_results[frame_key]:
-                        # Person missing from this frame - add from template to preserve structure
-                        if template_person_data is not None:
+                        if was_original:
+                            # Should already exist from initial copy, but handle edge case
+                            original_data = estimation_results.get(frame_key, {}).get(str(person_id))
+                            if original_data:
+                                refined_results[frame_key][str(person_id)] = original_data.copy()
+                            else:
+                                continue
+                        elif has_interpolated_data and template_person_data is not None:
+                            # Create new entry for interpolated frame
                             refined_person_data = template_person_data.copy()
-                            # Set all frame-specific data to None since frame is missing
-                            refined_person_data["pred_global_rots"] = None
-                            refined_person_data["global_rot"] = None
-                            refined_person_data["pred_cam_t"] = None
-                            refined_person_data["pred_joint_coords"] = None
-                            refined_person_data["pred_keypoints_3d"] = None
-                            # Keep non-frame-specific fields from template (scale_params, shape_params, etc.)
+                            # Will be filled in below
                             refined_results[frame_key][str(person_id)] = refined_person_data
                         else:
-                            # No template available - skip this frame for this person
                             continue
                     
                     refined_person_data = refined_results[frame_key][str(person_id)]
                     
-                    # Update with refined values
-                    if frame_idx < len(joint_rotations_series) and joint_rotations_series[frame_idx] is not None:
-                        refined_person_data["pred_global_rots"] = joint_rotations_series[frame_idx]
+                    # Update with refined values (only if we have valid data)
+                    if series_idx < len(joint_rotations_series) and joint_rotations_series[series_idx] is not None:
+                        refined_person_data["pred_global_rots"] = joint_rotations_series[series_idx]
                     
-                    if frame_idx < len(root_rotations_series) and root_rotations_series[frame_idx] is not None:
-                        refined_person_data["global_rot"] = root_rotations_series[frame_idx]
+                    if series_idx < len(root_rotations_series) and root_rotations_series[series_idx] is not None:
+                        refined_person_data["global_rot"] = root_rotations_series[series_idx]
                     
-                    if frame_idx < len(root_translations_series) and root_translations_series[frame_idx] is not None:
-                        refined_person_data["pred_cam_t"] = root_translations_series[frame_idx]
+                    if series_idx < len(root_translations_series) and root_translations_series[series_idx] is not None:
+                        refined_person_data["pred_cam_t"] = root_translations_series[series_idx]
                     
-                    if frame_idx < len(joint_coords_series) and joint_coords_series[frame_idx] is not None:
-                        refined_person_data["pred_joint_coords"] = joint_coords_series[frame_idx]
+                    if series_idx < len(joint_coords_series) and joint_coords_series[series_idx] is not None:
+                        refined_person_data["pred_joint_coords"] = joint_coords_series[series_idx]
                     
-                    if frame_idx < len(keypoints_3d_series) and keypoints_3d_series[frame_idx] is not None:
-                        refined_person_data["pred_keypoints_3d"] = keypoints_3d_series[frame_idx]
+                    if series_idx < len(keypoints_3d_series) and keypoints_3d_series[series_idx] is not None:
+                        refined_person_data["pred_keypoints_3d"] = keypoints_3d_series[series_idx]
                     
-                    refined_results[frame_key][str(person_id)] = refined_person_data
+                    # Validate that we have all required data - if not, remove this entry
+                    if (refined_person_data.get("pred_joint_coords") is None or 
+                        refined_person_data.get("pred_global_rots") is None or 
+                        refined_person_data.get("pred_keypoints_3d") is None):
+                        # Missing required data - remove this entry to restore original state
+                        if not was_original:
+                            # Only remove if it wasn't in original (interpolation failed)
+                            del refined_results[frame_key][str(person_id)]
+                            # Clean up empty frame dict
+                            if not refined_results[frame_key]:
+                                del refined_results[frame_key]
             
             if progress_callback:
-                progress_callback(1.0, "Refinement complete")
+                progress_callback(1.0, translator.t("progress.refinement_complete"))
+            
+            # Print refinement summary
+            log_print("\n" + "="*80)
+            log_print("REFINEMENT SUMMARY")
+            log_print("="*80)
+            
+            if profile_changes:
+                log_print("\nGeneral refinement:")
+                
+                # Calculate averages per profile
+                profile_averages = {}
+                for profile_name, changes in profile_changes.items():
+                    if changes:
+                        profile_averages[profile_name] = sum(changes) / len(changes)
+                
+                # Print summary for each profile
+                profile_order = ["ARMS", "LEGS", "HANDS", "FINGERS", "HEAD", "ROOT", "DEFAULT"]
+                for profile_name in profile_order:
+                    if profile_name in profile_averages:
+                        avg_change = profile_averages[profile_name]
+                        log_print(f"{profile_name}: Average change {avg_change:.1f}°")
+                
+                # Find bones with abnormal changes (>30 degrees)
+                high_change_bones = []
+                increasing_bones = []
+                
+                for bone_name, change_deg in bone_changes.items():
+                    if change_deg > self.HIGH_CHANGE_THRESHOLD_DEG:
+                        high_change_bones.append((bone_name, change_deg))
+                    
+                    # Check if bone's change is significantly higher than its profile average (indicating increasing trend)
+                    bone_profile = self._profile_name_for(bone_name)
+                    if bone_profile in profile_averages:
+                        profile_avg = profile_averages[bone_profile]
+                        # If bone change is more than 2x the profile average, it's likely increasing
+                        if change_deg > profile_avg * 2.0 and change_deg > 10.0:
+                            increasing_bones.append((bone_name, change_deg))
+                
+                # Sort by change amount (descending)
+                high_change_bones.sort(key=lambda x: x[1], reverse=True)
+                increasing_bones.sort(key=lambda x: x[1], reverse=True)
+                
+                # Print warnings for problematic bones
+                if increasing_bones:
+                    bone_names = [bone[0] for bone in increasing_bones]
+                    log_print(f"\nWarning - The following bones had an increasing average degree modification. Refinement may be too aggressive: {bone_names}")
+                
+                if high_change_bones:
+                    bone_names = [bone[0] for bone in high_change_bones]
+                    log_print(f"Warning - The following bones had a very high (>{self.HIGH_CHANGE_THRESHOLD_DEG:.0f}°) average modification. Refinement may be too aggressive: {bone_names}")
+            else:
+                log_print("\nNo rotation changes tracked.")
             
             log_print("\n" + "="*80)
             log_print("REFINEMENT PROCESS - COMPLETE")
@@ -1170,7 +1293,7 @@ class RefinementManager:
         
         return result
 
-    def _process_vector_series(self, v_series, prof, bone_name=None):
+    def _process_vector_series(self, v_series, prof, bone_name=None, adjustment_messages=None):
         # CRITICAL: Interpolation must happen FIRST, before any other processing
         if self.config.do_interpolate_missing_keyframes:
             # Interpolate missing frames before processing
@@ -1199,7 +1322,11 @@ class RefinementManager:
         if bone_name:
             change_percent = self._calculate_vector_change_percent(v_original, v)
             if change_percent > 0.01:  # Only report if there's meaningful change
-                print(f"  {bone_name}: adjusted vector by {change_percent:.2f}%")
+                message = f"  {bone_name}: adjusted vector by {change_percent:.2f}%"
+                if adjustment_messages is not None:
+                    adjustment_messages.append(message)
+                else:
+                    print(message)
 
         return v
 
@@ -1247,7 +1374,7 @@ class RefinementManager:
 
         return v
 
-    def _process_rotation_series(self, R_series, prof, bone_name=None):
+    def _process_rotation_series(self, R_series, prof, bone_name=None, profile_name=None, profile_changes=None, bone_changes=None):
         # R_series: [T][3][3]
         
         # CRITICAL: Interpolation must happen FIRST, before any other processing
@@ -1273,72 +1400,19 @@ class RefinementManager:
         # back to matrices
         R_refined = [R_from_quat(qt) for qt in q]
         
-        # Calculate and report percentage change
+        # Calculate and track changes
         if bone_name:
             change_deg = self._calculate_rotation_change_percent(R_original, R_refined)
-            if change_deg > 0.1:  # Only report if there's meaningful change (>0.1 degrees)
-                print(f"  {bone_name}: adjusted rotation by {change_deg:.2f}° (avg)")
+            if change_deg > 0.1:  # Only track if there's meaningful change (>0.1 degrees)
+                # Track per bone
+                if bone_changes is not None:
+                    bone_changes[bone_name] = change_deg
                 
-                # For bones with large adjustments, log time-based trend analysis
-                if change_deg > 30.0:  # Only log detailed analysis for large adjustments
-                    frame_changes = self._calculate_rotation_change_per_frame(R_original, R_refined)
-                    if len(frame_changes) > 0:
-                        # Show smoothing configuration
-                        smoothing_info = f"method={prof.method}"
-                        if prof.method == "one_euro":
-                            smoothing_info += f", min_cutoff={prof.one_euro_min_cutoff}, beta={prof.one_euro_beta}, d_cutoff={prof.one_euro_d_cutoff}"
-                        elif prof.method == "ema":
-                            smoothing_info += f", cutoff_hz={prof.cutoff_hz}"
-                        elif prof.method == "butterworth":
-                            smoothing_info += f", cutoff_hz={prof.cutoff_hz}"
-                        print(f"    Smoothing: {smoothing_info}")
-                        
-                        # Calculate trend: compare first half vs second half
-                        mid_point = len(frame_changes) // 2
-                        first_half_avg = sum(frame_changes[:mid_point]) / len(frame_changes[:mid_point]) if mid_point > 0 else 0.0
-                        second_half_avg = sum(frame_changes[mid_point:]) / len(frame_changes[mid_point:]) if len(frame_changes[mid_point:]) > 0 else 0.0
-                        
-                        # Calculate trend direction
-                        trend = "increasing" if second_half_avg > first_half_avg * 1.1 else "decreasing" if second_half_avg < first_half_avg * 0.9 else "stable"
-                        trend_diff = second_half_avg - first_half_avg
-                        
-                        # Detect systematic drift: check if adjustments are monotonically increasing
-                        # (excluding frame 0 which is always 0)
-                        non_zero_changes = frame_changes[1:]
-                        if len(non_zero_changes) > 10:
-                            # Calculate correlation with frame index to detect linear drift
-                            frame_indices = list(range(1, len(frame_changes)))
-                            n = len(non_zero_changes)
-                            sum_x = sum(frame_indices)
-                            sum_y = sum(non_zero_changes)
-                            sum_xy = sum(frame_indices[i] * non_zero_changes[i] for i in range(len(non_zero_changes)))
-                            sum_x2 = sum(x*x for x in frame_indices)
-                            sum_y2 = sum(y*y for y in non_zero_changes)
-                            
-                            # Simple correlation coefficient
-                            numerator = n * sum_xy - sum_x * sum_y
-                            denom = math.sqrt((n * sum_x2 - sum_x * sum_x) * (n * sum_y2 - sum_y * sum_y))
-                            correlation = numerator / denom if denom > 1e-10 else 0.0
-                            
-                            # Linear regression slope (degrees per frame)
-                            slope = (n * sum_xy - sum_x * sum_y) / (n * sum_x2 - sum_x * sum_x) if (n * sum_x2 - sum_x * sum_x) > 1e-10 else 0.0
-                            
-                            drift_warning = ""
-                            if correlation > 0.7 and slope > 0.1:
-                                drift_warning = f" ⚠️ STRONG DRIFT DETECTED (correlation={correlation:.2f}, slope={slope:.3f}°/frame)"
-                            elif correlation > 0.5 and slope > 0.05:
-                                drift_warning = f" ⚠️ Moderate drift (correlation={correlation:.2f}, slope={slope:.3f}°/frame)"
-                        else:
-                            correlation = 0.0
-                            slope = 0.0
-                            drift_warning = ""
-                        
-                        # Sample some frames to show progression
-                        sample_indices = [0, len(frame_changes)//4, len(frame_changes)//2, 3*len(frame_changes)//4, len(frame_changes)-1]
-                        sample_values = [frame_changes[i] for i in sample_indices if i < len(frame_changes)]
-                        
-                        print(f"    Trend: {trend} (first half: {first_half_avg:.2f}°, second half: {second_half_avg:.2f}°, diff: {trend_diff:+.2f}°){drift_warning}")
-                        print(f"    Sample frames: {', '.join([f'frame {i}: {frame_changes[i]:.2f}°' for i in sample_indices if i < len(frame_changes)])}")
+                # Track per profile
+                if profile_changes is not None and profile_name:
+                    if profile_name not in profile_changes:
+                        profile_changes[profile_name] = []
+                    profile_changes[profile_name].append(change_deg)
         
         return R_refined
 
@@ -1390,26 +1464,33 @@ class RefinementManager:
 
     def _profile_for(self, bone_name):
         # very rough wildcard matching
-        # Debug: log all profile matching attempts for arm-related bones
-        is_arm_bone = any(arm_part in bone_name.lower() for arm_part in ["uparm", "lowarm", "wrist", "clavicle"])
-        if is_arm_bone:
-            print(f"  DEBUG: _profile_for({bone_name}): Checking patterns in order...")
-            print(f"  DEBUG: Available patterns: {list(self.config.profiles.keys())}")
-        
         for pattern, prof in self.config.profiles.items():
             matches = self._match(pattern, bone_name)
-            if is_arm_bone:
-                print(f"  DEBUG: Pattern '{pattern}' matches {bone_name}? {matches}")
             if matches:
-                if is_arm_bone:
-                    print(f"  DEBUG: {bone_name} matched pattern '{pattern}' -> profile min_cutoff={prof.one_euro_min_cutoff}, beta={prof.one_euro_beta}, d_cutoff={prof.one_euro_d_cutoff}")
                 return prof
-        # Debug: log if no match found for arm-related bones
-        if is_arm_bone:
-            print(f"  DEBUG: {bone_name} matched no pattern, using default profile")
-            default_prof = self.config.profiles["*"]
-            print(f"  DEBUG: Default profile min_cutoff={default_prof.one_euro_min_cutoff}, beta={default_prof.one_euro_beta}, d_cutoff={default_prof.one_euro_d_cutoff}")
         return self.config.profiles["*"]
+    
+    def _profile_name_for(self, bone_name):
+        """Get the profile name (pattern) that matches a bone name."""
+        for pattern, prof in self.config.profiles.items():
+            matches = self._match(pattern, bone_name)
+            if matches:
+                # Map pattern to readable name
+                if pattern == "*arm*" or pattern == "*clavicle*":
+                    return "ARMS"
+                elif pattern == "*leg*":
+                    return "LEGS"
+                elif pattern == "*hand*" or pattern == "*wrist*":
+                    return "HANDS"
+                elif pattern == "*finger*":
+                    return "FINGERS"
+                elif pattern == "*head*":
+                    return "HEAD"
+                elif pattern == "root":
+                    return "ROOT"
+                else:
+                    return "DEFAULT"
+        return "DEFAULT"
 
     def _match(self, pattern, bone_name):
         bone_name = bone_name.lower()
@@ -1675,10 +1756,11 @@ class RefinementManager:
             return np.dot(foot_position, height_dir)
         return np.dot(foot_position, height_dir)
     
-    def _detect_foot_contact(self, foot_height, foot_offset_speed, ground_height, velocity_threshold):
+    def _detect_foot_contact(self, root_trans, foot_height, foot_offset_speed, ground_height, velocity_threshold):
         """Detect foot contact based on height and velocity thresholds.
         
         Args:
+            root_trans: Root translation in camera space
             foot_height: Height value(s) from _calculate_foot_height (positive = higher)
             foot_offset_speed: Foot velocity relative to root
             ground_height: Ground level height (positive = above origin, negative = below)
@@ -1687,7 +1769,18 @@ class RefinementManager:
         Returns:
             Boolean array indicating contact
         """
-        height_check = foot_height <= ground_height
+
+        # Root translation is in camera space, it gives the "height" of the root as 1 - Y, averaging 1.
+        # I don't know why this is, but it seems consistent across all test cases. This implies the following adjustments are required:
+        # 1 - 1.0 = 0 meaning 0 is the ground height, so the person is standing normally. The new ground height needs to be 0.1 - 0 = 0.1
+        # 1 - 0.5 = 0.5, so the person is jumping, The new ground height needs to be 0.1 - 0.5 = -0.4
+        # 1 - 1.5 = -0.5, so the person is squatting, the new ground height needs to be 0.1 - (-0.5) = 0.6
+        # We need to convert this to get "ground level", offsetting the foot height by this ground height
+
+        root_world_y = 1 - root_trans[:, 1]
+        world_ground_height = ground_height - root_world_y
+
+        height_check = foot_height <= world_ground_height
         velocity_check = foot_offset_speed < velocity_threshold
         return height_check & velocity_check
     
@@ -1717,26 +1810,23 @@ class RefinementManager:
         if not (foot_contact and not was_in_contact):
             return None
         foot_world = curr_root + root_rot[t] @ foot_offset_camera[t]
-        log_print(f"  Frame {t:3d}: {foot_name} foot contact STARTED - locked at {foot_world}")
+        # Per-frame logging removed - summary will be printed at the end
         return foot_world.copy()
     
     def _unlock_foot_on_contact_end(self, foot_contact, locked_pos, t, log_print, foot_name):
         """Unlock foot position when contact ends."""
         if foot_contact:
             return locked_pos
-        if locked_pos is not None:
-            log_print(f"  Frame {t:3d}: {foot_name} foot contact ENDED, unlocking")
+        # Per-frame logging removed - summary will be printed at the end
         return None
     
     def _select_support_foot(self, left_locked, right_locked, left_conf, right_conf, t, log_print):
         """Select which foot to use as support when both are locked."""
         if not (left_locked is not None and right_locked is not None):
             return (left_locked is not None, right_locked is not None)
-        log_print(f"  Frame {t:3d}: BOTH feet locked! left_conf={left_conf:.4f}, right_conf={right_conf:.4f}")
+        # Per-frame logging removed - summary will be printed at the end
         if left_conf > right_conf:
-            log_print(f"    -> Using LEFT foot (higher confidence)")
             return (True, False)
-        log_print(f"    -> Using RIGHT foot (higher confidence)")
         return (False, True)
     
     def _adjust_root_for_locked_foot(self, curr_root, locked_foot_pos, root_rot, foot_offset_camera, blend_factor, t, log_print, foot_name):
@@ -1744,8 +1834,7 @@ class RefinementManager:
         desired_root = locked_foot_pos - root_rot[t] @ foot_offset_camera[t]
         root_adjustment = desired_root - curr_root
         adjusted_root = curr_root + root_adjustment * blend_factor
-        adj_mag = np.linalg.norm(root_adjustment * blend_factor)
-        log_print(f"  Frame {t:3d}: Using {foot_name} foot, adjustment: {adj_mag:.4f}m")
+        # Per-frame logging removed - summary will be printed at the end
         return adjusted_root
     
     def _smooth_root_motion(self, root_trans, window_size):
@@ -1850,8 +1939,8 @@ class RefinementManager:
         left_foot_height = self._calculate_foot_height(left_foot_joint_space, height_direction)
         right_foot_height = self._calculate_foot_height(right_foot_joint_space, height_direction)
         
-        left_in_contact = self._detect_foot_contact(left_foot_height, left_foot_offset_speed, ground_height, velocity_threshold)
-        right_in_contact = self._detect_foot_contact(right_foot_height, right_foot_offset_speed, ground_height, velocity_threshold)
+        left_in_contact = self._detect_foot_contact(root_trans, left_foot_height, left_foot_offset_speed, ground_height, velocity_threshold)
+        right_in_contact = self._detect_foot_contact(root_trans, right_foot_height, right_foot_offset_speed, ground_height, velocity_threshold)
         
         left_in_contact = self._smooth_contact_detection(left_in_contact, fp_config.contact_smoothing_window)
         right_in_contact = self._smooth_contact_detection(right_in_contact, fp_config.contact_smoothing_window)
@@ -1863,13 +1952,23 @@ class RefinementManager:
         log_print(f"Contact summary: Left {np.sum(left_in_contact)}/{T} frames ({100.0*np.sum(left_in_contact)/T:.1f}%), "
                   f"Right {np.sum(right_in_contact)}/{T} frames ({100.0*np.sum(right_in_contact)/T:.1f}%)")
         
-        log_print("\nPer-frame foot selection:")
-        adjusted_root_trans = self._adjust_root_for_foot_planting(
+        adjusted_root_trans, foot_planting_stats = self._adjust_root_for_foot_planting(
             root_trans, root_rot, left_in_contact, right_in_contact,
             left_foot_offset_camera, right_foot_offset_camera,
             left_contact_confidence, right_contact_confidence,
             fp_config.blend_factor, T, log_print
         )
+        
+        # Print foot planting summary
+        frames_with_contact = foot_planting_stats['frames_with_contact']
+        frames_without_contact = foot_planting_stats['frames_without_contact']
+        total_frames = frames_with_contact + frames_without_contact
+        contact_percentage = (frames_with_contact / total_frames * 100.0) if total_frames > 0 else 0.0
+        no_contact_percentage = (frames_without_contact / total_frames * 100.0) if total_frames > 0 else 0.0
+        
+        log_print(f"\nFoot planting summary:")
+        log_print(f"  Frames with feet planted: {frames_with_contact}/{total_frames} ({contact_percentage:.1f}%)")
+        log_print(f"  Frames without feet planted: {frames_without_contact}/{total_frames} ({no_contact_percentage:.1f}%)")
         
         adjusted_before_smooth = adjusted_root_trans.copy()
         adjusted_root_trans = self._smooth_root_motion(adjusted_root_trans, fp_config.root_smoothing_window)
@@ -1893,6 +1992,10 @@ class RefinementManager:
         left_foot_locked_pos = None
         right_foot_locked_pos = None
         
+        # Track statistics
+        frames_with_contact = 0
+        frames_without_contact = 0
+        
         for t in range(T):
             curr_root = self._get_current_root_position(adjusted_root_trans, root_trans, t)
             left_contact = left_in_contact[t]
@@ -1915,6 +2018,13 @@ class RefinementManager:
             left_foot_locked_pos = self._unlock_foot_on_contact_end(left_contact, left_foot_locked_pos, t, log_print, "LEFT")
             right_foot_locked_pos = self._unlock_foot_on_contact_end(right_contact, right_foot_locked_pos, t, log_print, "RIGHT")
             
+            # Track if at least one foot is planted
+            has_contact = (left_foot_locked_pos is not None) or (right_foot_locked_pos is not None)
+            if has_contact:
+                frames_with_contact += 1
+            else:
+                frames_without_contact += 1
+            
             adjusted_root_trans[t] = self._apply_root_adjustment_for_frame(
                 curr_root, left_foot_locked_pos, right_foot_locked_pos,
                 root_rot, left_foot_offset_camera, right_foot_offset_camera,
@@ -1922,7 +2032,11 @@ class RefinementManager:
                 blend_factor, t, log_print
             )
         
-        return adjusted_root_trans
+        stats = {
+            'frames_with_contact': frames_with_contact,
+            'frames_without_contact': frames_without_contact
+        }
+        return adjusted_root_trans, stats
     
     def _get_current_root_position(self, adjusted_root_trans, root_trans, t):
         """Get current root position for frame t."""
@@ -1937,7 +2051,7 @@ class RefinementManager:
                                         blend_factor, t, log_print):
         """Apply root adjustment for a single frame."""
         if left_foot_locked_pos is None and right_foot_locked_pos is None:
-            log_print(f"  Frame {t:3d}: No foot contact")
+            # Per-frame logging removed - summary will be printed at the end
             return curr_root
         
         use_left, use_right = self._select_support_foot(

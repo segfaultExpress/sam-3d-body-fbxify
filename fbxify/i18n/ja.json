@@ -29,6 +29,8 @@
     "use_bbox": "👥 人物を指定",
     "bbox_file": "📁 BBOXファイル",
     "num_people": "👥 人数",
+    "missing_bbox_behavior": "欠落フレーム時",
+    "missing_bbox_behavior_info": "フレームのbboxデータが欠落している場合の動作：検出を実行（num_peopleを使用して検出）またはフレームをスキップ（そのフレームのポーズ推定をスキップ）",
     "fov_method": "📷 FOV Estimation Method",
     "fov_method_info": "None: Built-in runs every frame | File: Load from cameras.txt | Sample: Average from images",
     "fov_file": "📁 Camera Intrinsics File (COLMAP cameras.txt or MoGe format)",
@@ -124,7 +126,14 @@
   "progress": {
     "processing_keyframes": "📦 キーフレームを処理中...",
     "processing_person": "📦 人物を処理中...",
-    "reexporting": "🔄 保存された結果から再エクスポート中..."
+    "reexporting": "🔄 保存された結果から再エクスポート中...",
+    "applying_refinement": "推定結果にリファインメントを適用中...",
+    "preparing_fbx_data": "FBXデータを準備中...",
+    "preprocessing_complete": "前処理完了",
+    "refining_person": "人物 {person_index}/{total_people} をリファイン中",
+    "refinement_complete": "リファインメント完了",
+    "applying_poses": "ポーズを適用中: {frame_num}/{total_frames}",
+    "estimating_frame": "フレーム {frame_index}/{total_frames} を推定中"
   },
   "errors": {
     "error_occurred": "エラーが発生しました ({error_type}): {error_msg}",
@@ -132,6 +141,7 @@
     "bbox_file_required": "「人物を指定」が有効な場合、BBOXファイルを提供する必要があります",
     "num_people_required": "人数は0より大きい必要があります",
     "camera_intrinsics_required": "FOV方法が「File」の場合、カメラ内部パラメータファイルを提供する必要があります",
-    "fov_estimator_required": "「Sample」方法を使用するには、FOV推定器を読み込む必要があります。FOV推定器が初期化されていることを確認してください。"
+    "fov_estimator_required": "「Sample」方法を使用するには、FOV推定器を読み込む必要があります。FOV推定器が初期化されていることを確認してください。",
+    "pose_json_file_required": "ポーズ推定JSONファイルを提供してください"
   }
 }
