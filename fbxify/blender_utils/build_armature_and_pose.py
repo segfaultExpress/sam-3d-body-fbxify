@@ -1,30 +1,19 @@
 import bpy
 import json
 from mathutils import Vector, Matrix, Quaternion
+from bpy_extras import anim_utils
 import sys
 import math
 import os
 
-# Parse arguments - mesh paths are optional (last 2 args, may be empty strings)
-if len(sys.argv) >= 8:
-    metadata_path = sys.argv[-8]
-    joint_mapping_path = sys.argv[-7]
-    root_motion_path = sys.argv[-6]
-    rest_pose_path = sys.argv[-5]
-    faces_path = sys.argv[-4]
-    fbx_path = sys.argv[-3]
-    lod_fbx_path = sys.argv[-2] if sys.argv[-2] else None
-    mesh_obj_path = sys.argv[-1] if sys.argv[-1] else None
-else:
-    # Fallback for old argument format
-    metadata_path = sys.argv[-6]
-    joint_mapping_path = sys.argv[-5]
-    root_motion_path = sys.argv[-4]
-    rest_pose_path = sys.argv[-3]
-    faces_path = sys.argv[-2]
-    fbx_path = sys.argv[-1]
-    lod_fbx_path = None
-    mesh_obj_path = None
+metadata_path = sys.argv[-8]
+joint_mapping_path = sys.argv[-7]
+root_motion_path = sys.argv[-6]
+rest_pose_path = sys.argv[-5]
+faces_path = sys.argv[-4]
+fbx_path = sys.argv[-3]
+lod_fbx_path = sys.argv[-2] if sys.argv[-2] else None
+mesh_obj_path = sys.argv[-1] if sys.argv[-1] else None
 
 with open(metadata_path, "r", encoding="utf-8") as f:
     metadata = json.load(f)["metadata"]
@@ -328,6 +317,8 @@ def load_and_reskin_mesh(arm_obj, mesh_obj_path):
     
     source_mesh_obj = None
     lod_mesh_obj = None
+
+    print(f"Loading mesh files for reskinning... mesh_obj_path: {mesh_obj_path}")
     
     try:
         # Import OBJ mesh (source mesh with new shape)
@@ -753,8 +744,122 @@ def get_rotation_from_mapping_method(bone_dict, keyframe_index):
 
     return None
 
+def ensure_action(arm_obj, action_name="ImportedAction"):
+    ad = arm_obj.animation_data
+    if ad is None:
+        arm_obj.animation_data_create()
+        ad = arm_obj.animation_data
 
-def breadth_first_pose_application(joint_mapping, frame_idx):
+    act = ad.action
+    if act is None:
+        act = bpy.data.actions.new(action_name)
+        ad.action = act
+    
+    return act, ad
+
+def ensure_quat_fcurves(action, anim_data, bone_name):
+    """
+    Returns list of 4 fcurves for rotation_quaternion (w,x,y,z).
+    Compatible with Blender 5.0+ channel bag API.
+    """
+    data_path = f'pose.bones["{bone_name}"].rotation_quaternion'
+    fcs = []
+    
+    # Check if we're using Blender 5.0+ (action.fcurves doesn't exist)
+    is_blender_5_plus = not hasattr(action, 'fcurves')
+    
+    if is_blender_5_plus:
+        # Blender 5.0+ requires using channel bags via anim_utils
+        if anim_data is None:
+            raise RuntimeError("Animation data is required for Blender 5.0+")
+        
+        # Get action slot - try multiple ways to access it
+        slot = None
+        # Method 1: Try action_slot (singular)
+        if hasattr(anim_data, 'action_slot') and anim_data.action_slot:
+            slot = anim_data.action_slot
+        # Method 2: Try action_slots (plural) - first slot
+        elif hasattr(anim_data, 'action_slots') and len(anim_data.action_slots) > 0:
+            slot = anim_data.action_slots[0]
+        # Method 3: Try to get slot from action itself
+        elif hasattr(action, 'slots') and len(action.slots) > 0:
+            slot = action.slots[0]
+        
+        # If no slot found, try to create one
+        if slot is None:
+            try:
+                if hasattr(anim_data, 'action_slots'):
+                    slot = anim_data.action_slots.new(name=action.name)
+            except (AttributeError, TypeError):
+                pass
+        
+        if slot is None:
+            raise RuntimeError("Cannot access fcurves: action slot not available in Blender 5.0+. "
+                             "Please ensure the action is properly assigned to the armature.")
+        
+        try:
+            channelbag = anim_utils.action_ensure_channelbag_for_slot(action, slot)
+            
+            for i in range(4):
+                # Try to find existing fcurve
+                fc = None
+                for existing_fc in channelbag.fcurves:
+                    if existing_fc.data_path == data_path and existing_fc.array_index == i:
+                        fc = existing_fc
+                        break
+                
+                # Create new fcurve if not found
+                if fc is None:
+                    fc = channelbag.fcurves.new(data_path=data_path, index=i)
+                fcs.append(fc)
+        except (AttributeError, TypeError, ValueError) as e:
+            raise RuntimeError(f"Cannot access fcurves via channel bag in Blender 5.0+: {e}")
+    else:
+        # Legacy API (Blender < 5.0)
+        for i in range(4):
+            fc = action.fcurves.find(data_path=data_path, index=i)
+            if fc is None:
+                fc = action.fcurves.new(data_path=data_path, index=i)
+            fcs.append(fc)
+    
+    return fcs
+
+def set_curve_defaults(fc, interpolation='BEZIER', handle_left='AUTO', handle_right='AUTO'):
+    # These are defaults for new points; we’ll also set per-point below.
+    fc.auto_smoothing = 'NONE'  # optional; keeps things predictable
+    # Note: interpolation/handles are per keyframe_point, not per fcurve.
+
+def insert_quat_key(fcs4, frame, quat, interpolation='BEZIER', handle_type='AUTO'):
+    """
+    fcs4: [fc_w, fc_x, fc_y, fc_z]
+    quat: mathutils.Quaternion or (w,x,y,z)
+    """
+    w, x, y, z = quat
+    vals = (w, x, y, z)
+
+    for fc, v in zip(fcs4, vals):
+        kp = fc.keyframe_points.insert(frame, v, options={'FAST'})
+        # Make interpolation/handles explicit to match your current behavior.
+        kp.interpolation = interpolation
+        kp.handle_left_type = handle_type
+        kp.handle_right_type = handle_type
+
+def build_fcurve_cache(arm_obj, pose_bones, action_name="ImportedAction"):
+    action, anim_data = ensure_action(arm_obj, action_name=action_name)
+
+    cache = {}
+    for pbone in pose_bones:
+        # Ensure quaternion rotation mode for safety / identicalness
+        pbone.rotation_mode = 'QUATERNION'
+
+        fcs4 = ensure_quat_fcurves(action, anim_data, pbone.name)
+        for fc in fcs4:
+            set_curve_defaults(fc)
+        cache[pbone.name] = fcs4
+
+    return action, cache
+
+def breadth_first_pose_application(joint_mapping, frame_idx, suppress_all_missing_warning=False):
     # bpy.context.view_layer.update() is expensive - but needs to run after every layer
     # We can do an O(log n) traversal of the bone hierarchy by going breadth-first
 
@@ -790,23 +895,83 @@ def breadth_first_pose_application(joint_mapping, frame_idx):
         current_layer = next_layer
 
     # Print grouped warning if there are missing rotations
+    # Return True if all rotations are missing (for range consolidation)
+    all_missing = len(applied_bones) == 0
     if missing_rotation_bones:
-        # If no bones were applied, all bones are missing - use simplified message
-        if len(applied_bones) == 0:
-            print(f"  WARNING: No rotations found for frame {frame_idx + 1}")
+        if all_missing:
+            # Only suppress if requested (for range consolidation)
+            if not suppress_all_missing_warning:
+                print(f"  WARNING: No rotations found for frame {frame_idx + 1}")
         else:
+            # Partial missing - always print
             bones_list = ", ".join(missing_rotation_bones)
             print(f"  WARNING: No rotation found for frame {frame_idx + 1} on the following bones: [{bones_list}]")
 
-    for bone in blender_pose_bones:
-        bone.keyframe_insert("rotation_quaternion", frame=frame_idx + 1)
+    # inefficient
+    # for bone in blender_pose_bones:
+    #    bone.keyframe_insert("rotation_quaternion", frame=frame_idx + 1)
+    for pbone in blender_pose_bones:
+        fcs4 = fcurve_cache[pbone.name]
+        insert_quat_key(
+            fcs4,
+            frame_idx + 1,
+            pbone.rotation_quaternion,
+            interpolation='BEZIER',
+            handle_type='AUTO'
+        )
 
     # Print progress in parseable format for parent process
     print(f"PROGRESS: {frame_idx + 1}/{num_keyframes}", flush=True)
     reset_pose_bones(blender_pose_bones)
+    
+    return all_missing
+
+action, fcurve_cache = build_fcurve_cache(
+    arm_obj,
+    blender_pose_bones,
+    action_name="ImportedAction"
+)
+
+# Track consecutive frames with missing rotations for consolidated warnings
+missing_rotation_range_start = None
+missing_rotation_range_end = None
+
+def flush_missing_rotation_warning():
+    """Print consolidated warning for accumulated missing rotation range."""
+    global missing_rotation_range_start, missing_rotation_range_end
+    if missing_rotation_range_start is not None:
+        if missing_rotation_range_start == missing_rotation_range_end:
+            print(f"  WARNING: No rotations found for frame {missing_rotation_range_start}")
+        else:
+            print(f"  WARNING: No rotations found for frame {missing_rotation_range_start}-{missing_rotation_range_end}")
+        missing_rotation_range_start = None
+        missing_rotation_range_end = None
 
 for frame_idx in range(num_keyframes):
-    breadth_first_pose_application(joint_mapping, frame_idx)
+    # Check if all rotations are missing (suppress individual warning, we'll consolidate)
+    all_missing = breadth_first_pose_application(joint_mapping, frame_idx, suppress_all_missing_warning=True)
+    
+    if all_missing:
+        # Add to current range or start new range
+        frame_num = frame_idx + 1
+        if missing_rotation_range_start is None:
+            # Start new range
+            missing_rotation_range_start = frame_num
+            missing_rotation_range_end = frame_num
+        elif frame_num == missing_rotation_range_end + 1:
+            # Extend current range
+            missing_rotation_range_end = frame_num
+        else:
+            # Gap detected, flush previous range and start new one
+            flush_missing_rotation_warning()
+            missing_rotation_range_start = frame_num
+            missing_rotation_range_end = frame_num
+    else:
+        # Frame has rotations, flush any accumulated range
+        flush_missing_rotation_warning()
+
+# Flush any remaining range at the end
+flush_missing_rotation_warning()
 
 bpy.ops.object.mode_set(mode="OBJECT")
 

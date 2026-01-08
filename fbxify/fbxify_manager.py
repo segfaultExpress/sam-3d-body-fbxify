@@ -322,9 +322,109 @@ class FbxifyManager:
             mesh_obj_path=mesh_obj_path
         )
     
+    def _remove_outliers_and_average(self, body_params_list: List[Dict[str, Any]], outlier_percent: float) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Remove outliers from body parameters and return averaged values.
+        
+        Args:
+            body_params_list: List of parameter dicts [{scale_params, shape_params}, ...]
+            outlier_percent: Percentage of outliers to remove from each tail (0-50)
+            
+        Returns:
+            Tuple of (averaged_scale_params, averaged_shape_params) as numpy arrays
+        """
+        if not body_params_list:
+            raise ValueError("body_params_list cannot be empty")
+        
+        # Convert to numpy arrays (each row is one frame's parameters)
+        # Ensure all parameters are numpy arrays and have consistent shape
+        scale_params_list = []
+        shape_params_list = []
+        for p in body_params_list:
+            scale = p["scale_params"]
+            shape = p["shape_params"]
+            
+            # Convert to numpy if needed
+            if not isinstance(scale, np.ndarray):
+                scale = np.array(scale)
+            if not isinstance(shape, np.ndarray):
+                shape = np.array(shape)
+            
+            # Flatten to 1D if needed
+            if scale.ndim > 1:
+                scale = scale.flatten()
+            if shape.ndim > 1:
+                shape = shape.flatten()
+            
+            scale_params_list.append(scale)
+            shape_params_list.append(shape)
+        
+        # Stack into 2D arrays (frames x params)
+        scale_params_array = np.array(scale_params_list)
+        shape_params_array = np.array(shape_params_list)
+        
+        # Debug: check shapes
+        print(f"  Parameter array shapes: scale={scale_params_array.shape}, shape={shape_params_array.shape}")
+        
+        # Remove outliers using percentile-based method
+        # Remove top/bottom outlier_percent/2% from each dimension, then remove frames that have outliers in any dimension
+        if outlier_percent > 0 and len(body_params_list) > 2:
+            # Calculate percentiles for each dimension
+            lower_percentile = outlier_percent / 2.0
+            upper_percentile = 100.0 - (outlier_percent / 2.0)
+            
+            # For each dimension, find the valid range
+            scale_valid_masks = []
+            shape_valid_masks = []
+            
+            # Process scale_params: find valid range for each dimension
+            for dim_idx in range(scale_params_array.shape[1]):
+                dim_values = scale_params_array[:, dim_idx]
+                lower_bound = np.percentile(dim_values, lower_percentile)
+                upper_bound = np.percentile(dim_values, upper_percentile)
+                # Keep values within bounds
+                valid_mask = (dim_values >= lower_bound) & (dim_values <= upper_bound)
+                scale_valid_masks.append(valid_mask)
+            
+            # Process shape_params: find valid range for each dimension
+            for dim_idx in range(shape_params_array.shape[1]):
+                dim_values = shape_params_array[:, dim_idx]
+                lower_bound = np.percentile(dim_values, lower_percentile)
+                upper_bound = np.percentile(dim_values, upper_percentile)
+                # Keep values within bounds
+                valid_mask = (dim_values >= lower_bound) & (dim_values <= upper_bound)
+                shape_valid_masks.append(valid_mask)
+            
+            # Combine masks: keep frame only if ALL dimensions are valid for both scale and shape
+            scale_valid_mask = np.all(scale_valid_masks, axis=0) if scale_valid_masks else np.ones(len(body_params_list), dtype=bool)
+            shape_valid_mask = np.all(shape_valid_masks, axis=0) if shape_valid_masks else np.ones(len(body_params_list), dtype=bool)
+            
+            # Keep frames that are valid for both scale and shape
+            combined_mask = scale_valid_mask & shape_valid_mask
+            
+            if np.sum(combined_mask) == 0:
+                # If all frames are outliers, use all frames (fallback)
+                print(f"  Warning: All frames were outliers, using all frames for averaging")
+                combined_mask = np.ones(len(body_params_list), dtype=bool)
+            
+            scale_params_array = scale_params_array[combined_mask]
+            shape_params_array = shape_params_array[combined_mask]
+            
+            print(f"  Removed {len(body_params_list) - len(scale_params_array)} outliers ({outlier_percent}% removal), keeping {len(scale_params_array)} frames")
+        else:
+            print(f"  No outlier removal (outlier_percent={outlier_percent} or too few frames)")
+        
+        # Average the remaining parameters
+        scale_params_avg = np.mean(scale_params_array, axis=0)
+        shape_params_avg = np.mean(shape_params_array, axis=0)
+        
+        return scale_params_avg, shape_params_avg
+    
     def process_from_estimation_json(self, estimation_json_path: str, profile_name: str,
                                     use_root_motion: bool = True, fps: float = 30.0,
                                     refinement_config=None, progress_callback: Optional[callable] = None,
+                                    lod: int = -1, use_personalized_body: bool = False,
+                                    outlier_removal_percent: float = 10.0,
                                     lang: str = DEFAULT_LANGUAGE) -> ProcessResult:
         """
         Process from saved estimation JSON file.
@@ -336,6 +436,9 @@ class FbxifyManager:
             fps: Frame rate
             refinement_config: Optional RefinementConfig to apply before joint mapping
             progress_callback: Optional callback function(progress, description)
+            lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
+            use_personalized_body: Whether to generate personalized body mesh from estimation data
+            outlier_removal_percent: Percentage of outliers to remove from each tail (0-50)
             
         Returns:
             ProcessResult containing all processing results
@@ -387,6 +490,78 @@ class FbxifyManager:
         num_frames = len(estimation_results)
         frame_paths = [f"frame_{i:06d}" for i in range(num_frames)]
         
+        # Generate mesh if enabled and personalized body is requested
+        mesh_obj_path = None
+        if lod >= 0 and profile_name == "mhr" and use_personalized_body:
+            if progress_callback:
+                progress_callback(0.9, translator.t("progress.preparing_fbx_data") + " - Generating mesh...")
+            
+            # Collect body parameters from estimation results
+            body_params_collection = {}  # person_id -> list of {scale_params, shape_params}
+            
+            for frame_data in estimation_results.values():
+                for person_id, estimation_data in frame_data.items():
+                    if person_id not in body_params_collection:
+                        body_params_collection[person_id] = []
+                    
+                    scale_params = estimation_data.get("scale_params")
+                    shape_params = estimation_data.get("shape_params")
+                    if scale_params is not None and shape_params is not None:
+                        # Convert to numpy arrays if they're lists (from JSON deserialization)
+                        if isinstance(scale_params, list):
+                            scale_params = np.array(scale_params)
+                        if isinstance(shape_params, list):
+                            shape_params = np.array(shape_params)
+                        
+                        # Ensure they're 1D arrays
+                        if scale_params.ndim > 1:
+                            scale_params = scale_params.flatten()
+                        if shape_params.ndim > 1:
+                            shape_params = shape_params.flatten()
+                        
+                        body_params_collection[person_id].append({
+                            "scale_params": scale_params,
+                            "shape_params": shape_params
+                        })
+            
+            # Process mesh for each person
+            for identifier, params_list in body_params_collection.items():
+                if not params_list:
+                    continue
+                
+                # Remove outliers and average
+                try:
+                    scale_params_avg, shape_params_avg = self._remove_outliers_and_average(
+                        params_list, outlier_removal_percent
+                    )
+                    
+                    # Log parameter statistics
+                    print(f"Generating T-pose mesh for person {identifier}...")
+                    print(f"  Processed {len(params_list)} frames with {outlier_removal_percent}% outlier removal")
+                    print(f"  Scale params shape: {scale_params_avg.shape}, mean: {np.mean(scale_params_avg):.4f}, std: {np.std(scale_params_avg):.4f}")
+                    print(f"  Shape params shape: {shape_params_avg.shape}, mean: {np.mean(shape_params_avg):.4f}, std: {np.std(shape_params_avg):.4f}")
+                    
+                    # Generate T-pose mesh
+                    temp_obj = tempfile.NamedTemporaryFile(delete=False, suffix='.obj')
+                    temp_obj.close()
+                    
+                    _, mesh_path = self.estimation_manager.generate_tpose(
+                        scale_params=scale_params_avg,
+                        shape_params=shape_params_avg,
+                        output_obj_path=temp_obj.name,
+                        lod=lod
+                    )
+                    mesh_obj_path = mesh_path
+                    print(f"  Generated mesh saved to: {mesh_obj_path}")
+                    
+                    # Only process first person for now (can be extended later)
+                    break
+                except Exception as e:
+                    print(f"  Warning: Failed to generate mesh: {e}")
+                    import traceback
+                    traceback.print_exc()
+                    mesh_obj_path = None
+        
         if progress_callback:
             progress_callback(1.0, translator.t("progress.preprocessing_complete"))
         
@@ -397,7 +572,7 @@ class FbxifyManager:
             frame_paths=frame_paths,
             profile_name=profile_name,
             fps=fps,
-            mesh_obj_path=None
+            mesh_obj_path=mesh_obj_path
         )
     
     def _convert_translation_to_list(self, trans_val) -> List[float]:

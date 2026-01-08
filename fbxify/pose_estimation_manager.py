@@ -634,7 +634,7 @@ class PoseEstimationManager:
             }
             return data, metadata
     
-    def generate_tpose(self, scale_params, shape_params, output_obj_path="tpose.obj"):
+    def generate_tpose(self, scale_params, shape_params, output_obj_path="tpose.obj", lod: Optional[int] = None):
         """
         Generate a T-pose/A-pose mesh with the given body shape and scale parameters,
         but with all pose parameters set to zero (no pose).
@@ -646,6 +646,7 @@ class PoseEstimationManager:
             scale_params: Scale parameters (numpy array or list)
             shape_params: Shape parameters (numpy array or list)
             output_obj_path: Path to save the OBJ file
+            lod: Optional LOD level for MHR model (0-6). If None, uses default LOD.
             
         Returns:
             tuple: (vertices_np, output_obj_path)
@@ -715,6 +716,7 @@ class PoseEstimationManager:
                 return_joint_coords=False,
                 return_model_params=False,
                 return_joint_rotations=False,
+                lod=lod,
             )
         
         # Convert to numpy and apply camera system correction (same as in mhr_head.forward)

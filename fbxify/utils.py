@@ -142,6 +142,8 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
                     if progress_bar:
                         progress_bar.n = frame_num
                         progress_bar.total = total_frames
+                        # Update description with current frame number
+                        progress_bar.set_description(translator.t("progress.applying_poses", frame_num=frame_num, total_frames=total_frames))
                         progress_bar.refresh()
                         # Close progress bar immediately when we reach 100%
                         if frame_num >= total_frames:

@@ -6,6 +6,6 @@ HANDS_PROFILE = FilterProfile( # hands typically has roll instability
     max_ang_speed_deg=360.0,
     max_ang_accel_deg=3600.0,
     method="one_euro",
-    one_euro_min_cutoff=1.2,
+    one_euro_min_cutoff=25.0,
     one_euro_beta=0.4,
 )

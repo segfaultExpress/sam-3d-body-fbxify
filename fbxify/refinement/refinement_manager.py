@@ -689,6 +689,9 @@ class RefinementManager:
             # Track changes per profile and per bone for summary
             profile_changes = {}  # {profile_name: [list of changes in degrees]}
             bone_changes = {}  # {bone_name: change in degrees}
+            profile_vector_changes = {}  # {profile_name: [list of vector adjustment percentages]}
+            bone_vector_changes = {}  # {bone_name: vector adjustment percentage}
+            profile_spike_counts = {}  # {profile_name: (spike_count, total_frames)}
             
             # Get all person IDs across all frames
             all_person_ids = set()
@@ -838,7 +841,8 @@ class RefinementManager:
                                 bone_name=bone_name,
                                 profile_name=profile_name,
                                 profile_changes=profile_changes,
-                                bone_changes=bone_changes
+                                bone_changes=bone_changes,
+                                profile_spike_counts=profile_spike_counts
                             )
                             refined_joint_rots.append(refined_joint_rot)
                         
@@ -869,11 +873,9 @@ class RefinementManager:
                         bone_name="root_rotation",
                         profile_name="ROOT",
                         profile_changes=profile_changes,
-                        bone_changes=bone_changes
+                        bone_changes=bone_changes,
+                        profile_spike_counts=profile_spike_counts
                     )
-                
-                # Collect vector adjustment messages for summary
-                vector_adjustment_messages = []
                 
                 # Refine root translation
                 if root_translations_series and any(x is not None for x in root_translations_series):
@@ -882,7 +884,9 @@ class RefinementManager:
                         root_translations_series,
                         prof,
                         bone_name="root_translation",
-                        adjustment_messages=vector_adjustment_messages
+                        profile_name="ROOT",
+                        profile_vector_changes=profile_vector_changes,
+                        bone_vector_changes=bone_vector_changes
                     )
                 
                 # Refine joint coordinates (each joint separately) - CRITICAL for foot planting velocity calculations
@@ -912,12 +916,16 @@ class RefinementManager:
                                     joint_coord_series.append(None)
                             
                             # Refine this joint's coordinate series using the same profile as rotations
-                            prof = self.config.profiles.get("*", self.config.profiles.get("root"))
+                            bone_name = JOINT_NAMES[joint_idx] if joint_idx < len(JOINT_NAMES) else f"joint_{joint_idx}"
+                            prof = self._profile_for(bone_name)
+                            profile_name = self._profile_name_for(bone_name)
                             refined_joint_coord = self._process_vector_series(
                                 joint_coord_series,
                                 prof,
-                                bone_name=JOINT_NAMES[joint_idx] if joint_idx < len(JOINT_NAMES) else f"joint_{joint_idx}",
-                                adjustment_messages=vector_adjustment_messages
+                                bone_name=bone_name,
+                                profile_name=profile_name,
+                                profile_vector_changes=profile_vector_changes,
+                                bone_vector_changes=bone_vector_changes
                             )
                             refined_joint_coords.append(refined_joint_coord)
                         
@@ -957,12 +965,16 @@ class RefinementManager:
                                     kp_series.append(None)
                             
                             # Refine this keypoint's series using the same profile as joint coords
+                            bone_name = f"keypoint_{kp_idx}"
                             prof = self.config.profiles.get("*", self.config.profiles.get("root"))
+                            profile_name = "DEFAULT"  # Keypoints use default profile
                             refined_kp = self._process_vector_series(
                                 kp_series,
                                 prof,
-                                bone_name=f"keypoint_{kp_idx}",
-                                adjustment_messages=vector_adjustment_messages
+                                bone_name=bone_name,
+                                profile_name=profile_name,
+                                profile_vector_changes=profile_vector_changes,
+                                bone_vector_changes=bone_vector_changes
                             )
                             refined_keypoints_3d.append(refined_kp)
                         
@@ -974,17 +986,6 @@ class RefinementManager:
                             for kp_idx in range(num_keypoints):
                                 frame_keypoints.append(refined_keypoints_3d[kp_idx][t])
                             keypoints_3d_series.append(frame_keypoints)
-                
-                # Print vector stabilization summary if there are any adjustments
-                if vector_adjustment_messages:
-                    log_print("\n" + "="*80)
-                    log_print("VECTOR STABILIZATION")
-                    log_print("="*80)
-                    # Sort messages alphabetically by bone name for consistency
-                    sorted_messages = sorted(vector_adjustment_messages)
-                    for message in sorted_messages:
-                        log_print(message)
-                    log_print("="*80 + "\n")
                 
                 # Apply root motion stabilization (combines rotation and translation)
                 if self.config.do_root_motion_fix and root_rotations_series and root_translations_series:
@@ -1090,21 +1091,39 @@ class RefinementManager:
             log_print("REFINEMENT SUMMARY")
             log_print("="*80)
             
-            if profile_changes:
+            if profile_changes or profile_vector_changes or profile_spike_counts:
                 log_print("\nGeneral refinement:")
                 
-                # Calculate averages per profile
-                profile_averages = {}
+                # Calculate rotation averages per profile
+                profile_rotation_averages = {}
                 for profile_name, changes in profile_changes.items():
                     if changes:
-                        profile_averages[profile_name] = sum(changes) / len(changes)
+                        profile_rotation_averages[profile_name] = sum(changes) / len(changes)
+                
+                # Calculate vector averages per profile
+                profile_vector_averages = {}
+                for profile_name, changes in profile_vector_changes.items():
+                    if changes:
+                        profile_vector_averages[profile_name] = sum(changes) / len(changes)
                 
                 # Print summary for each profile
                 profile_order = ["ARMS", "LEGS", "HANDS", "FINGERS", "HEAD", "ROOT", "DEFAULT"]
                 for profile_name in profile_order:
-                    if profile_name in profile_averages:
-                        avg_change = profile_averages[profile_name]
-                        log_print(f"{profile_name}: Average change {avg_change:.1f}°")
+                    rotation_avg = profile_rotation_averages.get(profile_name)
+                    vector_avg = profile_vector_averages.get(profile_name)
+                    spike_info = profile_spike_counts.get(profile_name)
+                    
+                    if rotation_avg is not None or vector_avg is not None or spike_info is not None:
+                        parts = []
+                        if rotation_avg is not None:
+                            parts.append(f"Rotation {rotation_avg:.1f}°")
+                        if vector_avg is not None:
+                            parts.append(f"Vector {vector_avg:.1f}% (avg adjusted)")
+                        if spike_info is not None:
+                            spike_count, total_frames = spike_info
+                            spike_pct = (spike_count / total_frames * 100.0) if total_frames > 0 else 0.0
+                            parts.append(f"{spike_count} Spikes ({spike_pct:.1f}%)")
+                        log_print(f"{profile_name}: {' | '.join(parts)}")
                 
                 # Find bones with abnormal changes (>30 degrees)
                 high_change_bones = []
@@ -1116,8 +1135,8 @@ class RefinementManager:
                     
                     # Check if bone's change is significantly higher than its profile average (indicating increasing trend)
                     bone_profile = self._profile_name_for(bone_name)
-                    if bone_profile in profile_averages:
-                        profile_avg = profile_averages[bone_profile]
+                    if bone_profile in profile_rotation_averages:
+                        profile_avg = profile_rotation_averages[bone_profile]
                         # If bone change is more than 2x the profile average, it's likely increasing
                         if change_deg > profile_avg * 2.0 and change_deg > 10.0:
                             increasing_bones.append((bone_name, change_deg))
@@ -1256,6 +1275,35 @@ class RefinementManager:
         
         return result
 
+    def _find_data_islands(self, series, min_island_size=2):
+        """
+        Find continuous islands of non-None data in a series.
+        Returns list of (start_idx, end_idx, island_data) tuples.
+        Islands smaller than min_island_size are excluded.
+        """
+        islands = []
+        T = len(series)
+        i = 0
+        
+        while i < T:
+            # Find start of next island
+            if series[i] is not None:
+                start = i
+                # Find end of island
+                while i < T and series[i] is not None:
+                    i += 1
+                end = i - 1
+                island_size = end - start + 1
+                
+                # Only include islands that meet minimum size
+                if island_size >= min_island_size:
+                    island_data = series[start:end+1]
+                    islands.append((start, end, island_data))
+            else:
+                i += 1
+        
+        return islands
+
     def _fill_none_values(self, series, is_rotation=False):
         """
         Fill None values in a series by forward-filling from previous valid frame.
@@ -1293,16 +1341,39 @@ class RefinementManager:
         
         return result
 
-    def _process_vector_series(self, v_series, prof, bone_name=None, adjustment_messages=None):
+    def _process_vector_series(self, v_series, prof, bone_name=None, profile_name=None, profile_vector_changes=None, bone_vector_changes=None, processing_island=False):
         # CRITICAL: Interpolation must happen FIRST, before any other processing
         if self.config.do_interpolate_missing_keyframes:
             # Interpolate missing frames before processing
             v_series = self._interpolate_missing_frames(v_series, is_rotation=False)
         else:
-            # Check for None values and return early if found
-            if any(v is None for v in v_series):
-                print(f"  Warning: Missing keyframes detected in {bone_name or 'vector series'}, skipping refinement (enable 'Interpolate Missing Keyframes' to interpolate)")
-                return v_series
+            # Process islands of continuous data separately
+            if any(v is None for v in v_series) and not processing_island:
+                # Find islands of continuous data
+                islands = self._find_data_islands(v_series, min_island_size=2)
+                
+                if not islands:
+                    # No valid islands found, return original
+                    return v_series
+                
+                # Create result array, preserving None values
+                v_refined = [None] * len(v_series)
+                
+                # Process each island independently
+                for start_idx, end_idx, island_data in islands:
+                    # Process this island as if it were a complete series
+                    island_refined = self._process_vector_series(
+                        island_data, prof, bone_name=bone_name, profile_name=profile_name,
+                        profile_vector_changes=profile_vector_changes, 
+                        bone_vector_changes=bone_vector_changes,
+                        processing_island=True  # Prevent recursive island splitting
+                    )
+                    
+                    # Place refined island back into result
+                    for i, refined_val in enumerate(island_refined):
+                        v_refined[start_idx + i] = refined_val
+                
+                return v_refined
         
         # Defensive check: ensure no None values remain before processing
         if any(v is None for v in v_series):
@@ -1318,15 +1389,19 @@ class RefinementManager:
         if self.config.do_vector_smoothing:
             v = self._smooth_vector(v, prof)
         
-        # Calculate and report percentage change
+        # Calculate and track vector adjustment percentage
         if bone_name:
             change_percent = self._calculate_vector_change_percent(v_original, v)
-            if change_percent > 0.01:  # Only report if there's meaningful change
-                message = f"  {bone_name}: adjusted vector by {change_percent:.2f}%"
-                if adjustment_messages is not None:
-                    adjustment_messages.append(message)
-                else:
-                    print(message)
+            if change_percent > 0.01:  # Only track if there's meaningful change
+                # Track per bone
+                if bone_vector_changes is not None:
+                    bone_vector_changes[bone_name] = change_percent
+                
+                # Track per profile
+                if profile_vector_changes is not None and profile_name:
+                    if profile_name not in profile_vector_changes:
+                        profile_vector_changes[profile_name] = []
+                    profile_vector_changes[profile_name].append(change_percent)
 
         return v
 
@@ -1374,7 +1449,7 @@ class RefinementManager:
 
         return v
 
-    def _process_rotation_series(self, R_series, prof, bone_name=None, profile_name=None, profile_changes=None, bone_changes=None):
+    def _process_rotation_series(self, R_series, prof, bone_name=None, profile_name=None, profile_changes=None, bone_changes=None, profile_spike_counts=None, processing_island=False):
         # R_series: [T][3][3]
         
         # CRITICAL: Interpolation must happen FIRST, before any other processing
@@ -1382,17 +1457,52 @@ class RefinementManager:
             # Interpolate missing frames before processing
             R_series = self._interpolate_missing_frames(R_series, is_rotation=True)
         else:
-            # Check for None values and return early if found
-            if any(R is None for R in R_series):
-                print(f"  Warning: Missing keyframes detected in {bone_name or 'rotation series'}, skipping refinement (enable 'Interpolate Missing Keyframes' to interpolate)")
-                return R_series
+            # Process islands of continuous data separately
+            if any(R is None for R in R_series) and not processing_island:
+                # Find islands of continuous data
+                islands = self._find_data_islands(R_series, min_island_size=2)
+                
+                if not islands:
+                    # No valid islands found, return original
+                    return R_series
+                
+                # Create result array, preserving None values
+                R_refined = [None] * len(R_series)
+                
+                # Process each island independently
+                for start_idx, end_idx, island_data in islands:
+                    # Process this island as if it were a complete series
+                    island_refined = self._process_rotation_series(
+                        island_data, prof, bone_name=bone_name, profile_name=profile_name,
+                        profile_changes=profile_changes, bone_changes=bone_changes,
+                        profile_spike_counts=profile_spike_counts,
+                        processing_island=True  # Prevent recursive island splitting
+                    )
+                    
+                    # Place refined island back into result
+                    for i, refined_val in enumerate(island_refined):
+                        R_refined[start_idx + i] = refined_val
+                
+                return R_refined
         
         R_original = [[[R[i][j] for j in range(3)] for i in range(3)] for R in R_series]  # Deep copy
         q = [quat_from_R(R) for R in R_series]   # [T] quats
         q = fix_quat_hemisphere(q)
 
+        spike_count = 0
+        total_frames = len(q)
         if self.config.do_spike_fix:
-            q = self._despike_rotation(q, prof)
+            q, spike_count, total_frames = self._despike_rotation(q, prof)
+        else:
+            # Still count spikes even if spike_fix is disabled, for statistics
+            _, spike_count, total_frames = self._despike_rotation(q, prof)
+        
+        # Track spike statistics per profile
+        if profile_spike_counts is not None and profile_name:
+            if profile_name not in profile_spike_counts:
+                profile_spike_counts[profile_name] = [0, 0]  # [spike_count, total_frames]
+            profile_spike_counts[profile_name][0] += spike_count
+            profile_spike_counts[profile_name][1] += total_frames
 
         if self.config.do_rotation_smoothing:
             q = self._smooth_rotation(q, prof)
@@ -1419,7 +1529,7 @@ class RefinementManager:
     def _despike_rotation(self, q, prof):
         T = len(q)
         if T < 3:
-            return q
+            return q, 0, T
 
         ang_vel = [0.0] * T
         ang_acc = [0.0] * T
@@ -1432,15 +1542,17 @@ class RefinementManager:
         for t in range(2, T):
             ang_acc[t] = (ang_vel[t] - ang_vel[t-1]) / self.dt
 
+        spike_count = 0
         for t in range(1, T-1):
             is_spike = (ang_vel[t] > prof.max_ang_speed_deg and
                         ang_acc[t] > prof.max_ang_accel_deg)
 
             if is_spike:
+                spike_count += 1
                 # replace with slerp neighbor midpoint
                 q[t] = slerp(q[t-1], q[t+1], 0.5)
 
-        return q
+        return q, spike_count, T
 
     def _smooth_rotation(self, q, prof):
         if prof.method == "ema":
@@ -1600,7 +1712,7 @@ class RefinementManager:
                             stabilized["translation"] = filtered_trans
                         else:
                             # For other methods, use profile cutoffs (standard processing)
-                            filtered = self._process_vector_series(trans, prof)
+                            filtered = self._process_vector_series(trans, prof, processing_island=False)
                             stabilized["translation"] = filtered
                         
                         # Calculate and report percentage change for root translation
