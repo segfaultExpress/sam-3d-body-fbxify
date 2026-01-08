@@ -2,6 +2,13 @@ from sam_3d_body.metadata.mhr70 import pose_info
 
 PROFILES = {
     "mhr": {
+        "lod0_path": "mapping/mhr/lod0.fbx",
+        "lod1_path": "mapping/mhr/lod1.fbx",
+        "lod2_path": "mapping/mhr/lod2.fbx",
+        "lod3_path": "mapping/mhr/lod3.fbx",
+        "lod4_path": "mapping/mhr/lod4.fbx",
+        "lod5_path": "mapping/mhr/lod5.fbx",
+        "lod6_path": "mapping/mhr/lod6.fbx",
         "joint_mapping_path": "mapping/mhr/mhr_armature_joints_mapping.json",
         "armature_rest_pose_path": "mapping/mhr/mhr_armature_skeleton_rest_pose.json",
     },

@@ -256,4 +256,9 @@ class SAM3DBodyEstimator:
                     ]
                 )
 
+        # Lightweight cleanup: delete tensors but don't clear cache (for video processing efficiency)
+        del batch, out, pose_output
+        if inference_type == "full":
+            del batch_lhand, batch_rhand
+
         return all_out

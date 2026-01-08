@@ -2,6 +2,8 @@
   "app": {
     "title": "SAM 3D Body → Unity FBX",
     "heading": "🧍‍♂️ SAM 3D Body → Unity Humanoid FBX",
+    "program_tab": "プログラム",
+    "about_tab": "について",
     "features_title": "機能",
     "features": [
       "1枚の画像からUnity Humanoid互換のFBXファイルを生成",
@@ -11,13 +13,14 @@
     "usage_title": "使い方",
     "usage": [
       "画像またはMP4動画をアップロード",
+      "「ポーズ推定」ボタンをクリック",
+      "（オプション）将来の使用、リファインメントの調整などのために生成されたJSONをダウンロード",
       "「FBXを生成」ボタンをクリック",
       "生成されたFBXをダウンロード → Unityにインポート",
       "以下はオプション機能です：",
       "gta-link、boxmot、colmapから独自のbboxesとカメラ内部パラメータファイルをアップロード",
       "動画の場合、アーマチュアにルートモーションが必要な場合と不要な場合があります - 必要な場合はチェックボックスをオンにしてください",
-      "リファインメントを通じてアニメーションに標準的なモーキャップスタイルのスムージングを適用します。デフォルトで有効で、カスタマイズ可能な設定があります。",
-      "デバッグ目的でアニメーションの視覚化動画を作成することもできます。"
+      "リファインメントを通じてアニメーションに標準的なモーキャップスタイルのスムージングを適用します。デフォルトで有効で、カスタマイズ可能な設定があります。"
     ]
   },
   "ui": {
@@ -26,16 +29,33 @@
     "use_bbox": "👥 人物を指定",
     "bbox_file": "📁 BBOXファイル",
     "num_people": "👥 人数",
+    "missing_bbox_behavior": "欠落フレーム時",
+    "missing_bbox_behavior_info": "フレームのbboxデータが欠落している場合の動作：検出を実行（num_peopleを使用して検出）またはフレームをスキップ（そのフレームのポーズ推定をスキップ）",
     "fov_method": "📷 FOV Estimation Method",
     "fov_method_info": "None: Built-in runs every frame | File: Load from cameras.txt | Sample: Average from images",
     "fov_file": "📁 Camera Intrinsics File (COLMAP cameras.txt or MoGe format)",
     "sample_number": "📊 Sample Number",
     "sample_number_info": "Number of images to sample and average for FOV estimation",
+    "auto_run": "⚡ FBX生成を自動実行（ポーズ推定完了時）",
     "use_root_motion": "🧭 ルートモーションを適用",
-    "generate_btn": "🚀 FBXを生成",
+    "include_mesh": "🎭 メッシュを含める",
+    "use_personalized_body": "👤 パーソナライズされたボディを使用",
+    "use_personalized_body_info": "推定データからパーソナライズされたボディメッシュを生成します。チェックを外すと、デフォルトのLODボディを使用します。",
+    "lod": "📊 LOD",
+    "lod_info": "メッシュの詳細レベル (0-6)",
+    "outlier_removal_percent": "📊 外れ値除去 (%)",
+    "outlier_removal_percent_info": "各テールから除去する外れ値の割合 (0-50)",
+    "estimate_pose_btn": "🎯 ポーズ推定",
+    "step_1_estimate_pose": "1. ポーズ推定",
+    "generate_fbx_btn": "🚀 FBXを生成",
+    "step_2_generate_fbx": "2. FBXを生成",
+    "options_title": "オプション",
+    "estimation_options_title": "推定オプション",
+    "fbx_options_title": "FBXオプション",
+    "pose_json_file": "📄 ポーズ推定JSON",
+    "pose_json_file_info": "ポーズ推定JSONファイルをアップロードするか、推定後に自動入力されます",
     "output_files": "📦 生成されたファイル",
     "developer_options": "開発者オプション",
-    "create_visualization": "視覚化を作成",
     "debug_save_results": "💾 再エクスポート用に保存",
     "debug_saved_timestamps": "📁 保存されたタイムスタンプ",
     "debug_reexport_btn": "🔄 保存から再エクスポート",
@@ -57,6 +77,7 @@
         "fingers": "指",
         "head": "頭",
         "legs": "脚",
+        "arms": "腕",
         "default": "デフォルト"
       },
       "max_pos_speed": "最大位置速度",
@@ -85,14 +106,37 @@
       "root_cutoff_z_hz": "ルートカットオフZ（Hz）",
       "root_cutoff_z_hz_info": "垂直（Z）ルートモーションのカットオフ周波数",
       "interpolate_missing_keyframes": "欠落キーフレームの補間",
-      "interpolate_missing_keyframes_info": "有効にすると、欠落フレーム（人物が検出されなかったフレーム）は、回転にはslerp、ベクトルには線形補間を使用して補間されます。無効にすると、欠落フレームはリファインメント中にスキップされます。"
+      "interpolate_missing_keyframes_info": "有効にすると、欠落フレーム（人物が検出されなかったフレーム）は、回転にはslerp、ベクトルには線形補間を使用して補間されます。無効にすると、欠落フレームはリファインメント中にスキップされます。",
+      "use_foot_planting": "フットプランティングを使用",
+      "use_foot_planting_info": "フットプランティングを有効にして、足の接触に基づいてルートモーションを調整し、ジッターを減らし、より自然な歩行/走行モーションを作成",
+      "foot_planting": {
+        "title": "フットプランティング",
+        "foot_contact_velocity_threshold": "足接触速度しきい値（m/s）",
+        "foot_contact_velocity_threshold_info": "足の速度がこのしきい値を下回る場合、足は「接地」していると見なされます",
+        "foot_contact_min_height": "足接触最小高さ（m）",
+        "foot_contact_min_height_info": "足が接触していると見なされるには、この高さ（Y座標）以下である必要があります",
+        "contact_smoothing_window": "接触平滑化ウィンドウ",
+        "contact_smoothing_window_info": "接触検出の平滑化に使用するフレーム数（ちらつきを減らす）",
+        "blend_factor": "ブレンド係数",
+        "blend_factor_info": "足ベースのルート調整を元のルートモーションとどれだけブレンドするか（0-1、高いほど調整が多い）",
+        "root_smoothing_window": "ルート平滑化ウィンドウ",
+        "root_smoothing_window_info": "調整されたルートモーションの平滑化に使用するフレーム数",
+        "use_mid_foot": "ミッドフットを使用",
+        "use_mid_foot_info": "足の位置に足首の代わりにミッドフット（かかと/つま先の平均）を使用"
+      }
     }
   },
   "progress": {
     "processing_keyframes": "📦 キーフレームを処理中...",
     "processing_person": "📦 人物を処理中...",
-    "creating_visualization": "🎨 視覚化を作成中...",
-    "reexporting": "🔄 保存された結果から再エクスポート中..."
+    "reexporting": "🔄 保存された結果から再エクスポート中...",
+    "applying_refinement": "推定結果にリファインメントを適用中...",
+    "preparing_fbx_data": "FBXデータを準備中...",
+    "preprocessing_complete": "前処理完了",
+    "refining_person": "人物 {person_index}/{total_people} をリファイン中",
+    "refinement_complete": "リファインメント完了",
+    "applying_poses": "ポーズを適用中: {frame_num}/{total_frames}",
+    "estimating_frame": "フレーム {frame_index}/{total_frames} を推定中"
   },
   "errors": {
     "error_occurred": "エラーが発生しました ({error_type}): {error_msg}",
@@ -100,6 +144,7 @@
     "bbox_file_required": "「人物を指定」が有効な場合、BBOXファイルを提供する必要があります",
     "num_people_required": "人数は0より大きい必要があります",
     "camera_intrinsics_required": "FOV方法が「File」の場合、カメラ内部パラメータファイルを提供する必要があります",
-    "fov_estimator_required": "「Sample」方法を使用するには、FOV推定器を読み込む必要があります。FOV推定器が初期化されていることを確認してください。"
+    "fov_estimator_required": "「Sample」方法を使用するには、FOV推定器を読み込む必要があります。FOV推定器が初期化されていることを確認してください。",
+    "pose_json_file_required": "ポーズ推定JSONファイルを提供してください"
   }
 }

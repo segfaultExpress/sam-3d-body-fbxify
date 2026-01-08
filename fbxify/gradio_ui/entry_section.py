@@ -7,7 +7,6 @@ file upload, profile selection, bbox options, FOV options, and generate button.
 import gradio as gr
 from typing import Dict, Any, Tuple
 from fbxify.i18n import Translator
-from fbxify.metadata import PROFILES
 
 
 def create_entry_section(translator: Translator) -> Dict[str, Any]:
@@ -22,18 +21,22 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
     """
     components = {}
     
-    # Profile dropdown
-    components['profile_name'] = gr.Dropdown(
-        label=translator.t("ui.profile"),
-        choices=list(PROFILES.keys()),
-        value=list(PROFILES.keys())[0]
-    )
-    
     # Input file
     components['input_file'] = gr.File(
         label=translator.t("ui.input_file"),
         file_types=["image", "video"]
     )
+    
+    # Estimate Pose button (Step 1) - moved here, right after input file
+    components['estimate_pose_btn'] = gr.Button(
+        translator.t("ui.step_1_estimate_pose"),
+        variant="primary",
+        interactive=False  # Disabled by default until file is uploaded
+    )
+    
+    # Estimation Options section header
+    with gr.Group():
+        gr.Markdown(f"## {translator.t('ui.estimation_options_title')}")
     
     # Bbox options
     components['use_bbox'] = gr.Checkbox(
@@ -53,6 +56,15 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
             precision=0,
             visible=True
         )
+    
+    # Missing bbox behavior option (only visible when use_bbox is checked)
+    components['missing_bbox_behavior'] = gr.Dropdown(
+        label=translator.t("ui.missing_bbox_behavior"),
+        choices=["Run Detection", "Skip Frame"],
+        value="Run Detection",
+        visible=False,
+        info=translator.t("ui.missing_bbox_behavior_info")
+    )
     
     # FOV Estimation Options
     components['fov_method'] = gr.Dropdown(
@@ -75,34 +87,23 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
         info=translator.t("ui.sample_number_info")
     )
     
-    # Root motion checkbox
-    components['use_root_motion'] = gr.Checkbox(
-        label=translator.t("ui.use_root_motion"),
-        value=True
-    )
-    
-    # Generate button
-    components['generate_btn'] = gr.Button(
-        translator.t("ui.generate_btn"),
-        variant="primary"
-    )
-    
     return components
 
 
-def toggle_bbox_inputs(use_bbox_value: bool) -> Tuple[Any, Any]:
+def toggle_bbox_inputs(use_bbox_value: bool) -> Tuple[Any, Any, Any]:
     """
-    Toggle visibility of bbox_file and num_people based on checkbox.
+    Toggle visibility of bbox_file, num_people, and missing_bbox_behavior based on checkbox.
     
     Args:
         use_bbox_value: Whether to use bbox file
         
     Returns:
-        Tuple of updates for bbox_file and num_people
+        Tuple of updates for bbox_file, num_people, and missing_bbox_behavior
     """
     return (
         gr.update(visible=use_bbox_value),
-        gr.update(visible=not use_bbox_value)
+        gr.update(visible=not use_bbox_value),
+        gr.update(visible=use_bbox_value)
     )
 
 
@@ -146,14 +147,13 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
     """
     t = Translator(lang)
     return (
-        gr.update(label=t.t("ui.profile")),  # profile_name
         gr.update(label=t.t("ui.input_file")),  # input_file
         gr.update(label=t.t("ui.use_bbox")),  # use_bbox
         gr.update(label=t.t("ui.bbox_file")),  # bbox_file
         gr.update(label=t.t("ui.num_people")),  # num_people
+        gr.update(label=t.t("ui.missing_bbox_behavior"), info=t.t("ui.missing_bbox_behavior_info")),  # missing_bbox_behavior
         gr.update(label=t.t("ui.fov_method"), info=t.t("ui.fov_method_info")),  # fov_method
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
-        gr.update(label=t.t("ui.use_root_motion")),  # use_root_motion
-        gr.update(value=t.t("ui.generate_btn")),  # generate_btn
+        gr.update(value=t.t("ui.step_1_estimate_pose")),  # estimate_pose_btn
     )

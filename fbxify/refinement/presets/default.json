@@ -21,7 +21,7 @@
       "max_ang_accel_deg": 3600,
       "method": "one_euro",
       "cutoff_hz": 4,
-      "one_euro_min_cutoff": 1.2,
+      "one_euro_min_cutoff": 25.0,
       "one_euro_beta": 0.4,
       "one_euro_d_cutoff": 1
     },
@@ -43,7 +43,7 @@
       "max_ang_accel_deg": 2400,
       "method": "one_euro",
       "cutoff_hz": 4,
-      "one_euro_min_cutoff": 1.8,
+      "one_euro_min_cutoff": 18.0,
       "one_euro_beta": 0.6,
       "one_euro_d_cutoff": 1
     },
@@ -58,6 +58,17 @@
       "one_euro_beta": 0.5,
       "one_euro_d_cutoff": 1
     },
+    "*arm*": {
+      "max_pos_speed": 1,
+      "max_pos_accel": 10,
+      "max_ang_speed_deg": 360,
+      "max_ang_accel_deg": 3600,
+      "method": "one_euro",
+      "cutoff_hz": 4,
+      "one_euro_min_cutoff": 25.0,
+      "one_euro_beta": 0.3,
+      "one_euro_d_cutoff": 0.8
+    },
     "*": {
       "max_pos_speed": 2,
       "max_pos_accel": 20,
@@ -65,7 +76,7 @@
       "max_ang_accel_deg": 3600,
       "method": "one_euro",
       "cutoff_hz": 4,
-      "one_euro_min_cutoff": 1,
+      "one_euro_min_cutoff": 25.0,
       "one_euro_beta": 0.3,
       "one_euro_d_cutoff": 0.8
     }

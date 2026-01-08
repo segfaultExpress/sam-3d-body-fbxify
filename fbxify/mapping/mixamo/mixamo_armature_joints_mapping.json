@@ -31,14 +31,14 @@
                     "method": "keypoint_with_global_rot_roll",
                     "point_reference": ["chest", "left_shoulder"],
                     "roll_reference": "l_clavicle",
-                    "roll_additional_from_reference": -90,
+                    "roll_additional_from_reference": 0,
                     "children": [
                       {
                         "name": "mixamorig:LeftArm",
                         "method": "keypoint_with_global_rot_roll",
                         "point_reference": ["left_shoulder", "left_elbow"],
                         "roll_reference": "l_uparm",
-                        "roll_additional_from_reference": 90,
+                        "roll_additional_from_reference": 0,
                         "children": [
                           {
                             "name": "mixamorig:LeftForeArm",

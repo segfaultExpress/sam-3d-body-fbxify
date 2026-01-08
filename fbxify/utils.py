@@ -5,8 +5,11 @@ import json
 import subprocess
 import time
 import shutil
+import re
+from tqdm import tqdm
 
 from fbxify.metadata import PROFILES, MHR_KEYPOINT_INDEX
+from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 
 MHR_EXTENDED_KEYPOINT_INDEX = {
     **MHR_KEYPOINT_INDEX,
@@ -52,7 +55,8 @@ def to_serializable(obj, _seen=None):
     return obj
 
 
-def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces):
+def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_obj_path=None, lod_fbx_path=None, 
+                  progress_callback=None, lang=DEFAULT_LANGUAGE):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
     try:
@@ -75,17 +79,107 @@ def export_to_fbx(metadata, joint_mapping, root_motion,rest_pose, faces):
         with open(faces_path, "w") as f:
             json.dump({"faces": faces.tolist()}, f)
 
+        # Copy mesh files if provided
+        lod_fbx_path_tmp = None
+        mesh_obj_path_tmp = None
+        
+        # Copy LOD FBX if provided (this contains the mesh for MHR profile)
+        if lod_fbx_path and os.path.exists(lod_fbx_path) and os.path.getsize(lod_fbx_path) > 0:
+            lod_fbx_path_tmp = os.path.join(tmp_dir, "lod.fbx")
+            shutil.copyfile(lod_fbx_path, lod_fbx_path_tmp)
+        
+        # Copy mesh OBJ if provided (optional, used for reskinning)
+        if mesh_obj_path and os.path.exists(mesh_obj_path) and os.path.getsize(mesh_obj_path) > 0:
+            mesh_obj_path_tmp = os.path.join(tmp_dir, "mesh.obj")
+            shutil.copyfile(mesh_obj_path, mesh_obj_path_tmp)
+
         # Copy the contents of blender_script.py to the temporary directory
         # This allows editing the file directly with IDE support
         script_source = os.path.join(os.path.dirname(__file__), "blender_utils", "build_armature_and_pose.py")
         shutil.copyfile(script_source, script_path)
         
-        subprocess.run([
+        # Build command line arguments
+        cmd_args = [
             "blender", "-b",
             "--python", script_path,
             "--",
             metadata_path, joint_mapping_path, root_motion_path, rest_pose_path, faces_path, fbx_path
-        ], check=True, cwd=tmp_dir)
+        ]
+        
+        # Add mesh paths if provided (at least one must be provided for mesh inclusion)
+        if lod_fbx_path_tmp or mesh_obj_path_tmp:
+            cmd_args.extend([lod_fbx_path_tmp or "", mesh_obj_path_tmp or ""])
+        else:
+            cmd_args.extend(["", ""])  # Empty strings to maintain argument count
+        
+        # Get num_keyframes for progress bar
+        num_keyframes = metadata.get("num_keyframes", 0)
+        translator = Translator(lang)
+        
+        # Run subprocess with stdout capture to parse progress
+        process = subprocess.Popen(
+            cmd_args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+            cwd=tmp_dir
+        )
+        
+        # Create progress bar
+        progress_bar = tqdm(total=num_keyframes, desc=translator.t("progress.applying_poses", frame_num=0, total_frames=num_keyframes), unit="keyframe") if num_keyframes > 0 else None
+        
+        # Parse output line by line
+        progress_pattern = re.compile(r'PROGRESS: (\d+)/(\d+)')
+        
+        try:
+            for line in process.stdout:
+                # Parse progress messages (don't print these)
+                match = progress_pattern.search(line)
+                if match:
+                    frame_num = int(match.group(1))
+                    total_frames = int(match.group(2))
+                    if progress_bar:
+                        progress_bar.n = frame_num
+                        progress_bar.total = total_frames
+                        # Update description with current frame number
+                        progress_bar.set_description(translator.t("progress.applying_poses", frame_num=frame_num, total_frames=total_frames))
+                        progress_bar.refresh()
+                        # Close progress bar immediately when we reach 100%
+                        if frame_num >= total_frames:
+                            progress_bar.close()
+                            progress_bar = None
+                    
+                    # Update progress if callback is provided
+                    # Pass normalized progress (0.0 to 1.0) - caller will handle weighing
+                    if progress_callback and total_frames > 0:
+                        tqdm_progress = frame_num / total_frames
+                        progress_callback(tqdm_progress, translator.t("progress.applying_poses", frame_num=frame_num, total_frames=total_frames))
+                    
+                    # Skip printing the PROGRESS line
+                    continue
+                
+                # Print all other output (warnings, errors, etc.)
+                # Use tqdm.write() to avoid interfering with progress bar if it exists
+                if progress_bar:
+                    tqdm.write(line.rstrip())
+                else:
+                    print(line, end='', flush=True)
+            
+            # Wait for process to complete (should already be done since we read all output)
+            return_code = process.wait()
+            
+            # Ensure progress bar is closed (in case we didn't reach 100% via PROGRESS messages)
+            if progress_bar:
+                progress_bar.close()
+                progress_bar = None
+            
+            if return_code != 0:
+                raise subprocess.CalledProcessError(return_code, cmd_args)
+        except Exception as e:
+            if progress_bar:
+                progress_bar.close()
+            raise
         
         # Use profile_name and id from metadata for filename
         profile_name = metadata.get("profile_name", "unknown")
@@ -133,11 +227,17 @@ def add_helper_keypoints(joints_3d):
     kp = lambda name: get_keypoint(joints_3d, name)
     safe_kp = lambda name: safe_get_keypoint(joints_3d, name)
     
-    # Hips
-    left_hip = kp("left_hip")
-    right_hip = kp("right_hip")
+    # Hips - require both hips to be valid
+    left_hip = safe_kp("left_hip")
+    right_hip = safe_kp("right_hip")
+    if left_hip is None or right_hip is None:
+        raise ValueError("Missing required keypoints: left_hip or right_hip is None. Frame may have incomplete pose estimation data.")
     hips = (left_hip + right_hip) * 0.5
-    neck = kp("neck")
+    
+    # Neck - required for body calculations
+    neck = safe_kp("neck")
+    if neck is None:
+        raise ValueError("Missing required keypoint: neck is None. Frame may have incomplete pose estimation data.")
     
     # Body up
     body_up = neck - hips
@@ -151,32 +251,41 @@ def add_helper_keypoints(joints_3d):
     spine = hips + body_up * (torso_len * 0.30)
     
     # Upper spine (between spine and chest, used by mixamo)
-    left_shoulder = kp("left_shoulder")
-    right_shoulder = kp("right_shoulder")
+    left_shoulder = safe_kp("left_shoulder")
+    right_shoulder = safe_kp("right_shoulder")
+    if left_shoulder is None or right_shoulder is None:
+        raise ValueError("Missing required keypoints: left_shoulder or right_shoulder is None. Frame may have incomplete pose estimation data.")
     shoulder_center = (left_shoulder + right_shoulder) * 0.5
     chest_hint = (shoulder_center * 2 + neck) / 3
     upper_spine = _interpolate_curve_smooth(spine, chest_hint, neck, 0.5)
     
     # Chest
     chest = _interpolate_curve_smooth(spine, chest_hint, neck, 2/3)
-    
-    # Lower Head
-    left_acromion = kp("left_acromion")
-    right_acromion = kp("right_acromion")
-    occipital = (left_acromion + right_acromion) * 0.5
 
     # Head
     head = _compute_head_position(joints_3d, body_up, neck)
     
-    # Shoulders
-    left_shoulder = kp("left_shoulder")
-    right_shoulder = kp("right_shoulder")
+    # Lower Head
+    occipital = _compute_occipital(neck, head, kp("nose"), kp("right_ear"), ratio=0.8, down_offset_ratio=0.08)
+    
+    # Shoulders (already computed above, but keeping for consistency)
     left_shoulder_root = neck * 0.4 + left_shoulder * 0.6
     right_shoulder_root = neck * 0.4 + right_shoulder * 0.6
         
     # The mid point between the heel, big toe and little toe for each foot
-    left_mid_foot = (kp("left_heel") + kp("left_big_toe") + kp("left_small_toe")) * 0.33
-    right_mid_foot = (kp("right_heel") + kp("right_big_toe") + kp("right_small_toe")) * 0.33
+    left_heel = safe_kp("left_heel")
+    left_big_toe = safe_kp("left_big_toe")
+    left_small_toe = safe_kp("left_small_toe")
+    if left_heel is None or left_big_toe is None or left_small_toe is None:
+        raise ValueError("Missing required keypoints for left foot. Frame may have incomplete pose estimation data.")
+    left_mid_foot = (left_heel + left_big_toe + left_small_toe) * 0.33
+    
+    right_heel = safe_kp("right_heel")
+    right_big_toe = safe_kp("right_big_toe")
+    right_small_toe = safe_kp("right_small_toe")
+    if right_heel is None or right_big_toe is None or right_small_toe is None:
+        raise ValueError("Missing required keypoints for right foot. Frame may have incomplete pose estimation data.")
+    right_mid_foot = (right_heel + right_big_toe + right_small_toe) * 0.33
 
     helper_keypoints = {
         "hips": hips,
@@ -197,6 +306,89 @@ def add_helper_keypoints(joints_3d):
 
     return joints_3d
 
+
+
+def _to_vec3(x):
+    """Accept list/tuple/np.array; return float64 (3,)."""
+    v = np.asarray(x, dtype=np.float64).reshape(3)
+    return v
+
+def _normalize(v):
+    n = float(np.linalg.norm(v))
+    if n < 1e-6:
+        return np.zeros(3, dtype=np.float64), 0.0
+    return v / n, n
+
+def _compute_occipital(
+    neck,
+    head,
+    nose,
+    right_ear,
+    ratio=0.80,
+    down_offset_ratio=0.08,
+):
+    """
+    Compute a 'skull_base' point (neck↔head connection center) using:
+      - a point at t% along the neck→head_center segment, then
+      - a downward normal derived from the plane defined by (neck→head_center, nose-right_ear).
+
+    Inputs are 3D points (iterables of length 3).
+    Returns:
+      skull_base (np.ndarray shape (3,))
+      down_dir   (np.ndarray shape (3,))  # unit vector (or zeros if degenerate)
+
+    Notes:
+      - 'down_offset_ratio' is relative to head scale: ||head - neck||.
+      - If the plane is degenerate (colinear), it falls back to the un-offset point.
+    """
+    neck = _to_vec3(neck)
+    head = _to_vec3(head)
+    nose = _to_vec3(nose)
+    right_ear = _to_vec3(right_ear)
+
+    # Base point at 80% (or t) along neck→head.
+    nh = head - neck
+    nh_dir, nh_len = _normalize(nh)
+    if nh_len < 1e-6:
+        # Head and neck coincide; can't do anything meaningful.
+        return neck.copy()
+
+    ratio = float(np.clip(ratio, 0.0, 1.0))
+    base = neck + ratio * nh
+
+    # Define plane using:
+    #   a = neck→head direction
+    #   b = (nose - right_ear) as a face-ish axis
+    # Plane normal: n = a × b
+    b = nose - right_ear
+    n = np.cross(nh_dir, b)
+    down_dir, n_len = _normalize(n)
+
+    if n_len < 1e-6:
+        # Degenerate: can't compute a stable normal, so return the base point.
+        return base
+
+    # Choose sign so "down" points toward the neck (prevents flipping).
+    # Use the full neck→head direction as a stable reference (more stable than base→neck).
+    # We want down_dir to be generally aligned with the direction toward the neck.
+    # Project down_dir onto the direction from head to neck (-nh_dir)
+    proj_toward_neck = np.dot(down_dir, -nh_dir)
+    
+    # Use a threshold to avoid unstable flipping when projection is near zero
+    # This prevents rapid sign changes when the cross product direction is nearly
+    # perpendicular to the neck→head axis
+    threshold = 0.05  # Only flip if clearly misaligned
+    if proj_toward_neck < -threshold:
+        down_dir = -down_dir
+    # If near zero, maintain previous sign (hysteresis) or use a default
+    # For simplicity, if very close to zero, don't flip (maintain current orientation)
+
+    # Offset amount (scaled by neck→head length)
+    down_offset_ratio = float(max(0.0, down_offset_ratio))
+    offset = down_offset_ratio * nh_len
+
+    skull_base = base + down_dir * offset
+    return skull_base
 
 def _interpolate_curve(p0, p1, p2, t):
     """3点曲線補間"""

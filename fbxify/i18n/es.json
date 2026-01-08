@@ -2,6 +2,8 @@
   "app": {
     "title": "SAM 3D Body → Unity FBX",
     "heading": "🧍‍♂️ SAM 3D Body → Unity Humanoid FBX",
+    "program_tab": "Programa",
+    "about_tab": "Acerca de",
     "features_title": "Características",
     "features": [
       "Generar archivos FBX compatibles con Unity Humanoid desde una sola imagen",
@@ -11,13 +13,14 @@
     "usage_title": "Uso",
     "usage": [
       "Sube una imagen o video MP4",
+      "Haz clic en el botón \"Estimar Pose\"",
+      "(Opcional) Descarga el JSON generado para uso futuro, ajuste de refinamiento, etc.",
       "Haz clic en el botón \"Generar FBX\"",
       "Descarga el FBX generado → Importa a Unity",
       "Las siguientes son características opcionales:",
       "Sube tus propios archivos de bboxes e intrínsecos de cámara desde gta-link, boxmot, colmap",
       "Para video, puedes querer o no querer movimiento de raíz para tu armadura - marca la casilla si lo deseas",
-      "Aplica suavizado estilo mocap estándar a la animación mediante Refinement. Habilitado por defecto con algunas configuraciones personalizables.",
-      "También puedes crear un video de visualización de la animación con fines de depuración."
+      "Aplica suavizado estilo mocap estándar a la animación mediante Refinement. Habilitado por defecto con algunas configuraciones personalizables."
     ]
   },
   "ui": {
@@ -26,16 +29,33 @@
     "use_bbox": "👥 Usar Archivo BBOX",
     "bbox_file": "📁 Archivo BBOX",
     "num_people": "👥 Número de Personas",
+    "missing_bbox_behavior": "En Fotograma Faltante",
+    "missing_bbox_behavior_info": "Qué hacer cuando faltan datos de bbox para un fotograma: Ejecutar Detección (usar num_people para detectar) u Omitir Fotograma (omitir estimación de pose para ese fotograma)",
     "fov_method": "📷 Método de Estimación FOV",
     "fov_method_info": "Por defecto: Integrado, se ejecuta en cada fotograma | Archivo: Cargar desde cameras.txt | Muestra: Promedio de imágenes",
     "fov_file": "📁 Archivo de Intrínsecos de Cámara (COLMAP cameras.txt o formato MoGe)",
     "sample_number": "📊 Número de Muestra",
     "sample_number_info": "Número de imágenes a muestrear y promediar para la estimación FOV",
+    "auto_run": "⚡ Ejecutar Generar FBX Automáticamente (al completar Estimación de Pose)",
     "use_root_motion": "🧭 Aplicar Movimiento de Raíz",
-    "generate_btn": "🚀 Generar FBX",
+    "include_mesh": "🎭 Incluir Malla",
+    "use_personalized_body": "👤 Usar Cuerpo Personalizado",
+    "use_personalized_body_info": "Generar una malla de cuerpo personalizada a partir de los datos de estimación. Si está desmarcado, usa el cuerpo LOD predeterminado.",
+    "lod": "📊 LOD",
+    "lod_info": "Nivel de Detalle para malla (0-6)",
+    "outlier_removal_percent": "📊 Eliminación de Valores Atípicos (%)",
+    "outlier_removal_percent_info": "Porcentaje de valores atípicos a eliminar de cada cola (0-50)",
+    "estimate_pose_btn": "🎯 Estimar Pose",
+    "step_1_estimate_pose": "1. Estimar Pose",
+    "generate_fbx_btn": "🚀 Generar FBX",
+    "step_2_generate_fbx": "2. Generar FBX",
+    "options_title": "Opciones",
+    "estimation_options_title": "Opciones de Estimación",
+    "fbx_options_title": "Opciones de FBX",
+    "pose_json_file": "📄 JSON de Estimación de Pose",
+    "pose_json_file_info": "Sube un archivo JSON de estimación de pose, o se completará automáticamente después de la estimación",
     "output_files": "📦 Archivos Generados",
     "developer_options": "Opciones de Desarrollador",
-    "create_visualization": "Crear Visualización",
     "debug_save_results": "💾 Guardar Resultados para Re-exportar",
     "debug_saved_timestamps": "📁 Marcas de Tiempo Guardadas",
     "debug_reexport_btn": "🔄 Re-exportar desde Guardado",
@@ -57,6 +77,7 @@
         "fingers": "Dedos",
         "head": "Cabeza",
         "legs": "Piernas",
+        "arms": "Brazos",
         "default": "Por Defecto"
       },
       "max_pos_speed": "Velocidad Posicional Máxima",
@@ -85,14 +106,37 @@
       "root_cutoff_z_hz": "Corte Raíz Z (Hz)",
       "root_cutoff_z_hz_info": "Frecuencia de corte para movimiento de raíz vertical (Z)",
       "interpolate_missing_keyframes": "Interpolar fotogramas clave faltantes",
-      "interpolate_missing_keyframes_info": "Cuando está habilitado, los fotogramas faltantes (donde no se detectaron personas) se interpolarán usando slerp para rotaciones e interpolación lineal para vectores. Cuando está deshabilitado, los fotogramas faltantes se omiten durante el refinamiento."
+      "interpolate_missing_keyframes_info": "Cuando está habilitado, los fotogramas faltantes (donde no se detectaron personas) se interpolarán usando slerp para rotaciones e interpolación lineal para vectores. Cuando está deshabilitado, los fotogramas faltantes se omiten durante el refinamiento.",
+      "use_foot_planting": "Usar Plantado de Pie",
+      "use_foot_planting_info": "Habilitar el plantado de pie para ajustar el movimiento de raíz basado en el contacto del pie, reduciendo el temblor y creando un movimiento de caminar/correr más natural",
+      "foot_planting": {
+        "title": "Plantado de Pie",
+        "foot_contact_velocity_threshold": "Umbral de Velocidad de Contacto del Pie (m/s)",
+        "foot_contact_velocity_threshold_info": "El pie se considera 'plantado' si su velocidad está por debajo de este umbral",
+        "foot_contact_min_height": "Altura Mínima de Contacto del Pie (m)",
+        "foot_contact_min_height_info": "El pie debe estar por debajo de esta altura (coordenada Y) para ser considerado en contacto",
+        "contact_smoothing_window": "Ventana de Suavizado de Contacto",
+        "contact_smoothing_window_info": "Número de fotogramas a usar para suavizar la detección de contacto (reduce el parpadeo)",
+        "blend_factor": "Factor de Mezcla",
+        "blend_factor_info": "Cuánto mezclar el ajuste de raíz basado en el pie con el movimiento de raíz original (0-1, mayor = más ajuste)",
+        "root_smoothing_window": "Ventana de Suavizado de Raíz",
+        "root_smoothing_window_info": "Número de fotogramas a usar para suavizar el movimiento de raíz ajustado",
+        "use_mid_foot": "Usar Medio del Pie",
+        "use_mid_foot_info": "Usar el medio del pie (promedio de talón/dedos) en lugar del tobillo para la posición del pie"
+      }
     }
   },
   "progress": {
     "processing_keyframes": "📦 Procesando fotogramas clave...",
     "processing_person": "📦 Procesando persona...",
-    "creating_visualization": "🎨 Creando visualización...",
-    "reexporting": "🔄 Re-exportando desde resultados guardados..."
+    "reexporting": "🔄 Re-exportando desde resultados guardados...",
+    "applying_refinement": "Aplicando refinamiento a los resultados de estimación...",
+    "preparing_fbx_data": "Preparando datos FBX...",
+    "preprocessing_complete": "Preprocesamiento completo",
+    "refining_person": "Refinando persona {person_index} de {total_people}",
+    "refinement_complete": "Refinamiento completo",
+    "applying_poses": "Aplicando poses: {frame_num}/{total_frames}",
+    "estimating_frame": "Estimando fotograma {frame_index} de {total_frames}"
   },
   "errors": {
     "error_occurred": "Ocurrió un error ({error_type}): {error_msg}",
@@ -100,6 +144,7 @@
     "bbox_file_required": "Se debe proporcionar un archivo BBOX cuando 'usar bbox' está habilitado",
     "num_people_required": "El número de personas debe ser mayor que 0",
     "camera_intrinsics_required": "Se debe proporcionar un archivo de intrínsecos de cámara cuando el método FOV es 'Archivo'",
-    "fov_estimator_required": "Se debe cargar el estimador FOV para usar el método 'Muestra'. Por favor, asegúrate de que el estimador FOV esté inicializado."
+    "fov_estimator_required": "Se debe cargar el estimador FOV para usar el método 'Muestra'. Por favor, asegúrate de que el estimador FOV esté inicializado.",
+    "pose_json_file_required": "Por favor, proporciona un archivo JSON de estimación de poses"
   }
 }

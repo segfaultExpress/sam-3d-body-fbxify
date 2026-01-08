@@ -7,12 +7,12 @@ import os
 import argparse
 import sys
 import shutil
-from fbxify.pose_estimator import PoseEstimator
+from fbxify.pose_estimation_manager import PoseEstimationManager
+from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.fbxify_manager import FbxifyManager
 
 VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
 DINOV3_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-dinov3"
-DEBUG_RESULTS_DIR = "/workspace/temp/sam3d_debug_results"
 
 
 def parse_args():
@@ -91,6 +91,13 @@ def parse_args():
         default=None,
         help="Path to bounding box file (CSV format)"
     )
+    parser.add_argument(
+        "--missing_bbox_behavior",
+        type=str,
+        default="Run Detection",
+        choices=["Run Detection", "Skip Frame"],
+        help="What to do when bbox data is missing for a frame: Run Detection (use num_people to detect) or Skip Frame (skip pose estimation for that frame) (default: Run Detection)"
+    )
     
     # FOV options
     parser.add_argument(
@@ -127,24 +134,18 @@ def parse_args():
         help="Disable root motion"
     )
     
-    # Visualization
+    # Estimation JSON options
     parser.add_argument(
-        "--create_visualization",
-        action="store_true",
-        help="Create visualization video"
-    )
-    
-    # Debug options
-    parser.add_argument(
-        "--debug_save",
-        action="store_true",
-        help="Save debug results for re-export"
-    )
-    parser.add_argument(
-        "--debug_reexport",
-        type=int,
+        "--save_estimation_json",
+        type=str,
         default=None,
-        help="Re-export from saved debug results (provide timestamp)"
+        help="Path to save estimation results JSON file"
+    )
+    parser.add_argument(
+        "--load_estimation_json",
+        type=str,
+        default=None,
+        help="Path to load estimation results JSON file (skips estimation step)"
     )
     
     return parser.parse_args()
@@ -195,37 +196,85 @@ def main():
     detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
     
-    # Initialize estimator
-    print("Initializing SAM 3D Body estimator...")
-    try:
-        estimator = PoseEstimator(
-            checkpoint_path=checkpoint_path,
-            mhr_path=mhr_path,
-            detector_name=args.detector_name,
-            detector_path=detector_path,
-            fov_name=args.fov_name,
-            fov_path=fov_path
-        )
-    except Exception as e:
-        print(f"Error initializing estimator: {e}")
-        sys.exit(1)
+    # Initialize managers
+    estimation_manager = None
+    if args.load_estimation_json is None:
+        # Only initialize estimation manager if we're not loading from JSON
+        print("Initializing SAM 3D Body estimator...")
+        try:
+            estimation_manager = PoseEstimationManager(
+                checkpoint_path=checkpoint_path,
+                mhr_path=mhr_path,
+                detector_name=args.detector_name,
+                detector_path=detector_path,
+                fov_name=args.fov_name,
+                fov_path=fov_path
+            )
+        except Exception as e:
+            print(f"Error initializing estimator: {e}")
+            sys.exit(1)
+    else:
+        # Still need estimation manager for faces, but can use minimal initialization
+        # Actually, we need it for faces in export, so let's initialize it anyway
+        print("Initializing SAM 3D Body estimator (for mesh export)...")
+        try:
+            estimation_manager = PoseEstimationManager(
+                checkpoint_path=checkpoint_path,
+                mhr_path=mhr_path,
+                detector_name=args.detector_name,
+                detector_path=detector_path,
+                fov_name=args.fov_name,
+                fov_path=fov_path
+            )
+        except Exception as e:
+            print(f"Error initializing estimator: {e}")
+            sys.exit(1)
+    
+    data_prep_manager = FbxDataPrepManager()
     
     # Create manager
-    manager = FbxifyManager(estimator, DEBUG_RESULTS_DIR)
+    manager = FbxifyManager(estimation_manager, data_prep_manager)
     
-    # Handle debug re-export
-    if args.debug_reexport:
-        print(f"Re-exporting from saved results (timestamp: {args.debug_reexport})...")
+    # Handle loading from estimation JSON
+    if args.load_estimation_json:
+        print(f"Loading from estimation JSON: {args.load_estimation_json}")
         try:
-            output_files = manager.reexport_debug_results(
-                args.debug_reexport,
+            process_result = manager.process_from_estimation_json(
+                args.load_estimation_json,
+                args.profile,
                 args.use_root_motion,
-                args.create_visualization,
+                fps=30.0
+            )
+            
+            # Export FBX files
+            print("Exporting FBX files...")
+            fbx_paths = manager.export_fbx_files(
+                process_result.profile_name,
+                process_result.joint_to_bone_mappings,
+                process_result.root_motions,
+                process_result.frame_paths,
+                process_result.fps,
                 progress_callback=lambda p, d: print(f"Progress: {p*100:.1f}% - {d}")
             )
-            print(f"Re-export complete. Output files: {output_files}")
+            
+            # Move files to output directory if specified
+            if args.output_dir:
+                os.makedirs(args.output_dir, exist_ok=True)
+                moved_paths = []
+                for fbx_path in fbx_paths:
+                    filename = os.path.basename(fbx_path)
+                    dest_path = os.path.join(args.output_dir, filename)
+                    shutil.copy2(fbx_path, dest_path)
+                    moved_paths.append(dest_path)
+                fbx_paths = moved_paths
+            
+            print(f"Exported {len(fbx_paths)} FBX file(s):")
+            for fbx_path in fbx_paths:
+                print(f"  - {fbx_path}")
         except Exception as e:
-            print(f"Error during re-export: {e}")
+            print(f"Error processing from estimation JSON: {e}")
+            import traceback
+            traceback.print_exc()
             sys.exit(1)
         return
     
@@ -285,16 +334,15 @@ def main():
             num_people,
             bbox_dict,
             args.use_root_motion,
-            args.create_visualization,
             fps,
-            progress_callback
+            progress_callback,
+            save_estimation_json=args.save_estimation_json,
+            missing_bbox_behavior=args.missing_bbox_behavior
         )
         
-        # Save debug results if requested
-        if args.debug_save:
-            print("Saving debug results...")
-            timestamp = manager.save_debug_results(process_result)
-            print(f"Debug results saved with timestamp: {timestamp}")
+        # Print estimation JSON path if saved
+        if args.save_estimation_json:
+            print(f"Estimation results saved to: {args.save_estimation_json}")
         
         # Export FBX files
         print("Exporting FBX files...")
@@ -321,21 +369,6 @@ def main():
         print(f"Exported {len(fbx_paths)} FBX file(s):")
         for fbx_path in fbx_paths:
             print(f"  - {fbx_path}")
-        
-        # Export visualization if requested
-        if args.create_visualization and process_result.visualization_data:
-            print("Creating visualization...")
-            vis_path = manager.export_visualization(
-                process_result.visualization_data,
-                progress_callback=progress_callback
-            )
-            if vis_path:
-                if args.output_dir:
-                    filename = os.path.basename(vis_path)
-                    dest_path = os.path.join(args.output_dir, filename)
-                    shutil.copy2(vis_path, dest_path)
-                    vis_path = dest_path
-                print(f"Visualization saved: {vis_path}")
         
     except Exception as e:
         print(f"Error: {e}")
