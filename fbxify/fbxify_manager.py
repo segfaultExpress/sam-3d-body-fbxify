@@ -636,11 +636,13 @@ class FbxifyManager:
         Convert root_motion from refinement format back to list format.
         
         Input: {"translation": [[...], ...], "rotation": [[[...]], ...]}
-        Output: [{"global_rot": [...], "pred_cam_t": [...]}, ...]
+        Output: [{"frame_index": int, "global_rot": [...], "pred_cam_t": [...]}, ...]
+        Note: This creates entries for ALL frames (0 to num_frames-1), including interpolated/missing frames
         """
         refined_list = []
         for t in range(num_frames):
             refined_list.append({
+                "frame_index": t,  # 0-based frame index to match joint_mapping
                 "global_rot": refined_root_motion["rotation"][t],
                 "pred_cam_t": refined_root_motion["translation"][t]
             })

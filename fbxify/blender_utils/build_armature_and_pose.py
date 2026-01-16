@@ -27,6 +27,12 @@ with open(faces_path) as f:
     faces = json.load(f)["faces"]
 
 # ------------------------------------------------------------------------
+# DEV TOOLS FOR DEBUGGING/FAST APPLY
+# ------------------------------------------------------------------------
+APPLY_ROOT_MOTION_OVERRIDE = True
+APPLY_POSE_OVERRIDE = True
+
+# ------------------------------------------------------------------------
 # METADATA EXTRACTION
 # ------------------------------------------------------------------------
 
@@ -573,9 +579,10 @@ def reset_pose_bones(blender_pose_bones):
 # set frame 0 as the tpose to preserve the rest pose
 bpy.context.scene.frame_set(0)
 reset_pose_bones(blender_pose_bones)
-for p in blender_pose_bones:
-    # p.keyframe_insert(data_path="location", frame=0)
-    p.keyframe_insert(data_path="rotation_quaternion", frame=0)
+if APPLY_POSE_OVERRIDE:
+    for p in blender_pose_bones:
+        # p.keyframe_insert(data_path="location", frame=0)
+        p.keyframe_insert(data_path="rotation_quaternion", frame=0)
 
 arm_world = arm_obj.matrix_world.copy()
 arm_world_inv = arm_world.inverted()
@@ -907,18 +914,20 @@ def breadth_first_pose_application(joint_mapping, frame_idx, suppress_all_missin
             bones_list = ", ".join(missing_rotation_bones)
             print(f"  WARNING: No rotation found for frame {frame_idx + 1} on the following bones: [{bones_list}]")
 
-    # inefficient
-    # for bone in blender_pose_bones:
-    #    bone.keyframe_insert("rotation_quaternion", frame=frame_idx + 1)
-    for pbone in blender_pose_bones:
-        fcs4 = fcurve_cache[pbone.name]
-        insert_quat_key(
-            fcs4,
-            frame_idx + 1,
-            pbone.rotation_quaternion,
-            interpolation='BEZIER',
-            handle_type='AUTO'
-        )
+    # Insert keyframes for bone rotations if pose override is enabled
+    if APPLY_POSE_OVERRIDE:
+        # inefficient
+        # for bone in blender_pose_bones:
+        #    bone.keyframe_insert("rotation_quaternion", frame=frame_idx + 1)
+        for pbone in blender_pose_bones:
+            fcs4 = fcurve_cache[pbone.name]
+            insert_quat_key(
+                fcs4,
+                frame_idx + 1,
+                pbone.rotation_quaternion,
+                interpolation='BEZIER',
+                handle_type='AUTO'
+            )
 
     # Print progress in parseable format for parent process
     print(f"PROGRESS: {frame_idx + 1}/{num_keyframes}", flush=True)
@@ -926,11 +935,16 @@ def breadth_first_pose_application(joint_mapping, frame_idx, suppress_all_missin
     
     return all_missing
 
-action, fcurve_cache = build_fcurve_cache(
-    arm_obj,
-    blender_pose_bones,
-    action_name="ImportedAction"
-)
+# Build fcurve cache if pose override is enabled
+if APPLY_POSE_OVERRIDE:
+    action, fcurve_cache = build_fcurve_cache(
+        arm_obj,
+        blender_pose_bones,
+        action_name="ImportedAction"
+    )
+else:
+    # Create dummy cache to avoid errors when pose is disabled
+    fcurve_cache = {}
 
 # Track consecutive frames with missing rotations for consolidated warnings
 missing_rotation_range_start = None
@@ -980,12 +994,21 @@ bpy.ops.object.mode_set(mode="OBJECT")
 # ------------------------------------------------------------------------
 bpy.ops.object.mode_set(mode="OBJECT")
 
-if root_motion is not None and len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
+if APPLY_ROOT_MOTION_OVERRIDE and root_motion is not None and len(root_motion) > 0: # root motion can be passed empty, if the user doesn't want root motion
     # In object mode, use root_motion, which is a list of global rotation euler angles and camera translation vectors
     # apply keyframes to the armature, not any bone
     arm_obj.rotation_mode = 'XYZ'
-    
-    for frame_idx, root_motion_entry in enumerate(root_motion, start=1):
+        
+    for root_motion_entry in root_motion:
+        # Get frame_index from entry (0-based, matching joint_mapping)
+        # Convert to 1-based for Blender keyframes (frame 0 is rest pose)
+        frame_index_0based = root_motion_entry.get("frame_index")
+        if frame_index_0based is None:
+            print(f"  WARNING: root_motion entry missing 'frame_index', skipping entry")
+            continue
+        
+        frame_idx = frame_index_0based + 1  # Convert to 1-based for Blender
+        
         # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
         cam_translation = root_motion_entry["pred_cam_t"]
 
@@ -993,7 +1016,8 @@ if root_motion is not None and len(root_motion) > 0: # root motion can be passed
         # Maybe need to raise an issue to MHR or ask them? For now, the weird solution is to offset the hip bone by its rest_pose height, then use "1 - cam_translation[1]"
         # for the up value because that weirdly works, on all my test cases. Dear God, let this be the only 'Q_rsqrt' solution in the codebase. 
         # arm_obj.location = Vector((cam_translation[0], cam_translation[2], cam_translation[1]))
-        arm_obj.location = Vector((cam_translation[0], cam_translation[2], 1 - cam_translation[1]))
+        final_location = Vector((cam_translation[0], cam_translation[2], 1 - cam_translation[1]))
+        arm_obj.location = final_location
 
         # As far as I can tell, this value of global rotation is already passed to the root bone (hips), but if you'd rather 
         # have rotation be a "root" motion, apply it here and skip in pose application

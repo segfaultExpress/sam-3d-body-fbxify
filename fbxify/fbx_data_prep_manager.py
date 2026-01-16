@@ -212,6 +212,7 @@ class FbxDataPrepManager:
                         estimation_data.get("pred_cam_t") is not None):
                         root_motion = root_motions[person_id]
                         root_motion.append({
+                            "frame_index": frame_index,  # 0-based frame index to match joint_mapping
                             "global_rot": estimation_data["global_rot"],
                             "pred_cam_t": estimation_data["pred_cam_t"],
                         })
