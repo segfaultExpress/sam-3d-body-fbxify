@@ -16,6 +16,12 @@ checkpoints/
 wheelhouse/
 **/wheelhouse/
 
+input/
+**/input/
+
+blender_debug/
+**/blender_debug/
+
 # Logs / outputs
 *.log
 output/

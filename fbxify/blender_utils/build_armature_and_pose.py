@@ -26,6 +26,12 @@ with open(rest_pose_path, "r", encoding="utf-8") as f:
 with open(faces_path) as f:
     faces = json.load(f)["faces"]
 
+root_motion_by_frame = {
+    entry.get("frame_index"): entry
+    for entry in (root_motion or [])
+    if isinstance(entry, dict) and entry.get("frame_index") is not None
+}
+
 # ------------------------------------------------------------------------
 # DEV TOOLS FOR DEBUGGING/FAST APPLY
 # ------------------------------------------------------------------------
@@ -1009,14 +1015,10 @@ if APPLY_ROOT_MOTION_OVERRIDE and root_motion is not None and len(root_motion) >
         
         frame_idx = frame_index_0based + 1  # Convert to 1-based for Blender
         
-        # Use camera translation as-is (the base 90° rotation at frame 0 handles coord system)
+        # Use camera translation as-is, unless extrinsics are provided for world-space root motion
         cam_translation = root_motion_entry["pred_cam_t"]
 
-        # TODO: This is really weird, but pred_cam_t has a y (up) value that is usually 1, and when people squat in test cases it goes up? Jumping makes it go down? Consistently?
-        # Maybe need to raise an issue to MHR or ask them? For now, the weird solution is to offset the hip bone by its rest_pose height, then use "1 - cam_translation[1]"
-        # for the up value because that weirdly works, on all my test cases. Dear God, let this be the only 'Q_rsqrt' solution in the codebase. 
-        # arm_obj.location = Vector((cam_translation[0], cam_translation[2], cam_translation[1]))
-        final_location = Vector((cam_translation[0], cam_translation[2], 1 - cam_translation[1]))
+        final_location = Vector((cam_translation[0], cam_translation[2], - cam_translation[1]))
         arm_obj.location = final_location
 
         # As far as I can tell, this value of global rotation is already passed to the root bone (hips), but if you'd rather 

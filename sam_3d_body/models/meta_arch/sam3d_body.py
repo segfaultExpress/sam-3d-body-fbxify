@@ -1,6 +1,7 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 
 from typing import Any, Dict, Optional, Tuple
+import time
 
 import numpy as np
 import roma
@@ -1058,9 +1059,13 @@ class SAM3DBody(BaseModel):
 
     def forward_pose_branch(self, batch: Dict) -> Dict:
         """Run a forward pass for the crop-image (pose) branch."""
+        t_pose_start = time.perf_counter()
         batch_size, num_person = batch["img"].shape[:2]
 
         # Forward backbone encoder
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_preprocess_start = time.perf_counter()
         x = self.data_preprocess(
             self._flatten_person(batch["img"]),
             crop_width=(
@@ -1074,8 +1079,15 @@ class SAM3DBody(BaseModel):
                 ]
             ),
         )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_preprocess_end = time.perf_counter()
+        print(f"[sam3d][timing] forward_pose_branch data_preprocess: {t_preprocess_end - t_preprocess_start:.3f}s")
 
         # Optionally get ray conditioining
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_ray_start = time.perf_counter()
         ray_cond = self.get_ray_condition(batch)  # This is B x num_person x 2 x H x W
         ray_cond = self._flatten_person(ray_cond)
         if self.cfg.MODEL.BACKBONE.TYPE in [
@@ -1095,16 +1107,30 @@ class SAM3DBody(BaseModel):
         if len(self.hand_batch_idx):
             batch["ray_cond_hand"] = ray_cond[self.hand_batch_idx].clone()
         ray_cond = None
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_ray_end = time.perf_counter()
+        print(f"[sam3d][timing] forward_pose_branch ray_condition: {t_ray_end - t_ray_start:.3f}s")
 
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_backbone_start = time.perf_counter()
         image_embeddings = self.backbone(
             x.type(self.backbone_dtype), extra_embed=ray_cond
         )  # (B, C, H, W)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_backbone_end = time.perf_counter()
+        print(f"[sam3d][timing] forward_pose_branch backbone: {t_backbone_end - t_backbone_start:.3f}s")
 
         if isinstance(image_embeddings, tuple):
             image_embeddings = image_embeddings[-1]
         image_embeddings = image_embeddings.type(x.dtype)
 
         # Mask condition if available
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_mask_start = time.perf_counter()
         if self.cfg.MODEL.PROMPT_ENCODER.get("MASK_EMBED_TYPE", None) is not None:
             # v1: non-iterative mask conditioning
             if self.cfg.MODEL.PROMPT_ENCODER.get("MASK_PROMPT", "v1") == "v1":
@@ -1112,6 +1138,10 @@ class SAM3DBody(BaseModel):
                 image_embeddings = image_embeddings + mask_embeddings
             else:
                 raise NotImplementedError
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_mask_end = time.perf_counter()
+        print(f"[sam3d][timing] forward_pose_branch mask_prompt: {t_mask_end - t_mask_start:.3f}s")
 
         # Prepare input for promptable decoder
         condition_info = self._get_decoder_condition(batch)
@@ -1123,6 +1153,9 @@ class SAM3DBody(BaseModel):
         # Forward promptable decoder to get updated pose tokens and regression output
         pose_output, pose_output_hand = None, None
         if len(self.body_batch_idx):
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_decoder_start = time.perf_counter()
             tokens_output, pose_output = self.forward_decoder(
                 image_embeddings[self.body_batch_idx],
                 init_estimate=None,
@@ -1131,8 +1164,15 @@ class SAM3DBody(BaseModel):
                 condition_info=condition_info[self.body_batch_idx],
                 batch=batch,
             )
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_decoder_end = time.perf_counter()
+            print(f"[sam3d][timing] forward_pose_branch decoder_body: {t_decoder_end - t_decoder_start:.3f}s")
             pose_output = pose_output[-1]
         if len(self.hand_batch_idx):
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_decoder_hand_start = time.perf_counter()
             tokens_output_hand, pose_output_hand = self.forward_decoder_hand(
                 image_embeddings[self.hand_batch_idx],
                 init_estimate=None,
@@ -1141,6 +1181,10 @@ class SAM3DBody(BaseModel):
                 condition_info=condition_info[self.hand_batch_idx],
                 batch=batch,
             )
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_decoder_hand_end = time.perf_counter()
+            print(f"[sam3d][timing] forward_pose_branch decoder_hand: {t_decoder_hand_end - t_decoder_hand_start:.3f}s")
             pose_output_hand = pose_output_hand[-1]
 
         output = {
@@ -1175,6 +1219,8 @@ class SAM3DBody(BaseModel):
                 output["mhr_hand"]["hand_box"] = hand_coords_hand_batch
                 output["mhr_hand"]["hand_logits"] = hand_logits_hand_batch
 
+        t_pose_end = time.perf_counter()
+        print(f"[sam3d][timing] forward_pose_branch total: {t_pose_end - t_pose_start:.3f}s")
         return output
 
     def forward_step(
@@ -1213,6 +1259,7 @@ class SAM3DBody(BaseModel):
             - hand: inference with hand decoder only (only hand output)
         """
 
+        t_run_start = time.perf_counter()
         height, width = img.shape[:2]
         cam_int = batch["cam_int"].clone()
 
@@ -1226,8 +1273,19 @@ class SAM3DBody(BaseModel):
             ValueError("Invalid inference type: ", inference_type)
 
         # Step 1. For full-body inference, we first inference with the body decoder.
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_body_start = time.perf_counter()
         pose_output = self.forward_step(batch, decoder_type="body")
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_body_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference body_decoder: {t_body_end - t_body_start:.3f}s")
+
+        t_hand_box_start = time.perf_counter()
         left_xyxy, right_xyxy = self._get_hand_box(pose_output, batch)
+        t_hand_box_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference get_hand_box: {t_hand_box_end - t_hand_box_start:.3f}s")
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
             pose_output["mhr"]["body_pose"][:, [41, 43, 42, 31, 33, 32]].unflatten(
@@ -1242,11 +1300,16 @@ class SAM3DBody(BaseModel):
         left_xyxy[:, 0] = width - tmp[:, 2] - 1
         left_xyxy[:, 2] = width - tmp[:, 0] - 1
 
+        t_lhand_start = time.perf_counter()
         batch_lhand = prepare_batch(
             flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone()
         )
         batch_lhand = recursive_to(batch_lhand, "cuda")
         lhand_output = self.forward_step(batch_lhand, decoder_type="hand")
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_lhand_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference left_hand: {t_lhand_end - t_lhand_start:.3f}s")
 
         # Unflip output
         ## Flip scale
@@ -1278,13 +1341,19 @@ class SAM3DBody(BaseModel):
         )
 
         ## Right...
+        t_rhand_start = time.perf_counter()
         batch_rhand = prepare_batch(
             img, transform_hand, right_xyxy, cam_int=cam_int.clone()
         )
         batch_rhand = recursive_to(batch_rhand, "cuda")
         rhand_output = self.forward_step(batch_rhand, decoder_type="hand")
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_rhand_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference right_hand: {t_rhand_end - t_rhand_start:.3f}s")
 
         # Step 3. replace hand pose estimation from the body decoder.
+        t_refine_start = time.perf_counter()
         ## CRITERIA 1: LOCAL WRIST POSE DIFFERENCE
         joint_rotations = pose_output["mhr"]["joint_global_rots"]
         ### Get lowarm
@@ -1382,6 +1451,8 @@ class SAM3DBody(BaseModel):
             & hand_kps2d_valid_mask
             & hand_wrist_kps2d_valid_mask
         )
+        t_refine_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference hand_refine_criteria: {t_refine_end - t_refine_start:.3f}s")
 
         # Keypoint prompting with the body decoder.
         # We use the wrist location from the hand decoder and the elbow location
@@ -1597,6 +1668,9 @@ class SAM3DBody(BaseModel):
         ########################################################
 
         # Re-run forward
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_mhr_start = time.perf_counter()
         with torch.no_grad():
             verts, j3d, jcoords, mhr_model_params, joint_global_rots = (
                 self.head_pose.mhr_forward(
@@ -1624,9 +1698,14 @@ class SAM3DBody(BaseModel):
                 ...
             ] = 0  # pred_pose_raw is not valid anymore
             pose_output["mhr"]["mhr_model_params"] = mhr_model_params
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_mhr_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference mhr_forward (mesh/joints): {t_mhr_end - t_mhr_start:.3f}s")
 
         ########################################################
         # Project to 2D
+        t_proj_start = time.perf_counter()
         pred_keypoints_3d_proj = (
             pose_output["mhr"]["pred_keypoints_3d"]
             + pose_output["mhr"]["pred_cam_t"][:, None, :]
@@ -1645,7 +1724,11 @@ class SAM3DBody(BaseModel):
             pred_keypoints_3d_proj[:, :, :2] / pred_keypoints_3d_proj[:, :, [2]]
         )
         pose_output["mhr"]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :, :2]
+        t_proj_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference project_2d: {t_proj_end - t_proj_start:.3f}s")
 
+        t_run_end = time.perf_counter()
+        print(f"[sam3d][timing] run_inference total: {t_run_end - t_run_start:.3f}s")
         return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
 
     def run_keypoint_prompt(self, batch, output, keypoint_prompt):

@@ -1,3 +1,4 @@
+from __future__ import annotations
 import numpy as np
 import tempfile
 import os
@@ -7,6 +8,9 @@ import time
 import shutil
 import re
 from tqdm import tqdm
+
+from dataclasses import dataclass
+from typing import Dict, List, Optional
 
 from fbxify.metadata import PROFILES, MHR_KEYPOINT_INDEX
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
@@ -454,3 +458,245 @@ def _get_finger_positions(joints_3d, side):
     for prefix in prefixes:
         fingers.extend([kp(f"{prefix}_third_joint"), kp(f"{prefix}2"), kp(f"{prefix}3")])
     return fingers
+
+
+##################################### Extrinsics Utils #####################################
+
+@dataclass
+class ExtrinsicsEntry:
+    frame_index: Optional[int]
+    qvec: np.ndarray  # [qw, qx, qy, qz] (world->camera)
+    tvec: np.ndarray  # [tx, ty, tz] (world->camera)
+
+
+def parse_extrinsics_file(file_path: str) -> List[ExtrinsicsEntry]:
+    """
+    Parse a COLMAP images.txt-style extrinsics file.
+    
+    Expected lines:
+    IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, IMAGE_NAME
+    Followed by a POINTS2D line (which we skip).
+    
+    Note: IMAGE_ID is treated as a sample index, not an absolute frame index.
+    If values are 1-based, they are normalized to 0-based for interpolation.
+    """
+    entries: List[ExtrinsicsEntry] = []
+    with open(file_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+
+        parts = stripped.split()
+        # Skip POINTS2D lines (usually 2D coordinates in the second line)
+        if len(parts) < 10:
+            continue
+
+        try:
+            frame_index = int(parts[0])
+            qvec = np.array([float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])], dtype=np.float64)
+            tvec = np.array([float(parts[5]), float(parts[6]), float(parts[7])], dtype=np.float64)
+        except (ValueError, IndexError):
+            continue
+
+        entries.append(ExtrinsicsEntry(frame_index=frame_index, qvec=qvec, tvec=tvec))
+
+    return entries
+
+
+def build_frame_extrinsics(
+    frame_count: int,
+    sample_rate: int,
+    entries: List[ExtrinsicsEntry],
+) -> List[Dict[str, np.ndarray]]:
+    """
+    Build per-frame extrinsics with interpolation.
+    
+    Returns a list of dicts with:
+      - R_cw, T_cw (camera -> world)
+      - R_wc, T_wc (world -> camera)
+    """
+    if frame_count <= 0:
+        return []
+
+    if not entries:
+        return [_identity_extrinsics() for _ in range(frame_count)]
+
+    if sample_rate is None:
+        sample_rate = 0
+    # Leave sample_rate at 0 so _build_sample_frames can infer
+    # an endpoint-inclusive rate based on entries and frame_count.
+
+    inferred_rate = None
+    if sample_rate == 0:
+        denom = max(len(entries) - 1, 1)
+        inferred_rate = frame_count / denom if frame_count > 0 else 0
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+    print("sample_rate: ", inferred_rate if inferred_rate is not None else sample_rate)
+    print("frame_count: ", frame_count)
+    print("entries: ", len(entries))
+    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!")
+
+    sample_frames = _build_sample_frames(entries, sample_rate, frame_count)
+    sample_frames, entries = _sort_samples(sample_frames, entries)
+
+    q_cw_list = []
+    t_cw_list = []
+    for entry in entries:
+        q_wc = _normalize_quat(entry.qvec)
+        q_cw = _invert_quat(q_wc)
+        R_wc = _qvec_to_rotmat(q_wc)
+        R_cw = R_wc.T
+        t_wc = entry.tvec.reshape(3)
+        t_cw = -R_cw @ t_wc
+        q_cw_list.append(q_cw)
+        t_cw_list.append(t_cw)
+
+    per_frame: List[Dict[str, np.ndarray]] = []
+    for frame_idx in range(frame_count):
+        if frame_idx <= sample_frames[0]:
+            q_cw = q_cw_list[0]
+            t_cw = t_cw_list[0]
+        elif frame_idx >= sample_frames[-1]:
+            q_cw = q_cw_list[-1]
+            t_cw = t_cw_list[-1]
+        else:
+            right = int(np.searchsorted(sample_frames, frame_idx, side="right"))
+            left = max(0, right - 1)
+            right = min(right, len(sample_frames) - 1)
+            left_frame = sample_frames[left]
+            right_frame = sample_frames[right]
+            if right_frame == left_frame:
+                alpha = 0.0
+            else:
+                alpha = (frame_idx - left_frame) / (right_frame - left_frame)
+            q_cw = _quat_slerp(q_cw_list[left], q_cw_list[right], alpha)
+            t_cw = _lerp_vec(t_cw_list[left], t_cw_list[right], alpha)
+
+        R_cw = _qvec_to_rotmat(q_cw)
+        R_wc = R_cw.T
+        t_wc = -R_wc @ t_cw
+
+        T_cw = np.eye(4, dtype=np.float64)
+        T_cw[:3, :3] = R_cw
+        T_cw[:3, 3] = t_cw
+
+        T_wc = np.eye(4, dtype=np.float64)
+        T_wc[:3, :3] = R_wc
+        T_wc[:3, 3] = t_wc
+
+        per_frame.append(
+            {
+                "R_cw": R_cw,
+                "t_cw": t_cw,
+                "R_wc": R_wc,
+                "t_wc": t_wc,
+                "T_cw": T_cw,
+                "T_wc": T_wc,
+            }
+        )
+
+    # output every T_wc after interpolation as pretty JSON
+    output_path = os.path.join(os.getcwd(), "T_wc_fbxify.json")
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump([frame["T_wc"].tolist() for frame in per_frame], f, indent=2)
+
+    return per_frame
+
+
+def _build_sample_frames(entries: List[ExtrinsicsEntry], sample_rate: int, frame_count: int) -> List[int]:
+    sample_indices = [e.frame_index for e in entries if e.frame_index is not None]
+    if len(sample_indices) != len(entries):
+        # Fallback to sequential samples if any index is missing.
+        sample_indices = list(range(len(entries)))
+
+    # Normalize 1-based indices to 0-based so entry 1 maps to frame 0.
+    if sample_indices and min(sample_indices) >= 1:
+        sample_indices = [idx - 1 for idx in sample_indices]
+
+    if sample_rate is None or sample_rate <= 0:
+        # Use frame_count/(N-1) so a downsample rate like 20 is preserved.
+        denom = max(len(entries) - 1, 1)
+        sample_rate = frame_count / denom if frame_count > 0 else 0
+
+    sample_frames = []
+    for idx in sample_indices:
+        frame = int(round(idx * sample_rate))
+        if frame_count > 0:
+            frame = max(0, min(frame, frame_count - 1))
+        sample_frames.append(frame)
+    return sample_frames
+
+
+def _sort_samples(sample_frames: List[int], entries: List[ExtrinsicsEntry]):
+    pairs = sorted(zip(sample_frames, entries), key=lambda x: x[0])
+    frames_sorted = [p[0] for p in pairs]
+    entries_sorted = [p[1] for p in pairs]
+    return frames_sorted, entries_sorted
+
+
+def _identity_extrinsics() -> Dict[str, np.ndarray]:
+    return {
+        "R_cw": np.eye(3, dtype=np.float64),
+        "T_cw": np.eye(4, dtype=np.float64),
+        "R_wc": np.eye(3, dtype=np.float64),
+        "T_wc": np.eye(4, dtype=np.float64),
+    }
+
+
+def _is_monotonic(values: List[int]) -> bool:
+    return all(a <= b for a, b in zip(values, values[1:]))
+
+
+def _normalize_quat(q: np.ndarray) -> np.ndarray:
+    q = np.asarray(q, dtype=np.float64).reshape(4)
+    n = np.linalg.norm(q)
+    if n < 1e-8:
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float64)
+    return q / n
+
+
+def _invert_quat(q: np.ndarray) -> np.ndarray:
+    q = _normalize_quat(q)
+    return np.array([q[0], -q[1], -q[2], -q[3]], dtype=np.float64)
+
+
+def _lerp_vec(a: np.ndarray, b: np.ndarray, t: float) -> np.ndarray:
+    return (1.0 - t) * a + t * b
+
+
+def _quat_slerp(q0: np.ndarray, q1: np.ndarray, t: float) -> np.ndarray:
+    q0 = _normalize_quat(q0)
+    q1 = _normalize_quat(q1)
+
+    dot = float(np.dot(q0, q1))
+    if dot < 0.0:
+        q1 = -q1
+        dot = -dot
+
+    if dot > 0.9995:
+        return _normalize_quat(_lerp_vec(q0, q1, t))
+
+    theta_0 = np.arccos(np.clip(dot, -1.0, 1.0))
+    sin_theta_0 = np.sin(theta_0)
+    theta = theta_0 * t
+    sin_theta = np.sin(theta)
+
+    s0 = np.cos(theta) - dot * sin_theta / sin_theta_0
+    s1 = sin_theta / sin_theta_0
+    return (s0 * q0) + (s1 * q1)
+
+
+def _qvec_to_rotmat(qvec: np.ndarray) -> np.ndarray:
+    q = _normalize_quat(qvec)
+    qw, qx, qy, qz = q
+    return np.array(
+        [
+            [1 - 2 * (qy * qy + qz * qz), 2 * (qx * qy - qz * qw), 2 * (qx * qz + qy * qw)],
+            [2 * (qx * qy + qz * qw), 1 - 2 * (qx * qx + qz * qz), 2 * (qy * qz - qx * qw)],
+            [2 * (qx * qz - qy * qw), 2 * (qy * qz + qx * qw), 1 - 2 * (qx * qx + qy * qy)],
+        ],
+        dtype=np.float64,
+    )

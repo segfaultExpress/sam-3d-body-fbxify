@@ -20,6 +20,12 @@ import random
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
+import threading
+
+
+class CancelledError(Exception):
+    """Raised when a running pose estimation job is cancelled."""
+    pass
 
 
 class PoseEstimationManager:
@@ -30,7 +36,17 @@ class PoseEstimationManager:
     
     cached_cam_int = None  # cache for camera intrinsics to avoid re-running FOV estimator per frame
     
-    def __init__(self, checkpoint_path, mhr_path, device=None, detector_name=None, detector_path=None, fov_name="moge2", fov_path=None):
+    def __init__(
+        self,
+        checkpoint_path,
+        mhr_path,
+        device=None,
+        detector_name=None,
+        detector_path=None,
+        fov_name="moge2",
+        fov_path=None,
+        precision="fp32",
+    ):
         """
         Initialize the pose estimation manager.
         
@@ -84,6 +100,22 @@ class PoseEstimationManager:
             fov_estimator=fov_estimator,
         )
         self.faces = self.estimator.faces
+
+        self.precision = "fp32"
+        self.set_inference_options(precision=precision)
+        self._cancel_event = threading.Event()
+
+    def cancel_current_job(self) -> None:
+        """Signal any running estimation loop to stop."""
+        self._cancel_event.set()
+
+    def clear_cancel(self) -> None:
+        """Clear the cancel signal before starting a new job."""
+        self._cancel_event.clear()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise CancelledError("Pose estimation cancelled by user.")
     
     def cache_cam_int_from_images(self, img_paths, average_of=1):
         """
@@ -115,6 +147,33 @@ class PoseEstimationManager:
         cam_ints_stacked = torch.stack(cam_ints, dim=0)  # (N, 1, 3, 3)
         self.cached_cam_int = torch.mean(cam_ints_stacked, dim=0)  # (1, 3, 3)
         print(f"Cached camera intrinsics (averaged of {average_of} images): {self.cached_cam_int}")
+
+    def set_inference_options(self, precision: str = "fp32"):
+        """
+        Configure inference precision.
+        """
+        precision = (precision or "fp32").lower()
+        if precision not in ["fp32", "bf16", "fp16"]:
+            raise ValueError(f"Unsupported precision: {precision}")
+
+        if precision != self.precision:
+            self._apply_precision(precision)
+            self.precision = precision
+
+    def _apply_precision(self, precision: str):
+        model = self.estimator.model
+        if precision == "fp32":
+            model.float()
+            model.backbone_dtype = torch.float32
+            return
+
+        model.cfg.defrost()
+        model.cfg.TRAIN.FP16_TYPE = "bfloat16" if precision == "bf16" else "float16"
+        model.cfg.freeze()
+
+        model.convert_to_fp16()
+        model.backbone_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+
 
     def cache_cam_int_from_file(self, cam_int):
         """
@@ -291,7 +350,8 @@ class PoseEstimationManager:
         estimation_results = {}
         translator = Translator(lang)
                 
-        for frame_index, frame_path in enumerate(frame_paths):            
+        for frame_index, frame_path in enumerate(frame_paths):
+            self._check_cancelled()
             # Update progress bar if callback is provided
             if progress_callback:
                 progress = frame_index / len(frame_paths)

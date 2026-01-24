@@ -119,6 +119,15 @@ def parse_args():
         default=1,
         help="Number of images to sample for FOV estimation (default: 1, used if --fov_method is Sample)"
     )
+
+    # Precision and hand crop scale
+    parser.add_argument(
+        "--precision",
+        type=str,
+        default="fp32",
+        choices=["fp32", "bf16", "fp16"],
+        help="Inference precision: fp32 (full), bf16 (fast + safer), fp16 (fastest)"
+    )
     
     # Root motion
     parser.add_argument(
@@ -208,7 +217,8 @@ def main():
                 detector_name=args.detector_name,
                 detector_path=detector_path,
                 fov_name=args.fov_name,
-                fov_path=fov_path
+                fov_path=fov_path,
+                precision=args.precision
             )
         except Exception as e:
             print(f"Error initializing estimator: {e}")
@@ -224,7 +234,8 @@ def main():
                 detector_name=args.detector_name,
                 detector_path=detector_path,
                 fov_name=args.fov_name,
-                fov_path=fov_path
+                fov_path=fov_path,
+                precision=args.precision
             )
         except Exception as e:
             print(f"Error initializing estimator: {e}")

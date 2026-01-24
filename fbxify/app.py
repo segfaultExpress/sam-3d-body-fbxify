@@ -10,14 +10,14 @@ import tempfile
 import shutil
 import json
 import gradio as gr
-from fbxify.pose_estimation_manager import PoseEstimationManager
+from fbxify.pose_estimation_manager import PoseEstimationManager, CancelledError
 from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.fbxify_manager import FbxifyManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 from fbxify.gradio_ui.header_section import create_header_section, update_header_language
 from fbxify.gradio_ui.entry_section import create_entry_section, toggle_bbox_inputs, toggle_fov_inputs, update_entry_language
 from fbxify.gradio_ui.fbx_processing_section import create_fbx_processing_section, update_fbx_processing_language, toggle_generate_fbx_button
-from fbxify.gradio_ui.fbx_options_section import create_fbx_options_section, toggle_mesh_inputs, toggle_personalized_body, update_fbx_options_language
+from fbxify.gradio_ui.fbx_options_section import create_fbx_options_section, toggle_mesh_inputs, toggle_personalized_body, toggle_extrinsics_inputs, update_fbx_options_language
 from fbxify import VERSION
 from fbxify.gradio_ui.developer_section import create_developer_section, update_developer_language
 from fbxify.gradio_ui.refinement_section import create_refinement_section, build_refinement_config_from_gui
@@ -63,12 +63,13 @@ def create_app(manager: FbxifyManager):
     # Initialize translator with default language
     translator = Translator(DEFAULT_LANGUAGE)
     
-    def estimate_pose(input_file, profile_name, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method, 
-                     fov_file, sample_number, progress=gr.Progress()):
+    def estimate_pose(input_file, profile_name, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method,
+                     fov_file, sample_number, precision, progress=gr.Progress()):
         """Estimate pose from image or video file - Step 1."""
         temp_dir = None
         
         try:
+            manager.estimation_manager.clear_cancel()
             if input_file is None:
                 return (
                     gr.update(),  # pose_json_file
@@ -111,6 +112,17 @@ def create_app(manager: FbxifyManager):
             fov_file_path = fov_file.name if fov_file else None
             manager.set_camera_intrinsics(fov_method, fov_file_path, frame_paths, sample_number)
 
+            # Apply inference options (precision + hand crop scale)
+            precision_value = "fp32"
+            if isinstance(precision, str):
+                if precision.lower().startswith("bf16"):
+                    precision_value = "bf16"
+                elif precision.lower().startswith("fp16"):
+                    precision_value = "fp16"
+            manager.estimation_manager.set_inference_options(
+                precision=precision_value
+            )
+
             # Process frames - only estimation
             # Use Gradio's progress tracker
             def progress_callback(progress_value, description):
@@ -141,6 +153,13 @@ def create_app(manager: FbxifyManager):
                 num_people=num_people
             )
 
+        except CancelledError:
+            # Cancelled by user; return to idle state without error
+            return (
+                gr.update(value=None),  # pose_json_file
+                gr.update(interactive=False),  # generate_fbx_btn
+                gr.update(interactive=(input_file is not None))  # estimate_pose_btn
+            )
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)
@@ -162,7 +181,9 @@ def create_app(manager: FbxifyManager):
             gr.update(interactive=(input_file is not None))   # estimate_pose_btn (re-enable only if file still exists)
         )
     
-    def generate_fbx(pose_json_file, profile_name, use_root_motion, include_mesh, use_personalized_body, lod, outlier_removal_percent,
+    def generate_fbx(pose_json_file, profile_name, use_root_motion, include_mesh, include_extrinsics,
+                    extrinsics_sample_rate, extrinsics_scale, extrinsics_file,
+                    use_personalized_body, lod, outlier_removal_percent,
                     input_file,
                     refinement_config,  # Single refinement config object from state
                     progress=gr.Progress()):
@@ -171,6 +192,7 @@ def create_app(manager: FbxifyManager):
 
         
         try:
+            manager.estimation_manager.clear_cancel()
             if pose_json_file is None:
                 raise ValueError(translator.t("errors.pose_json_file_required"))
             
@@ -189,6 +211,7 @@ def create_app(manager: FbxifyManager):
             # Convert outlier_removal_percent to float
             outlier_percent = float(outlier_removal_percent) if outlier_removal_percent is not None else 10.0
             
+            extrinsics_file_path = extrinsics_file.name if (include_extrinsics and extrinsics_file is not None) else None
             process_result = manager.process_from_estimation_json(
                 json_path,
                 profile_name,
@@ -199,7 +222,10 @@ def create_app(manager: FbxifyManager):
                 lod=lod_int if include_mesh else -1,
                 use_personalized_body=use_personalized_body if include_mesh else False,
                 outlier_removal_percent=outlier_percent if (include_mesh and use_personalized_body) else 10.0,
-                lang=translator.lang
+                lang=translator.lang,
+                extrinsics_file=extrinsics_file_path,
+                extrinsics_sample_rate=int(extrinsics_sample_rate) if extrinsics_sample_rate is not None else 0,
+                extrinsics_scale=float(extrinsics_scale) if extrinsics_scale is not None else 0.0
             )
 
             # Export FBX files
@@ -251,6 +277,52 @@ def create_app(manager: FbxifyManager):
             output_files if output_files else None,
             gr.update(interactive=(input_file is not None))  # estimate_pose_btn (re-enable only if file still exists)
         )
+
+    def _format_cli_arg(value: str) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        if any(char.isspace() for char in text):
+            return f"\"{text}\""
+        return text
+
+    def build_cli_command(profile_name, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method,
+                          fov_file, sample_number, precision, use_root_motion):
+        precision_map = {
+            "FP32 (Full)": "fp32",
+            "BF16 (Fast + Safer)": "bf16",
+            "FP16 (Fastest)": "fp16"
+        }
+        precision_value = precision_map.get(precision, str(precision).lower() if precision else "fp32")
+
+        cmd_parts = ["python", "-m", "fbxify.cli"]
+
+        if profile_name:
+            cmd_parts += ["--profile", _format_cli_arg(profile_name)]
+
+        if use_bbox:
+            cmd_parts += ["--bbox_file", "<BBOX_FILE>"]
+            if missing_bbox_behavior:
+                cmd_parts += ["--missing_bbox_behavior", _format_cli_arg(missing_bbox_behavior)]
+        else:
+            if num_people is not None:
+                cmd_parts += ["--num_people", str(int(num_people))]
+
+        if fov_method and fov_method != "Default":
+            cmd_parts += ["--fov_method", _format_cli_arg(fov_method)]
+            if fov_method == "File":
+                cmd_parts += ["--fov_file", "<CAMERA_INTRINSICS_FILE>"]
+            elif fov_method == "Sample":
+                if sample_number is not None:
+                    cmd_parts += ["--sample_number", str(int(sample_number))]
+
+        cmd_parts += ["--precision", precision_value]
+
+        if use_root_motion is False:
+            cmd_parts.append("--no_root_motion")
+
+        cmd_parts.append("<INPUT_FILE>")
+        return " ".join(cmd_parts)
     
     def on_lang_change(lang):
         """Update all UI components when language changes."""
@@ -268,9 +340,9 @@ def create_app(manager: FbxifyManager):
         # Combine all updates
         return (
             *header_updates,  # heading, description, tabs
-            *entry_updates,   # input_file, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method, fov_file, sample_number, estimate_pose_btn
+            *entry_updates,   # input_file, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method, fov_file, sample_number, precision, estimate_pose_btn
             *fbx_processing_updates,    # profile_name, pose_json_file, generate_fbx_btn, output_files
-            *fbx_options_updates,  # use_root_motion, include_mesh, use_personalized_body, lod, outlier_removal_percent
+            *fbx_options_updates,  # use_root_motion, include_mesh, include_extrinsics, use_personalized_body, lod, outlier_removal_percent, extrinsics_sample_rate, extrinsics_scale, extrinsics_file
             *developer_updates,  # (empty now)
         )
 
@@ -313,10 +385,16 @@ def create_app(manager: FbxifyManager):
                 entry_components['use_bbox'], entry_components['bbox_file'],
                 entry_components['num_people'], entry_components['missing_bbox_behavior'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
+                entry_components['precision'],
                 entry_components['estimate_pose_btn'],  # entry
                 fbx_processing_components['profile_name'], fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], fbx_processing_components['output_files'],  # fbx processing
                 fbx_options_components['auto_run'], fbx_options_components['use_root_motion'], fbx_options_components['include_mesh'],
-                fbx_options_components['use_personalized_body'], fbx_options_components['lod'], fbx_options_components['outlier_removal_percent']  # fbx options
+                fbx_options_components['include_extrinsics'], fbx_options_components['use_personalized_body'],
+                fbx_options_components['lod'], fbx_options_components['outlier_removal_percent'],
+                fbx_options_components['extrinsics_sample_rate'], fbx_options_components['extrinsics_scale'], fbx_options_components['extrinsics_file'],  # fbx options
+                dev_components['cli_generator_accordion'], dev_components['cli_generator_info_md'],
+                dev_components['generate_cli_btn'], dev_components['cli_command'],
+                dev_components['developer_options_accordion'], dev_components['cancel_jobs_info_md'], dev_components['cancel_jobs_btn']  # developer
             ]
         )
         
@@ -339,6 +417,17 @@ def create_app(manager: FbxifyManager):
             fn=lambda x: (gr.update(visible=x), gr.update(visible=x)),
             inputs=[fbx_options_components['include_mesh']],
             outputs=[fbx_options_components['lod'], fbx_options_components['use_personalized_body']]
+        )
+
+        # Extrinsics toggle - show/hide extrinsics inputs
+        fbx_options_components['include_extrinsics'].change(
+            fn=toggle_extrinsics_inputs,
+            inputs=[fbx_options_components['include_extrinsics']],
+            outputs=[
+                fbx_options_components['extrinsics_sample_rate'],
+                fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_file']
+            ]
         )
         
         # Combined toggle for outlier removal - depends on both include_mesh and use_personalized_body
@@ -391,7 +480,8 @@ def create_app(manager: FbxifyManager):
         )
         
         # Helper function to conditionally auto-run generate_fbx
-        def auto_run_generate_fbx(pose_json_file, auto_run, profile_name, use_root_motion, include_mesh, use_personalized_body, lod, 
+        def auto_run_generate_fbx(pose_json_file, auto_run, profile_name, use_root_motion, include_mesh, include_extrinsics,
+                                  extrinsics_sample_rate, extrinsics_scale, extrinsics_file, use_personalized_body, lod, 
                                   outlier_removal_percent, input_file, *refinement_inputs, progress=gr.Progress()):
             """Conditionally trigger generate_fbx if auto_run is enabled."""
             if not auto_run or pose_json_file is None:
@@ -407,6 +497,10 @@ def create_app(manager: FbxifyManager):
                 profile_name,
                 use_root_motion,
                 include_mesh,
+                include_extrinsics,
+                extrinsics_sample_rate,
+                extrinsics_scale,
+                extrinsics_file,
                 use_personalized_body,
                 lod,
                 outlier_removal_percent,
@@ -432,7 +526,8 @@ def create_app(manager: FbxifyManager):
                 entry_components['missing_bbox_behavior'],
                 entry_components['fov_method'],
                 entry_components['fov_file'],
-                entry_components['sample_number']
+                entry_components['sample_number'],
+                entry_components['precision']
             ],
             outputs=[fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], entry_components['estimate_pose_btn']]  # Update file and re-enable buttons when done
         )
@@ -446,6 +541,10 @@ def create_app(manager: FbxifyManager):
                 fbx_processing_components['profile_name'],
                 fbx_options_components['use_root_motion'],
                 fbx_options_components['include_mesh'],
+                fbx_options_components['include_extrinsics'],
+                fbx_options_components['extrinsics_sample_rate'],
+                fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_file'],
                 fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
@@ -502,7 +601,7 @@ def create_app(manager: FbxifyManager):
         
         # Generate FBX button (Step 2)
         # Disable Estimate Pose button immediately when Generate FBX is clicked
-        fbx_processing_components['generate_fbx_btn'].click(
+        generate_fbx_click = fbx_processing_components['generate_fbx_btn'].click(
             fn=lambda: gr.update(interactive=False),  # Disable Estimate Pose button immediately
             inputs=[],
             outputs=[entry_components['estimate_pose_btn']]
@@ -519,6 +618,10 @@ def create_app(manager: FbxifyManager):
                 fbx_processing_components['profile_name'],
                 fbx_options_components['use_root_motion'],
                 fbx_options_components['include_mesh'],
+                fbx_options_components['include_extrinsics'],
+                fbx_options_components['extrinsics_sample_rate'],
+                fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_file'],
                 fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
@@ -527,8 +630,41 @@ def create_app(manager: FbxifyManager):
             ],
             outputs=[fbx_processing_components['output_files'], entry_components['estimate_pose_btn']]  # Re-enable Estimate Pose when done
         )
+
+        dev_components['generate_cli_btn'].click(
+            fn=build_cli_command,
+            inputs=[
+                fbx_processing_components['profile_name'],
+                entry_components['use_bbox'],
+                entry_components['bbox_file'],
+                entry_components['num_people'],
+                entry_components['missing_bbox_behavior'],
+                entry_components['fov_method'],
+                entry_components['fov_file'],
+                entry_components['sample_number'],
+                entry_components['precision'],
+                fbx_options_components['use_root_motion']
+            ],
+            outputs=[dev_components['cli_command']]
+        )
+
+        def cancel_current_jobs(input_file, pose_json_file):
+            manager.estimation_manager.cancel_current_job()
+            return (
+                gr.update(interactive=(input_file is not None)),  # estimate_pose_btn
+                gr.update(interactive=(pose_json_file is not None))  # generate_fbx_btn
+            )
+
+        dev_components['cancel_jobs_btn'].click(
+            fn=cancel_current_jobs,
+            inputs=[entry_components['input_file'], fbx_processing_components['pose_json_file']],
+            outputs=[entry_components['estimate_pose_btn'], fbx_processing_components['generate_fbx_btn']],
+            cancels=[estimate_pose_click, generate_fbx_click]
+        )
         
         # Language detection on page load
+        app.queue()
+
         app.load(
             fn=detect_and_set_language,
             inputs=[],
@@ -601,7 +737,8 @@ if __name__ == "__main__":
         detector_name=args.detector_name,
         detector_path=detector_path,
         fov_name=args.fov_name,
-        fov_path=fov_path
+        fov_path=fov_path,
+        precision="fp32"
     )
     
     data_prep_manager = FbxDataPrepManager()

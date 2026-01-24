@@ -86,7 +86,15 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
         visible=False,
         info=translator.t("ui.sample_number_info")
     )
-    
+
+    # Precision options
+    components['precision'] = gr.Dropdown(
+        label=translator.t("ui.precision"),
+        choices=["FP32 (Full)", "BF16 (Fast + Safer)", "FP16 (Fastest)"],
+        value="FP32 (Full)",
+        info=translator.t("ui.precision_info")
+    )
+
     return components
 
 
@@ -155,5 +163,6 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.fov_method"), info=t.t("ui.fov_method_info")),  # fov_method
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
+        gr.update(label=t.t("ui.precision"), info=t.t("ui.precision_info")),  # precision
         gr.update(value=t.t("ui.step_1_estimate_pose")),  # estimate_pose_btn
     )

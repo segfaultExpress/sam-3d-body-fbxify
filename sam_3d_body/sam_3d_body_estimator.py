@@ -1,5 +1,6 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 from typing import Optional, Union
+import time
 
 import cv2
 
@@ -89,6 +90,8 @@ class SAM3DBodyEstimator:
                 - hand: inference with hand decoder only (only hand output)
         """
 
+        t_total_start = time.perf_counter()
+
         # clear all cached results
         self.batch = None
         self.image_embeddings = None
@@ -103,6 +106,8 @@ class SAM3DBodyEstimator:
             print("####### Please make sure the input image is in RGB format")
             image_format = "rgb"
         height, width = img.shape[:2]
+        t_after_load = time.perf_counter()
+        print(f"[sam3d][timing] load_image + setup: {t_after_load - t_total_start:.3f}s")
 
         if bboxes is not None:
             boxes = bboxes.reshape(-1, 4)
@@ -124,6 +129,8 @@ class SAM3DBodyEstimator:
         else:
             boxes = np.array([0, 0, width, height]).reshape(1, 4)
             self.is_crop = False
+        t_after_boxes = time.perf_counter()
+        print(f"[sam3d][timing] detection/bbox selection: {t_after_boxes - t_after_load:.3f}s")
 
         # If there are no detected humans, don't run prediction
         if len(boxes) == 0:
@@ -152,13 +159,21 @@ class SAM3DBodyEstimator:
             masks, masks_score = self.sam.run_sam(img, boxes)
         else:
             masks, masks_score = None, None
+        t_after_masks = time.perf_counter()
+        print(f"[sam3d][timing] mask handling: {t_after_masks - t_after_boxes:.3f}s")
 
         #################### Construct batch data samples ####################
         batch = prepare_batch(img, self.transform, boxes, masks, masks_score)
+        t_after_batch = time.perf_counter()
+        print(f"[sam3d][timing] prepare_batch (pre-torch): {t_after_batch - t_after_masks:.3f}s")
 
         #################### Run model inference on an image ####################
+        t_torch_start = time.perf_counter()
+        print("[sam3d][timing] entering torch ops (device transfer)")
         batch = recursive_to(batch, "cuda")
         self.model._initialize_batch(batch)
+        t_after_init = time.perf_counter()
+        print(f"[sam3d][timing] batch transfer + init: {t_after_init - t_torch_start:.3f}s")
 
         # Handle camera intrinsics
         # - either provided externally or generated via default FOV estimator
@@ -176,6 +191,9 @@ class SAM3DBodyEstimator:
         else:
             cam_int = batch["cam_int"].clone()
 
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_infer_start = time.perf_counter()
         outputs = self.model.run_inference(
             img,
             batch,
@@ -183,6 +201,10 @@ class SAM3DBodyEstimator:
             transform_hand=self.transform_hand,
             thresh_wrist_angle=self.thresh_wrist_angle,
         )
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        t_infer_end = time.perf_counter()
+        print(f"[sam3d][timing] model.run_inference: {t_infer_end - t_infer_start:.3f}s")
         if inference_type == "full":
             pose_output, batch_lhand, batch_rhand, _, _ = outputs
         else:
@@ -260,5 +282,8 @@ class SAM3DBodyEstimator:
         del batch, out, pose_output
         if inference_type == "full":
             del batch_lhand, batch_rhand
+
+        t_total_end = time.perf_counter()
+        print(f"[sam3d][timing] total process_one_image: {t_total_end - t_total_start:.3f}s")
 
         return all_out

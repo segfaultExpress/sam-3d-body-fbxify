@@ -101,6 +101,10 @@ RUN python -m pip install \
       pyopengl \
       pyopengl-accelerate \
       git+https://github.com/microsoft/MoGe.git
+      
+# ---- Additional fbxify Python deps ----
+RUN python -m pip install \
+      mathutils
 
 # ---- flash-attn needs to be installed separately
 RUN python -m pip install -U pip setuptools wheel packaging ninja psutil \

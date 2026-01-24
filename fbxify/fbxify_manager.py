@@ -17,6 +17,7 @@ from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.utils import export_to_fbx, to_serializable
 from fbxify.refinement.refinement_manager import RefinementManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
+from fbxify.metadata import JOINT_NAMES_TO_INDEX
 
 
 @dataclass
@@ -148,180 +149,6 @@ class FbxifyManager:
             self.estimation_manager.cache_cam_int_from_images(frame_paths, average_of=sample_number)
         # else: "Default" - built-in FOV estimator runs every frame (default behavior)
     
-    def process_frames(self, frame_paths: List[str], profile_name: str, num_people: int,
-                      bbox_dict: Optional[Dict[int, List[Tuple]]] = None,
-                      use_root_motion: bool = True,
-                      fps: float = 30.0, progress_callback: Optional[callable] = None,
-                      lod: int = -1, body_param_sample_num: int = 5,
-                      save_estimation_json: Optional[str] = None,
-                      refinement_config=None,
-                      missing_bbox_behavior: str = "Run Detection",
-                      lang: str = DEFAULT_LANGUAGE) -> ProcessResult:
-        """
-        Process all frames and collect results.
-        
-        Args:
-            frame_paths: List of frame file paths
-            profile_name: Profile name (e.g., "mixamo", "unity", "mhr")
-            num_people: Number of people to detect
-            bbox_dict: Optional bounding box dictionary
-            use_root_motion: Whether to track root motion
-            fps: Frame rate of the animation (frames per second)
-            progress_callback: Optional callback function(progress, description)
-            lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
-            body_param_sample_num: Number of frames to sample for body parameter averaging
-            save_estimation_json: Optional path to save estimation results JSON
-            
-        Returns:
-            ProcessResult containing all processing results
-        """
-        # Extract source name from frame paths
-        # For single images, use the image filename
-        # For extracted frames, try to infer from directory structure
-        source_name = "unknown"
-        if frame_paths:
-            first_frame = frame_paths[0]
-            if os.path.isfile(first_frame):
-                # Check if it's a single image (not in a temp frame directory)
-                frame_dir = os.path.dirname(first_frame)
-                # If frame is in a temp directory (contains "sam3d_frames"), try to infer original source
-                if "sam3d_frames" in frame_dir:
-                    # For extracted frames, we can't easily get the original filename
-                    # Use a generic name based on the temp directory
-                    source_name = "extracted_video"
-                else:
-                    # Single image file - use its name
-                    source_name = os.path.basename(first_frame)
-            else:
-                source_name = "unknown"
-        
-        # Step 1: Estimate poses for all frames (expensive operation)
-        def estimation_progress(progress_value, description):
-            if progress_callback:
-                progress_callback(progress_value * 0.5, description)
-        
-        estimation_results = self.estimation_manager.estimate_all_frames(
-            frame_paths,
-            num_people=num_people,
-            bbox_dict=bbox_dict,
-            progress_callback=estimation_progress,
-            source_name=source_name,
-            missing_bbox_behavior=missing_bbox_behavior
-        )
-        
-        # Save estimation results if requested
-        if save_estimation_json:
-            self.estimation_manager.save_estimation_results(estimation_results, save_estimation_json, source_name=source_name, num_people=num_people)
-        
-        # Step 2: Apply refinement to estimation results if enabled (before joint mapping)
-        translator = Translator(lang)
-        print(f"FbxifyManager.process_frames(): refinement_config is {'None' if refinement_config is None else 'not None'}")
-        if refinement_config is not None:
-            print(f"FbxifyManager.process_frames(): Creating RefinementManager with config")
-            if progress_callback:
-                progress_callback(0.5, translator.t("progress.applying_refinement"))
-            
-            refinement_manager = RefinementManager(refinement_config, fps, lang=lang)
-            estimation_results = refinement_manager.apply(
-                estimation_results,
-                progress_callback=lambda p, d: progress_callback(0.5 + p * 0.1, d) if progress_callback else None
-            )
-        else:
-            print(f"FbxifyManager.process_frames(): refinement_config is None, skipping refinement")
-        
-        # Step 3: Transform estimation results into FBX-ready data
-        if progress_callback:
-            base_progress = 0.6 if refinement_config is not None else 0.5
-            progress_callback(base_progress, translator.t("progress.preparing_fbx_data"))
-        
-        fbx_data = self.data_prep_manager.prepare_from_estimation(
-            estimation_results,
-            profile_name,
-            use_root_motion=use_root_motion
-        )
-        
-        joint_to_bone_mappings = fbx_data["joint_to_bone_mappings"]
-        root_motions = fbx_data["root_motions"]
-        
-        # Step 4: Generate mesh if enabled
-        mesh_obj_path = None
-        if lod >= 0 and profile_name == "mhr":
-            # Collect body parameters from estimation results
-            body_params_collection = {}  # person_id -> list of {scale_params, shape_params}
-            
-            for frame_data in estimation_results.values():
-                for person_id, estimation_data in frame_data.items():
-                    if person_id not in body_params_collection:
-                        body_params_collection[person_id] = []
-                    
-                    scale_params = estimation_data.get("scale_params")
-                    shape_params = estimation_data.get("shape_params")
-                    if scale_params is not None and shape_params is not None:
-                        body_params_collection[person_id].append({
-                            "scale_params": scale_params,
-                            "shape_params": shape_params
-                        })
-            
-            # Process mesh for each person
-            for identifier, params_list in body_params_collection.items():
-                if not params_list:
-                    continue
-                
-                # Sample N frames (min of body_param_sample_num and available frames)
-                num_samples = min(body_param_sample_num, len(params_list))
-                sampled_params = params_list[:num_samples]  # Take first N samples
-                
-                # Average scale_params and shape_params
-                scale_params_list = [p["scale_params"] for p in sampled_params]
-                shape_params_list = [p["shape_params"] for p in sampled_params]
-                
-                # Convert to numpy arrays and average
-                scale_params_avg = np.mean([np.array(sp) for sp in scale_params_list], axis=0)
-                shape_params_avg = np.mean([np.array(sp) for sp in shape_params_list], axis=0)
-                
-                # Log parameter statistics
-                print(f"Generating T-pose mesh for person {identifier}...")
-                print(f"  Averaged {num_samples} samples out of {len(params_list)} available frames")
-                
-                # Generate T-pose mesh
-                temp_obj = tempfile.NamedTemporaryFile(delete=False, suffix='.obj')
-                temp_obj.close()
-                
-                try:
-                    _, mesh_path = self.estimation_manager.generate_tpose(
-                        scale_params=scale_params_avg,
-                        shape_params=shape_params_avg,
-                        output_obj_path=temp_obj.name
-                    )
-                    mesh_obj_path = mesh_path
-                    print(f"  Generated mesh saved to: {mesh_obj_path}")
-                    
-                    # Only process first person for now (can be extended later)
-                    break
-                except Exception as e:
-                    print(f"  Warning: Failed to generate mesh: {e}")
-                    import traceback
-                    traceback.print_exc()
-                    mesh_obj_path = None
-        
-        # Full GPU cache clear at the end
-        import gc
-        import torch
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-        gc.collect()
-        
-        return ProcessResult(
-            joint_to_bone_mappings=joint_to_bone_mappings,
-            root_motions=root_motions,
-            visualization_data=None,
-            frame_paths=frame_paths,
-            profile_name=profile_name,
-            fps=fps,
-            mesh_obj_path=mesh_obj_path
-        )
-    
     def _remove_outliers_and_average(self, body_params_list: List[Dict[str, Any]], outlier_percent: float) -> Tuple[np.ndarray, np.ndarray]:
         """
         Remove outliers from body parameters and return averaged values.
@@ -425,7 +252,10 @@ class FbxifyManager:
                                     refinement_config=None, progress_callback: Optional[callable] = None,
                                     lod: int = -1, use_personalized_body: bool = False,
                                     outlier_removal_percent: float = 10.0,
-                                    lang: str = DEFAULT_LANGUAGE) -> ProcessResult:
+                                    lang: str = DEFAULT_LANGUAGE,
+                                    extrinsics_file: Optional[str] = None,
+                                    extrinsics_sample_rate: int = 0,
+                                    extrinsics_scale: float = 0.0) -> ProcessResult:
         """
         Process from saved estimation JSON file.
         
@@ -445,6 +275,15 @@ class FbxifyManager:
         """
         # Load estimation results (returns tuple of frames and metadata)
         estimation_results, metadata = self.estimation_manager.load_estimation_results(estimation_json_path)
+
+        # Apply extrinsics before refinement if provided
+        if extrinsics_file:
+            estimation_results = self.data_prep_manager.apply_extrinsics_to_estimation(
+                estimation_results,
+                extrinsics_file=extrinsics_file,
+                sample_rate=extrinsics_sample_rate,
+                extrinsics_scale=extrinsics_scale
+            )
         
         # Check for version mismatch and show warning if present
         if metadata.get("_version_mismatch", False):
@@ -574,79 +413,6 @@ class FbxifyManager:
             fps=fps,
             mesh_obj_path=mesh_obj_path
         )
-    
-    def _convert_translation_to_list(self, trans_val) -> List[float]:
-        """Convert translation value to list format."""
-        if hasattr(trans_val, 'tolist'):
-            return trans_val.tolist()
-        if isinstance(trans_val, (list, tuple)):
-            return list(trans_val)
-        return [0.0, 0.0, 0.0]
-    
-    def _is_valid_3x3_matrix(self, matrix) -> bool:
-        """Check if matrix is a valid 3x3 nested list."""
-        if not isinstance(matrix, list) or len(matrix) != 3:
-            return False
-        if not isinstance(matrix[0], (list, tuple)) or len(matrix[0]) != 3:
-            return False
-        return True
-    
-    def _convert_rotation_to_list(self, rot_val) -> List[List[float]]:
-        """Convert rotation value to 3x3 list format."""
-        identity = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
-        
-        if hasattr(rot_val, 'tolist'):
-            rot_list = rot_val.tolist()
-            if self._is_valid_3x3_matrix(rot_list):
-                return rot_list
-            return identity
-        
-        if isinstance(rot_val, list):
-            if self._is_valid_3x3_matrix(rot_val):
-                return rot_val
-            return identity
-        
-        return identity
-    
-    def _convert_root_motion_to_refinement_format(self, root_motion_list: List[Dict]) -> Dict:
-        """
-        Convert root_motion from list format to refinement format.
-        
-        Input: [{"global_rot": [...], "pred_cam_t": [...]}, ...]
-        Output: {"translation": [[...], ...], "rotation": [[[...]], ...]}
-        """
-        translation = []
-        rotation = []
-        
-        for frame_data in root_motion_list:
-            trans_val = frame_data.get("pred_cam_t")
-            translation.append(self._convert_translation_to_list(trans_val) if trans_val is not None else [0.0, 0.0, 0.0])
-            
-            rot_val = frame_data.get("global_rot")
-            rotation.append(self._convert_rotation_to_list(rot_val) if rot_val is not None else 
-                          [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]])
-        
-        return {
-            "translation": translation,
-            "rotation": rotation
-        }
-    
-    def _convert_root_motion_from_refinement_format(self, refined_root_motion: Dict, num_frames: int) -> List[Dict]:
-        """
-        Convert root_motion from refinement format back to list format.
-        
-        Input: {"translation": [[...], ...], "rotation": [[[...]], ...]}
-        Output: [{"frame_index": int, "global_rot": [...], "pred_cam_t": [...]}, ...]
-        Note: This creates entries for ALL frames (0 to num_frames-1), including interpolated/missing frames
-        """
-        refined_list = []
-        for t in range(num_frames):
-            refined_list.append({
-                "frame_index": t,  # 0-based frame index to match joint_mapping
-                "global_rot": refined_root_motion["rotation"][t],
-                "pred_cam_t": refined_root_motion["translation"][t]
-            })
-        return refined_list
         
     def export_fbx_files(self, profile_name: str, joint_to_bone_mappings: Dict[str, Any],
                          root_motions: Optional[Dict[str, List[Dict]]], frame_paths: List[str],
