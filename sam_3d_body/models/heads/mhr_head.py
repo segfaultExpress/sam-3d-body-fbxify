@@ -18,7 +18,7 @@ from ..modules.mhr_utils import (
 
 from ..modules.transformer import FFN
 
-MOMENTUM_ENABLED = os.environ.get("MOMENTUM_ENABLED", "").lower() in ("1","true","yes","on")
+MOMENTUM_ENABLED = os.environ.get("MOMENTUM_ENABLED") is None
 try:
     if MOMENTUM_ENABLED:
         from mhr.mhr import MHR
@@ -44,7 +44,6 @@ class MHRHead(nn.Module):
         ffn_zero_bias: bool = True,
         mlp_channel_div_factor: int = 8,
         enable_hand_model=False,
-        lod: int = 1,  # LOD level for MHR model (0-6, default 1)
     ):
         super().__init__()
 
@@ -105,11 +104,20 @@ class MHRHead(nn.Module):
             torch.zeros(145).long(), requires_grad=False
         )
 
-        # Store LOD for reference and MHR model path
-        self.lod = lod
-        self.mhr_model_path = mhr_model_path
-        self.mhr = None  # Lazy initialization - will be loaded when first needed
-        self._mhr_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Load MHR itself
+        if MOMENTUM_ENABLED:
+            self.mhr = MHR.from_files(
+                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                lod=1,
+            )
+        else:
+            self.mhr = torch.jit.load(
+                mhr_model_path,
+                map_location=("cuda" if torch.cuda.is_available() else "cpu"),
+            )
+
+        for param in self.mhr.parameters():
+            param.requires_grad = False
 
     def get_zero_pose_init(self, factor=1.0):
         # Initialize pose token with zero-initialized learnable params
@@ -152,36 +160,6 @@ class MHRHead(nn.Module):
 
         return full_pose_params  # B x 207
 
-    def _ensure_mhr_loaded(self, lod=None):
-        """
-        Lazy initialization of MHR model.
-        Only loads MHR when first needed, using the specified LOD or the default.
-        
-        Args:
-            lod: LOD level to use (if None, uses self.lod)
-        """
-        if self.mhr is not None:
-            return  # Already loaded
-        
-        lod_to_use = lod if lod is not None else self.lod
-        
-        # Load MHR itself
-        if MOMENTUM_ENABLED:
-            self.mhr = MHR.from_files(
-                device=self._mhr_device,
-                lod=lod_to_use
-            )
-            print(f"MHR model initialized with LOD={lod_to_use}")
-        else:
-            self.mhr = torch.jit.load(
-                self.mhr_model_path,
-                map_location=self._mhr_device,
-            )
-            print(f"MHR model loaded from {self.mhr_model_path} (LOD parameter not applicable for torch.jit models)")
-
-        for param in self.mhr.parameters():
-            param.requires_grad = False
-
     def mhr_forward(
         self,
         global_trans,
@@ -198,10 +176,7 @@ class MHRHead(nn.Module):
         return_joint_rotations=False,
         scale_offsets=None,
         vertex_offsets=None,
-        lod=None,
     ):
-        # Ensure MHR is loaded before use
-        self._ensure_mhr_loaded(lod=lod)
 
         if self.enable_hand_model:
             # Transfer wrist-centric predictions to the body.
