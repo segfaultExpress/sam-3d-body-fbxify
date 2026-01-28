@@ -5,17 +5,19 @@ from .camera_head import PerspectiveHead
 from .mhr_head import MHRHead
 
 
-def build_head(cfg, head_type="mhr", enable_hand_model=False, default_scale_factor=1.0, lod=None):
+def build_head(cfg, head_type="mhr", enable_hand_model=False, default_scale_factor=1.0, lod=None): # LOD SUPPORT FOR MHR HEAD
     if head_type == "mhr":
+        """ LOD SUPPORT FOR MHR HEAD - START """
         # Get LOD from config or use provided parameter (default to 1 for backward compatibility)
-        mhr_lod = lod if lod is not None else cfg.MODEL.MHR_HEAD.get("LOD", 1)
+        mhr_lod = lod if lod is not None else cfg.MODEL.MHR_HEAD.get("LOD", 2)
+        """ LOD SUPPORT FOR MHR HEAD - END """
         return MHRHead(
             input_dim=cfg.MODEL.DECODER.DIM,
             mlp_depth=cfg.MODEL.MHR_HEAD.get("MLP_DEPTH", 1),
             mhr_model_path=cfg.MODEL.MHR_HEAD.MHR_MODEL_PATH,
             mlp_channel_div_factor=cfg.MODEL.MHR_HEAD.get("MLP_CHANNEL_DIV_FACTOR", 1),
             enable_hand_model=enable_hand_model,
-            lod=mhr_lod,
+            lod=mhr_lod, # LOD SUPPORT FOR MHR HEAD
         )
     elif head_type == "perspective":
         return PerspectiveHead(

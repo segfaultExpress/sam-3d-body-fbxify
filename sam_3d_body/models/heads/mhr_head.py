@@ -46,7 +46,7 @@ class MHRHead(nn.Module):
         ffn_zero_bias: bool = True,
         mlp_channel_div_factor: int = 8,
         enable_hand_model=False,
-        lod: int = 1,  # LOD SUPPORT FOR MHR HEAD
+        lod: int = 2,  # LOD SUPPORT FOR MHR HEAD
     ):
         super().__init__()
 
@@ -165,10 +165,12 @@ class MHRHead(nn.Module):
         Args:
             lod: LOD level to use (if None, uses self.lod)
         """
-        if self.mhr is not None:
+        if self.mhr is not None and lod is not None and lod == self.lod:
             return  # Already loaded
         
         lod_to_use = lod if lod is not None else self.lod
+        self.lod = lod_to_use
+        print(f"_ensure_mhr_loaded(): LOD to use: {lod_to_use}")
         
         # Load MHR itself
         if MOMENTUM_ENABLED:

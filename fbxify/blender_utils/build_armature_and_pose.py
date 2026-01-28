@@ -6,14 +6,13 @@ import sys
 import math
 import os
 
-metadata_path = sys.argv[-8]
-joint_mapping_path = sys.argv[-7]
-root_motion_path = sys.argv[-6]
-rest_pose_path = sys.argv[-5]
-faces_path = sys.argv[-4]
+metadata_path = sys.argv[-7]
+joint_mapping_path = sys.argv[-6]
+root_motion_path = sys.argv[-5]
+rest_pose_path = sys.argv[-4]
 fbx_path = sys.argv[-3]
-lod_fbx_path = sys.argv[-2] if sys.argv[-2] else None
-mesh_obj_path = sys.argv[-1] if sys.argv[-1] else None
+lod_fbx_path = sys.argv[-2]
+mesh_obj_path = sys.argv[-1]
 
 with open(metadata_path, "r", encoding="utf-8") as f:
     metadata = json.load(f)["metadata"]
@@ -23,8 +22,6 @@ with open(root_motion_path, "r", encoding="utf-8") as f:
     root_motion = json.load(f)["root_motion"]
 with open(rest_pose_path, "r", encoding="utf-8") as f:
     rest_pose = json.load(f)["rest_pose"]
-with open(faces_path) as f:
-    faces = json.load(f)["faces"]
 
 root_motion_by_frame = {
     entry.get("frame_index"): entry

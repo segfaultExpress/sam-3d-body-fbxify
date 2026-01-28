@@ -11,11 +11,13 @@ import torch
 import numpy as np
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
 from sam_3d_body.data.utils.io import load_image
-from fbxify.utils import to_serializable
+from fbxify.utils import to_serializable, extract_fbx_faces_with_blender
 from fbxify import VERSION
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 import json
 import os
+import glob
+import re
 import random
 import time
 from datetime import datetime
@@ -67,6 +69,8 @@ class PoseEstimationManager:
             device=self.device,
             mhr_path=mhr_path
         )
+
+        self.cfg = cfg
         
         # Initialize human detector if requested
         human_detector = None
@@ -99,11 +103,60 @@ class PoseEstimationManager:
             human_segmentor=None,
             fov_estimator=fov_estimator,
         )
-        self.faces = self.estimator.faces
 
         self.precision = "fp32"
         self.set_inference_options(precision=precision)
         self._cancel_event = threading.Event()
+        self._lod_faces_cache: Dict[int, np.ndarray] = {}
+        self._lod_faces_initialized = False
+
+    def _extract_faces_from_fbx(self, fbx_path: str) -> Optional[np.ndarray]:
+        return extract_fbx_faces_with_blender(fbx_path)
+
+    def _load_faces_from_file(self, lod: int) -> Optional[np.ndarray]:
+        base_dir = os.path.dirname(__file__)
+        faces_path = os.path.join(base_dir, "mapping", "mhr", f"lod{lod}_faces.npy")
+        if not os.path.exists(faces_path):
+            return None
+        data = np.load(faces_path, allow_pickle=False)
+        if isinstance(data, np.ndarray):
+            return data
+        if hasattr(data, "files") and data.files:
+            key = "faces" if "faces" in data.files else data.files[0]
+            return data[key]
+        return None
+
+    def _ensure_lod_faces_files(self) -> None:
+        if self._lod_faces_initialized:
+            return
+        self._lod_faces_initialized = True
+        
+        base_dir = os.path.dirname(__file__)
+        assets_dir = os.path.join(base_dir, "mapping", "mhr")
+        if not os.path.isdir(assets_dir):
+            print(f"  LOD faces: assets dir not found: {assets_dir}")
+            return
+        fbx_paths = sorted(glob.glob(os.path.join(assets_dir, "lod*.fbx")))
+        if not fbx_paths:
+            print(f"  LOD faces: no FBX files in {assets_dir}")
+            return
+        out_dir = os.path.join(os.path.dirname(__file__), "mapping", "mhr")
+        os.makedirs(out_dir, exist_ok=True)
+        for fbx_path in fbx_paths:
+            base = os.path.basename(fbx_path)
+            match = re.match(r"lod(\d+)\.fbx$", base, re.IGNORECASE)
+            if not match:
+                continue
+            lod = int(match.group(1))
+            out_path = os.path.join(out_dir, f"lod{lod}_faces.npy")
+            if os.path.exists(out_path):
+                continue
+            faces = self._extract_faces_from_fbx(fbx_path)
+            if faces is None or faces.size == 0:
+                print(f"  LOD faces: failed to extract faces from {fbx_path}")
+                continue
+            np.save(out_path, faces.astype(np.int64))
+            print(f"  LOD faces: saved {out_path} shape={faces.shape}")
 
     def cancel_current_job(self) -> None:
         """Signal any running estimation loop to stop."""
@@ -715,7 +768,7 @@ class PoseEstimationManager:
         
         # Get MHR head from estimator
         mhr_head = self.estimator.model.head_pose
-        faces = self.faces
+        self._ensure_lod_faces_files()
         
         # Convert numpy arrays to torch tensors
         device = self.device
@@ -760,6 +813,7 @@ class PoseEstimationManager:
         print(f"  Global rot: {global_rot.shape} (all zeros)")
         print(f"  Body pose: {body_pose_params.shape} (all zeros)")
         print(f"  Hand pose: None (using zeros from body_pose_params for straight fingers)")
+        print(f"  LOD: {lod}")
         
         # Call mhr_forward to generate T-pose vertices
         with torch.no_grad():
@@ -789,9 +843,17 @@ class PoseEstimationManager:
             torch.cuda.empty_cache()
         
         print(f"Generated {len(vertices_np)} vertices in T-pose")
-        
+
+        # Prefer cached per-LOD faces if present; fallback to checkpoint faces.
+        faces_default = mhr_head.faces.cpu().numpy()
+        faces_file = self._load_faces_from_file(lod) if lod is not None else None
+        faces_to_use = faces_file if faces_file is not None and faces_file.size > 0 else faces_default
+
         # Create trimesh and save as OBJ
-        mesh = trimesh.Trimesh(vertices=vertices_np, faces=faces)
+        print(f"  Faces: {len(faces_to_use)}")
+        print(f"  vertices: {len(vertices_np)}")
+        mesh = trimesh.Trimesh(vertices=vertices_np, faces=faces_to_use)
+        print(f"  mesh: {mesh.vertices.shape}")
         mesh.export(output_obj_path)
         print(f"Saved T-pose mesh to {output_obj_path}")
         

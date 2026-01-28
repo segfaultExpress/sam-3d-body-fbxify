@@ -59,7 +59,7 @@ def to_serializable(obj, _seen=None):
     return obj
 
 
-def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_obj_path=None, lod_fbx_path=None, 
+def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, mesh_obj_path=None, lod_fbx_path=None, 
                   progress_callback=None, lang=DEFAULT_LANGUAGE):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
     
@@ -80,8 +80,6 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
             json.dump({"root_motion": to_serializable(root_motion)}, f)
         with open(rest_pose_path, "w") as f:
             json.dump({"rest_pose": rest_pose}, f)
-        with open(faces_path, "w") as f:
-            json.dump({"faces": faces.tolist()}, f)
 
         # Copy mesh files if provided
         lod_fbx_path_tmp = None
@@ -107,7 +105,7 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
             "blender", "-b",
             "--python", script_path,
             "--",
-            metadata_path, joint_mapping_path, root_motion_path, rest_pose_path, faces_path, fbx_path
+            metadata_path, joint_mapping_path, root_motion_path, rest_pose_path, fbx_path
         ]
         
         # Add mesh paths if provided (at least one must be provided for mesh inclusion)
@@ -199,6 +197,56 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
             shutil.rmtree(tmp_dir)
         except:
             pass
+
+
+def extract_fbx_faces_with_blender(fbx_path: str, out_path: Optional[str] = None) -> Optional[np.ndarray]:
+    """Extract triangle faces from an FBX using Blender in headless mode."""
+    blender_exe = os.environ.get("BLENDER_PATH", "blender")
+    script_source = os.path.join(
+        os.path.dirname(__file__), "blender_utils", "extract_fbx_faces.py"
+    )
+    if not os.path.exists(script_source):
+        print(f"  Warning: Blender faces script not found: {script_source}")
+        return None
+    tmp_dir = tempfile.mkdtemp(prefix="sam3d_faces_")
+    script_path = os.path.join(tmp_dir, "extract_fbx_faces.py")
+    faces_path = out_path or os.path.join(tmp_dir, "faces.npy")
+    try:
+        shutil.copyfile(script_source, script_path)
+        cmd = [
+            blender_exe,
+            "-b",
+            "--python",
+            script_path,
+            "--",
+            fbx_path,
+            faces_path,
+        ]
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1,
+            cwd=tmp_dir,
+        )
+        try:
+            for line in process.stdout:
+                print(line, end="", flush=True)
+            return_code = process.wait()
+            if return_code != 0:
+                raise subprocess.CalledProcessError(return_code, cmd)
+        except Exception:
+            if process.poll() is None:
+                process.kill()
+            raise
+        if not os.path.exists(faces_path):
+            print(f"  Warning: Blender faces output missing for '{fbx_path}'")
+            return None
+        return np.load(faces_path, allow_pickle=False)
+    finally:
+        if out_path is None:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 def convert_camera_space_to_armature_space_array(array):
     """ Convert camera space to armature space for an array of vectors """

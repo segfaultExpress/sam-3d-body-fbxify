@@ -510,7 +510,6 @@ class FbxifyManager:
                 joint_to_bone_mappings[identifier],
                 root_motion,
                 self.data_prep_manager.get_armature_rest_pose(profile_name),
-                self.estimation_manager.faces,
                 mesh_obj_path=(mesh_obj_paths or {}).get(str(identifier))
                 if lod >= 0 and profile_name == "mhr" else None,
                 lod_fbx_path=lod_fbx_path if lod >= 0 and profile_name == "mhr" else None,
