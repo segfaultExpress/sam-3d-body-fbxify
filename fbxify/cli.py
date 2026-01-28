@@ -142,6 +142,20 @@ def parse_args():
         dest="use_root_motion",
         help="Disable root motion"
     )
+
+    # Auto-floor
+    parser.add_argument(
+        "--auto_floor",
+        action="store_true",
+        default=True,
+        help="Auto-floor: offset average pred_cam_t.y to 0 (default: True)"
+    )
+    parser.add_argument(
+        "--no_auto_floor",
+        action="store_false",
+        dest="auto_floor",
+        help="Disable auto-floor"
+    )
     
     # Estimation JSON options
     parser.add_argument(
@@ -254,7 +268,8 @@ def main():
                 args.load_estimation_json,
                 args.profile,
                 args.use_root_motion,
-                fps=30.0
+                fps=30.0,
+                auto_floor=args.auto_floor
             )
             
             # Export FBX files
@@ -265,7 +280,8 @@ def main():
                 process_result.root_motions,
                 process_result.frame_paths,
                 process_result.fps,
-                progress_callback=lambda p, d: print(f"Progress: {p*100:.1f}% - {d}")
+                progress_callback=lambda p, d: print(f"Progress: {p*100:.1f}% - {d}"),
+                height_offset=process_result.height_offset
             )
             
             # Move files to output directory if specified
@@ -363,7 +379,8 @@ def main():
             process_result.root_motions,
             process_result.frame_paths,
             process_result.fps,
-            progress_callback
+            progress_callback,
+            height_offset=getattr(process_result, "height_offset", 0.0)
         )
         
         # Move files to output directory if specified

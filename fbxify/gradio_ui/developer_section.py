@@ -42,6 +42,10 @@ def create_developer_section(translator: Translator) -> Dict[str, Any]:
             variant="stop",
             interactive=True
         )
+        components["export_personalized_body_obj"] = gr.Checkbox(
+            label=translator.t("ui.export_personalized_body_obj"),
+            value=False
+        )
     
     return components
 
@@ -64,5 +68,6 @@ def update_developer_language(lang: str) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.cli_command_label"), info=t.t("ui.cli_command_info")),  # cli_command
         gr.update(label=t.t("ui.developer_options")),  # developer_options_accordion
         gr.update(value=t.t("ui.cancel_current_jobs_info")),  # cancel_jobs_info_md
-        gr.update(value=t.t("ui.cancel_current_jobs"))  # cancel_jobs_btn
+        gr.update(value=t.t("ui.cancel_current_jobs")),  # cancel_jobs_btn
+        gr.update(label=t.t("ui.export_personalized_body_obj"))  # export_personalized_body_obj
     )

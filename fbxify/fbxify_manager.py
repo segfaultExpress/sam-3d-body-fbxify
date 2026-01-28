@@ -29,7 +29,8 @@ class ProcessResult:
     frame_paths: List[str]
     profile_name: str
     fps: float
-    mesh_obj_path: Optional[str] = None
+    mesh_obj_paths: Optional[Dict[str, str]] = None
+    height_offset: float = 0.0
 
 
 class FbxifyManager:
@@ -148,6 +149,30 @@ class FbxifyManager:
         elif fov_method == "Sample":
             self.estimation_manager.cache_cam_int_from_images(frame_paths, average_of=sample_number)
         # else: "Default" - built-in FOV estimator runs every frame (default behavior)
+
+    def _calculate_height_offset(self, estimation_results: Dict[str, Dict[str, Any]]) -> float:
+        """Compute average pred_cam_t.y and return offset to bring it to 0."""
+        y_values = []
+        for frame_data in estimation_results.values():
+            if not frame_data:
+                continue
+            for estimation_data in frame_data.values():
+                if not estimation_data or not isinstance(estimation_data, dict):
+                    continue
+                pred_cam_t = estimation_data.get("pred_cam_t")
+                if pred_cam_t is None or len(pred_cam_t) < 2:
+                    continue
+                try:
+                    y_values.append(float(pred_cam_t[1]))
+                except (TypeError, ValueError):
+                    continue
+        if not y_values:
+            print("Auto-floor: no pred_cam_t values found; using height_offset=0.0")
+            return 0.0
+        avg_y = float(np.mean(y_values))
+        height_offset = -avg_y
+        print(f"Auto-floor: avg pred_cam_t.y={avg_y:.4f}, height_offset={height_offset:.4f}")
+        return height_offset
     
     def _remove_outliers_and_average(self, body_params_list: List[Dict[str, Any]], outlier_percent: float) -> Tuple[np.ndarray, np.ndarray]:
         """
@@ -253,9 +278,12 @@ class FbxifyManager:
                                     lod: int = -1, use_personalized_body: bool = False,
                                     outlier_removal_percent: float = 10.0,
                                     lang: str = DEFAULT_LANGUAGE,
+                                    auto_floor: bool = True,
                                     extrinsics_file: Optional[str] = None,
                                     extrinsics_sample_rate: int = 0,
-                                    extrinsics_scale: float = 0.0) -> ProcessResult:
+                                    extrinsics_scale: float = 0.0,
+                                    extrinsics_invert_quaternion: bool = False,
+                                    extrinsics_invert_translation: bool = False) -> ProcessResult:
         """
         Process from saved estimation JSON file.
         
@@ -269,6 +297,7 @@ class FbxifyManager:
             lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
             use_personalized_body: Whether to generate personalized body mesh from estimation data
             outlier_removal_percent: Percentage of outliers to remove from each tail (0-50)
+            auto_floor: Whether to auto-offset average pred_cam_t.y to 0
             
         Returns:
             ProcessResult containing all processing results
@@ -276,13 +305,18 @@ class FbxifyManager:
         # Load estimation results (returns tuple of frames and metadata)
         estimation_results, metadata = self.estimation_manager.load_estimation_results(estimation_json_path)
 
+        # Convert camera space to armature space
+        estimation_results = self.data_prep_manager.convert_camera_space_to_armature_space(estimation_results)
+
         # Apply extrinsics before refinement if provided
         if extrinsics_file:
             estimation_results = self.data_prep_manager.apply_extrinsics_to_estimation(
                 estimation_results,
                 extrinsics_file=extrinsics_file,
                 sample_rate=extrinsics_sample_rate,
-                extrinsics_scale=extrinsics_scale
+                extrinsics_scale=extrinsics_scale,
+                invert_quaternion=extrinsics_invert_quaternion,
+                invert_translation=extrinsics_invert_translation,
             )
         
         # Check for version mismatch and show warning if present
@@ -312,6 +346,10 @@ class FbxifyManager:
             )
         else:
             print(f"FbxifyManager.process_from_estimation_json(): refinement_config is None, skipping refinement")
+
+        height_offset = 0.0
+        if auto_floor:
+            height_offset = self._calculate_height_offset(estimation_results)
         
         # Transform estimation results into FBX-ready data
         if progress_callback:
@@ -330,7 +368,7 @@ class FbxifyManager:
         frame_paths = [f"frame_{i:06d}" for i in range(num_frames)]
         
         # Generate mesh if enabled and personalized body is requested
-        mesh_obj_path = None
+        mesh_obj_paths: Dict[str, str] = {}
         if lod >= 0 and profile_name == "mhr" and use_personalized_body:
             if progress_callback:
                 progress_callback(0.9, translator.t("progress.preparing_fbx_data") + " - Generating mesh...")
@@ -390,16 +428,13 @@ class FbxifyManager:
                         output_obj_path=temp_obj.name,
                         lod=lod
                     )
-                    mesh_obj_path = mesh_path
-                    print(f"  Generated mesh saved to: {mesh_obj_path}")
-                    
-                    # Only process first person for now (can be extended later)
-                    break
+                    mesh_obj_paths[str(identifier)] = mesh_path
+                    print(f"  Generated mesh saved to: {mesh_path}")
                 except Exception as e:
                     print(f"  Warning: Failed to generate mesh: {e}")
                     import traceback
                     traceback.print_exc()
-                    mesh_obj_path = None
+                    continue
         
         if progress_callback:
             progress_callback(1.0, translator.t("progress.preprocessing_complete"))
@@ -411,14 +446,16 @@ class FbxifyManager:
             frame_paths=frame_paths,
             profile_name=profile_name,
             fps=fps,
-            mesh_obj_path=mesh_obj_path
+            mesh_obj_paths=mesh_obj_paths if mesh_obj_paths else None,
+            height_offset=height_offset
         )
         
     def export_fbx_files(self, profile_name: str, joint_to_bone_mappings: Dict[str, Any],
                          root_motions: Optional[Dict[str, List[Dict]]], frame_paths: List[str],
                          fps: float = 30.0, progress_callback: Optional[callable] = None,
-                         lod: int = -1, mesh_obj_path: Optional[str] = None,
-                         lod_fbx_path: Optional[str] = None, lang: str = DEFAULT_LANGUAGE) -> List[str]:
+                         lod: int = -1, mesh_obj_paths: Optional[Dict[str, str]] = None,
+                         lod_fbx_path: Optional[str] = None, lang: str = DEFAULT_LANGUAGE,
+                         height_offset: float = 0.0) -> List[str]:
         """
         Export FBX files for each person.
         
@@ -430,8 +467,9 @@ class FbxifyManager:
             fps: Frame rate of the animation (frames per second)
             progress_callback: Optional callback function(progress, description)
             lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
-            mesh_obj_path: Path to generated mesh OBJ file
+            mesh_obj_paths: Mapping of person ID to generated mesh OBJ file
             lod_fbx_path: Path to LOD FBX file
+            height_offset: Offset to apply to pred_cam_t.y during FBX export
             
         Returns:
             List of exported FBX file paths
@@ -462,12 +500,19 @@ class FbxifyManager:
                 person_progress_callback = make_person_callback(person_index, num_people, progress_callback)
             
             fbx_path = export_to_fbx(
-                self.data_prep_manager.create_metadata(profile_name, identifier, num_keyframes=num_keyframes, fps=fps),
+                self.data_prep_manager.create_metadata(
+                    profile_name,
+                    identifier,
+                    num_keyframes=num_keyframes,
+                    fps=fps,
+                    height_offset=height_offset
+                ),
                 joint_to_bone_mappings[identifier],
                 root_motion,
                 self.data_prep_manager.get_armature_rest_pose(profile_name),
                 self.estimation_manager.faces,
-                mesh_obj_path=mesh_obj_path if lod >= 0 and profile_name == "mhr" else None,
+                mesh_obj_path=(mesh_obj_paths or {}).get(str(identifier))
+                if lod >= 0 and profile_name == "mhr" else None,
                 lod_fbx_path=lod_fbx_path if lod >= 0 and profile_name == "mhr" else None,
                 progress_callback=person_progress_callback,
                 lang=lang

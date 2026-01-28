@@ -37,6 +37,7 @@ root_motion_by_frame = {
 # ------------------------------------------------------------------------
 APPLY_ROOT_MOTION_OVERRIDE = True
 APPLY_POSE_OVERRIDE = True
+APPLY_BLENDER_AXIS_ROTATION = True
 
 # ------------------------------------------------------------------------
 # METADATA EXTRACTION
@@ -44,6 +45,7 @@ APPLY_POSE_OVERRIDE = True
 
 num_keyframes = metadata["num_keyframes"]
 profile_name = metadata["profile_name"]
+height_offset = metadata.get("height_offset", 0.0)
 fps = metadata.get("fps", 30.0)  # Frame rate, default to 30.0 if not present
 armature_name = f"sam3d_body_{profile_name}_armature"
 
@@ -1015,10 +1017,18 @@ if APPLY_ROOT_MOTION_OVERRIDE and root_motion is not None and len(root_motion) >
         
         frame_idx = frame_index_0based + 1  # Convert to 1-based for Blender
         
-        # Use camera translation as-is, unless extrinsics are provided for world-space root motion
-        cam_translation = root_motion_entry["pred_cam_t"]
-
-        final_location = Vector((cam_translation[0], cam_translation[2], - cam_translation[1]))
+        cam_translation = root_motion_entry.get("pred_cam_t")
+        if cam_translation is None:
+            print("  WARNING: root_motion entry missing 'pred_cam_t', skipping entry")
+            continue
+        cam_translation = list(cam_translation)
+        # height is cam_translation[1], use the metadata height_offset to adjust it
+        cam_translation[1] += height_offset
+        if APPLY_BLENDER_AXIS_ROTATION:
+            # armature space has z as backward, y as up. So in the 90 degree X rotation, we swap y and z, and negate z
+            final_location = Vector((cam_translation[0], - cam_translation[2], cam_translation[1]))
+        else:
+            final_location = Vector((cam_translation[0], cam_translation[1], cam_translation[2]))
         arm_obj.location = final_location
 
         # As far as I can tell, this value of global rotation is already passed to the root bone (hips), but if you'd rather 
@@ -1026,7 +1036,10 @@ if APPLY_ROOT_MOTION_OVERRIDE and root_motion is not None and len(root_motion) >
         # euler = root_motion_entry["global_rot"]
         
         # Each keyframe does need to rotate by math.pi/2 x rotation to "stand up" in blender
-        arm_obj.rotation_euler = (math.pi/2, 0, 0)
+        if APPLY_BLENDER_AXIS_ROTATION:
+            arm_obj.rotation_euler = (math.pi/2, 0, 0)
+        else:
+            arm_obj.rotation_euler = (0, 0, 0)
 
         arm_obj.keyframe_insert(data_path="location", frame=frame_idx)
         arm_obj.keyframe_insert(data_path="rotation_euler", frame=frame_idx)
@@ -1047,7 +1060,10 @@ bpy.context.scene.frame_set(0)
 # After we've set all the rotations, we should rotate the entire armature to 90,0,0 (degrees) so that the rig "stands up" in blender
 arm_obj.location = Vector((0, 0, 0))
 # Convert 90° X rotation to quaternion
-arm_obj.rotation_euler = (math.pi/2, 0, 0)
+if APPLY_BLENDER_AXIS_ROTATION:
+    arm_obj.rotation_euler = (math.pi/2, 0, 0)
+else:
+    arm_obj.rotation_euler = (0, 0, 0)
 arm_obj.keyframe_insert(data_path="location", frame=0)
 arm_obj.keyframe_insert(data_path="rotation_euler", frame=0)
 

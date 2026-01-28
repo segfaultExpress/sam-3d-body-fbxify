@@ -181,9 +181,11 @@ def create_app(manager: FbxifyManager):
             gr.update(interactive=(input_file is not None))   # estimate_pose_btn (re-enable only if file still exists)
         )
     
-    def generate_fbx(pose_json_file, profile_name, use_root_motion, include_mesh, include_extrinsics,
-                    extrinsics_sample_rate, extrinsics_scale, extrinsics_file,
+    def generate_fbx(pose_json_file, profile_name, use_root_motion, auto_floor, include_mesh, include_extrinsics,
+                    extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion,
+                    extrinsics_invert_translation, extrinsics_file,
                     use_personalized_body, lod, outlier_removal_percent,
+                    export_personalized_body_obj,
                     input_file,
                     refinement_config,  # Single refinement config object from state
                     progress=gr.Progress()):
@@ -208,6 +210,8 @@ def create_app(manager: FbxifyManager):
             
             # Convert lod to int if it's a float from slider
             lod_int = int(lod) if lod is not None else -1
+
+            print(f"generate_fbx(): lod_int: {lod_int}")
             # Convert outlier_removal_percent to float
             outlier_percent = float(outlier_removal_percent) if outlier_removal_percent is not None else 10.0
             
@@ -223,9 +227,12 @@ def create_app(manager: FbxifyManager):
                 use_personalized_body=use_personalized_body if include_mesh else False,
                 outlier_removal_percent=outlier_percent if (include_mesh and use_personalized_body) else 10.0,
                 lang=translator.lang,
+                auto_floor=auto_floor,
                 extrinsics_file=extrinsics_file_path,
                 extrinsics_sample_rate=int(extrinsics_sample_rate) if extrinsics_sample_rate is not None else 0,
-                extrinsics_scale=float(extrinsics_scale) if extrinsics_scale is not None else 0.0
+                extrinsics_scale=float(extrinsics_scale) if extrinsics_scale is not None else 0.0,
+                extrinsics_invert_quaternion=bool(extrinsics_invert_quaternion),
+                extrinsics_invert_translation=bool(extrinsics_invert_translation),
             )
 
             # Export FBX files
@@ -258,11 +265,16 @@ def create_app(manager: FbxifyManager):
                 process_result.fps,
                 export_progress,
                 lod=lod_int if include_mesh else -1,
-                mesh_obj_path=process_result.mesh_obj_path,  # Use generated mesh from JSON
+                mesh_obj_paths=process_result.mesh_obj_paths,  # Use generated meshes from JSON
                 lod_fbx_path=lod_fbx_path,
-                lang=translator.lang
+                lang=translator.lang,
+                height_offset=process_result.height_offset
             )
             output_files.extend(fbx_paths)
+            if export_personalized_body_obj and process_result.mesh_obj_paths:
+                for mesh_path in process_result.mesh_obj_paths.values():
+                    if mesh_path and os.path.exists(mesh_path):
+                        output_files.append(mesh_path)
 
         except Exception as e:
             error_type = type(e).__name__
@@ -287,7 +299,7 @@ def create_app(manager: FbxifyManager):
         return text
 
     def build_cli_command(profile_name, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method,
-                          fov_file, sample_number, precision, use_root_motion):
+                          fov_file, sample_number, precision, use_root_motion, auto_floor):
         precision_map = {
             "FP32 (Full)": "fp32",
             "BF16 (Fast + Safer)": "bf16",
@@ -320,6 +332,8 @@ def create_app(manager: FbxifyManager):
 
         if use_root_motion is False:
             cmd_parts.append("--no_root_motion")
+        if auto_floor is False:
+            cmd_parts.append("--no_auto_floor")
 
         cmd_parts.append("<INPUT_FILE>")
         return " ".join(cmd_parts)
@@ -342,8 +356,8 @@ def create_app(manager: FbxifyManager):
             *header_updates,  # heading, description, tabs
             *entry_updates,   # input_file, use_bbox, bbox_file, num_people, missing_bbox_behavior, fov_method, fov_file, sample_number, precision, estimate_pose_btn
             *fbx_processing_updates,    # profile_name, pose_json_file, generate_fbx_btn, output_files
-            *fbx_options_updates,  # use_root_motion, include_mesh, include_extrinsics, use_personalized_body, lod, outlier_removal_percent, extrinsics_sample_rate, extrinsics_scale, extrinsics_file
-            *developer_updates,  # (empty now)
+            *fbx_options_updates,  # use_root_motion, auto_floor, include_mesh, include_extrinsics, use_personalized_body, lod, outlier_removal_percent, extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion, extrinsics_invert_translation, extrinsics_file
+            *developer_updates,  # developer options
         )
 
     def detect_and_set_language():
@@ -388,13 +402,16 @@ def create_app(manager: FbxifyManager):
                 entry_components['precision'],
                 entry_components['estimate_pose_btn'],  # entry
                 fbx_processing_components['profile_name'], fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], fbx_processing_components['output_files'],  # fbx processing
-                fbx_options_components['auto_run'], fbx_options_components['use_root_motion'], fbx_options_components['include_mesh'],
+                fbx_options_components['auto_run'], fbx_options_components['use_root_motion'], fbx_options_components['auto_floor'], fbx_options_components['include_mesh'],
                 fbx_options_components['include_extrinsics'], fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'], fbx_options_components['outlier_removal_percent'],
-                fbx_options_components['extrinsics_sample_rate'], fbx_options_components['extrinsics_scale'], fbx_options_components['extrinsics_file'],  # fbx options
+                fbx_options_components['extrinsics_sample_rate'], fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_invert_quaternion'], fbx_options_components['extrinsics_invert_translation'],
+                fbx_options_components['extrinsics_file'],  # fbx options
                 dev_components['cli_generator_accordion'], dev_components['cli_generator_info_md'],
                 dev_components['generate_cli_btn'], dev_components['cli_command'],
-                dev_components['developer_options_accordion'], dev_components['cancel_jobs_info_md'], dev_components['cancel_jobs_btn']  # developer
+                dev_components['developer_options_accordion'], dev_components['cancel_jobs_info_md'], dev_components['cancel_jobs_btn'],
+                dev_components['export_personalized_body_obj']  # developer
             ]
         )
         
@@ -426,6 +443,8 @@ def create_app(manager: FbxifyManager):
             outputs=[
                 fbx_options_components['extrinsics_sample_rate'],
                 fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_invert_quaternion'],
+                fbx_options_components['extrinsics_invert_translation'],
                 fbx_options_components['extrinsics_file']
             ]
         )
@@ -480,9 +499,11 @@ def create_app(manager: FbxifyManager):
         )
         
         # Helper function to conditionally auto-run generate_fbx
-        def auto_run_generate_fbx(pose_json_file, auto_run, profile_name, use_root_motion, include_mesh, include_extrinsics,
-                                  extrinsics_sample_rate, extrinsics_scale, extrinsics_file, use_personalized_body, lod, 
-                                  outlier_removal_percent, input_file, *refinement_inputs, progress=gr.Progress()):
+        def auto_run_generate_fbx(pose_json_file, auto_run, profile_name, use_root_motion, auto_floor, include_mesh, include_extrinsics,
+                                  extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion,
+                                  extrinsics_invert_translation, extrinsics_file, use_personalized_body, lod,
+                                  outlier_removal_percent, export_personalized_body_obj, input_file,
+                                  *refinement_inputs, progress=gr.Progress()):
             """Conditionally trigger generate_fbx if auto_run is enabled."""
             if not auto_run or pose_json_file is None:
                 # Just re-enable estimate_pose_btn if input_file still exists
@@ -496,14 +517,18 @@ def create_app(manager: FbxifyManager):
                 pose_json_file,
                 profile_name,
                 use_root_motion,
+                auto_floor,
                 include_mesh,
                 include_extrinsics,
                 extrinsics_sample_rate,
                 extrinsics_scale,
+                extrinsics_invert_quaternion,
+                extrinsics_invert_translation,
                 extrinsics_file,
                 use_personalized_body,
                 lod,
                 outlier_removal_percent,
+                export_personalized_body_obj,
                 input_file,
                 refinement_cfg,
                 progress=progress
@@ -540,14 +565,18 @@ def create_app(manager: FbxifyManager):
                 fbx_options_components['auto_run'],
                 fbx_processing_components['profile_name'],
                 fbx_options_components['use_root_motion'],
+                fbx_options_components['auto_floor'],
                 fbx_options_components['include_mesh'],
                 fbx_options_components['include_extrinsics'],
                 fbx_options_components['extrinsics_sample_rate'],
                 fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_invert_quaternion'],
+                fbx_options_components['extrinsics_invert_translation'],
                 fbx_options_components['extrinsics_file'],
                 fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
+                dev_components['export_personalized_body_obj'],
                 entry_components['input_file'],
                 *all_refinement_inputs
             ],
@@ -617,14 +646,18 @@ def create_app(manager: FbxifyManager):
                 fbx_processing_components['pose_json_file'],
                 fbx_processing_components['profile_name'],
                 fbx_options_components['use_root_motion'],
+                fbx_options_components['auto_floor'],
                 fbx_options_components['include_mesh'],
                 fbx_options_components['include_extrinsics'],
                 fbx_options_components['extrinsics_sample_rate'],
                 fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_invert_quaternion'],
+                fbx_options_components['extrinsics_invert_translation'],
                 fbx_options_components['extrinsics_file'],
                 fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
+                dev_components['export_personalized_body_obj'],
                 entry_components['input_file'],  # Add input_file to check if it still exists
                 refinement_config_state,
             ],
@@ -643,7 +676,8 @@ def create_app(manager: FbxifyManager):
                 entry_components['fov_file'],
                 entry_components['sample_number'],
                 entry_components['precision'],
-                fbx_options_components['use_root_motion']
+                fbx_options_components['use_root_motion'],
+                fbx_options_components['auto_floor']
             ],
             outputs=[dev_components['cli_command']]
         )

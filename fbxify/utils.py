@@ -200,13 +200,31 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, faces, mesh_o
         except:
             pass
 
+def convert_camera_space_to_armature_space_array(array):
+    """ Convert camera space to armature space for an array of vectors """
+    if array is None:
+        return None
+    return np.array([convert_camera_space_to_armature_space(vec) for vec in array])
 
-def convert_to_blender_coords(vec):
-    """SAM3D座標系 → Blender座標系"""
+def convert_camera_space_to_armature_space(vec):
+    """ Convert camera space to armature space, aka the space based on the armatures provided via sam 3d body """
+    if vec is None:
+        return None
     x, y, z = vec
-    # To match mixamo, I rotate the armature x=90 later
     return np.array([x, -y, -z])
 
+def convert_armature_space_to_blender_space_array(array):
+    """ Convert armature space to armature space for an array of vectors """
+    if array is None:
+        return None
+    return np.array([convert_armature_space_to_blender_space(vec) for vec in array])
+
+def convert_armature_space_to_blender_space(vec):
+    """ Not currently used by fbxify external to blender (which has its own function) but here to track world space conversion """
+    if vec is None:
+        return None
+    x, y, z = vec
+    return np.array([x, z, y])
 
 def get_keypoint(joints, name):
     """キーポイント名からジョイント位置を取得"""
@@ -469,7 +487,7 @@ class ExtrinsicsEntry:
     tvec: np.ndarray  # [tx, ty, tz] (world->camera)
 
 
-def parse_extrinsics_file(file_path: str) -> List[ExtrinsicsEntry]:
+def parse_extrinsics_file(file_path: str, extrinsics_scale: float = 1.0) -> List[ExtrinsicsEntry]:
     """
     Parse a COLMAP images.txt-style extrinsics file.
     
@@ -497,7 +515,7 @@ def parse_extrinsics_file(file_path: str) -> List[ExtrinsicsEntry]:
         try:
             frame_index = int(parts[0])
             qvec = np.array([float(parts[1]), float(parts[2]), float(parts[3]), float(parts[4])], dtype=np.float64)
-            tvec = np.array([float(parts[5]), float(parts[6]), float(parts[7])], dtype=np.float64)
+            tvec = np.array([float(parts[5]), float(parts[6]), float(parts[7])], dtype=np.float64) * extrinsics_scale
         except (ValueError, IndexError):
             continue
 
@@ -510,6 +528,8 @@ def build_frame_extrinsics(
     frame_count: int,
     sample_rate: int,
     entries: List[ExtrinsicsEntry],
+    invert_quaternion: bool = False,
+    invert_translation: bool = False,
 ) -> List[Dict[str, np.ndarray]]:
     """
     Build per-frame extrinsics with interpolation.
@@ -533,11 +553,6 @@ def build_frame_extrinsics(
     if sample_rate == 0:
         denom = max(len(entries) - 1, 1)
         inferred_rate = frame_count / denom if frame_count > 0 else 0
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-    print("sample_rate: ", inferred_rate if inferred_rate is not None else sample_rate)
-    print("frame_count: ", frame_count)
-    print("entries: ", len(entries))
-    print("!!!!!!!!!!!!!!!!!!!!!!!!!!!")
 
     sample_frames = _build_sample_frames(entries, sample_rate, frame_count)
     sample_frames, entries = _sort_samples(sample_frames, entries)
@@ -545,12 +560,24 @@ def build_frame_extrinsics(
     q_cw_list = []
     t_cw_list = []
     for entry in entries:
-        q_wc = _normalize_quat(entry.qvec)
-        q_cw = _invert_quat(q_wc)
+        if invert_quaternion:
+            q_cw = _normalize_quat(entry.qvec)
+            q_wc = _invert_quat(q_cw)
+        else:
+            q_wc = _normalize_quat(entry.qvec)
+            q_cw = _invert_quat(q_wc)
+
         R_wc = _qvec_to_rotmat(q_wc)
         R_cw = R_wc.T
-        t_wc = entry.tvec.reshape(3)
-        t_cw = -R_cw @ t_wc
+
+        t_input = entry.tvec.reshape(3)
+        if invert_translation:
+            t_cw = t_input
+            t_wc = -R_wc @ t_cw
+        else:
+            t_wc = t_input
+            t_cw = -R_cw @ t_wc
+
         q_cw_list.append(q_cw)
         t_cw_list.append(t_cw)
 

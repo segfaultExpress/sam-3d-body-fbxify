@@ -36,6 +36,11 @@ def create_fbx_options_section(translator: Translator) -> Dict[str, Any]:
         label=translator.t("ui.use_root_motion"),
         value=True
     )
+    components['auto_floor'] = gr.Checkbox(
+        label=translator.t("ui.auto_floor"),
+        value=True,
+        info=translator.t("ui.auto_floor_info")
+    )
     components['include_extrinsics'] = gr.Checkbox(
         label=translator.t("ui.include_extrinsics"),
         value=False
@@ -92,6 +97,18 @@ def create_fbx_options_section(translator: Translator) -> Dict[str, Any]:
             visible=False,
             info=translator.t("ui.extrinsics_scale_info")
         )
+        components['extrinsics_invert_quaternion'] = gr.Checkbox(
+            label=translator.t("ui.extrinsics_invert_quaternion"),
+            value=False,
+            visible=False,
+            info=translator.t("ui.extrinsics_invert_quaternion_info")
+        )
+        components['extrinsics_invert_translation'] = gr.Checkbox(
+            label=translator.t("ui.extrinsics_invert_translation"),
+            value=False,
+            visible=False,
+            info=translator.t("ui.extrinsics_invert_translation_info")
+        )
     components['extrinsics_file'] = gr.File(
         label=translator.t("ui.extrinsics_file"),
         file_types=[".txt"],
@@ -147,7 +164,7 @@ def toggle_personalized_body(include_mesh_value: bool, use_personalized_body_val
     )
 
 
-def toggle_extrinsics_inputs(include_extrinsics_value: bool) -> Tuple[Any, Any, Any]:
+def toggle_extrinsics_inputs(include_extrinsics_value: bool) -> Tuple[Any, Any, Any, Any, Any]:
     """
     Toggle visibility of extrinsics inputs based on checkbox.
     
@@ -155,13 +172,16 @@ def toggle_extrinsics_inputs(include_extrinsics_value: bool) -> Tuple[Any, Any, 
         include_extrinsics_value: Whether to include extrinsics
         
     Returns:
-        Tuple of updates for extrinsics_sample_rate, extrinsics_scale, extrinsics_file
+        Tuple of updates for extrinsics_sample_rate, extrinsics_scale,
+        extrinsics_invert_quaternion, extrinsics_invert_translation, extrinsics_file
     """
     # Handle case where value might be a list (from Gradio's internal processing)
     if isinstance(include_extrinsics_value, list):
         include_extrinsics_value = include_extrinsics_value[0] if include_extrinsics_value else False
     
     return (
+        gr.update(visible=include_extrinsics_value),
+        gr.update(visible=include_extrinsics_value),
         gr.update(visible=include_extrinsics_value),
         gr.update(visible=include_extrinsics_value),
         gr.update(visible=include_extrinsics_value)
@@ -183,6 +203,7 @@ def update_fbx_options_language(lang: str, translator: Translator) -> Tuple[Any,
     return (
         gr.update(label=t.t("ui.auto_run")),  # auto_run
         gr.update(label=t.t("ui.use_root_motion")),  # use_root_motion
+        gr.update(label=t.t("ui.auto_floor"), info=t.t("ui.auto_floor_info")),  # auto_floor
         gr.update(label=t.t("ui.include_mesh")),  # include_mesh
         gr.update(label=t.t("ui.include_extrinsics")),  # include_extrinsics
         gr.update(label=t.t("ui.use_personalized_body"), info=t.t("ui.use_personalized_body_info")),  # use_personalized_body
@@ -190,6 +211,8 @@ def update_fbx_options_language(lang: str, translator: Translator) -> Tuple[Any,
         gr.update(label=t.t("ui.outlier_removal_percent"), info=t.t("ui.outlier_removal_percent_info")),  # outlier_removal_percent
         gr.update(label=t.t("ui.extrinsics_sample_rate"), info=t.t("ui.extrinsics_sample_rate_info")),  # extrinsics_sample_rate
         gr.update(label=t.t("ui.extrinsics_scale"), info=t.t("ui.extrinsics_scale_info")),  # extrinsics_scale
+        gr.update(label=t.t("ui.extrinsics_invert_quaternion"), info=t.t("ui.extrinsics_invert_quaternion_info")),  # extrinsics_invert_quaternion
+        gr.update(label=t.t("ui.extrinsics_invert_translation"), info=t.t("ui.extrinsics_invert_translation_info")),  # extrinsics_invert_translation
         gr.update(label=t.t("ui.extrinsics_file")),  # extrinsics_file
     )
 
