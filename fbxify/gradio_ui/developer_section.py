@@ -46,6 +46,20 @@ def create_developer_section(translator: Translator) -> Dict[str, Any]:
             label=translator.t("ui.export_personalized_body_obj"),
             value=False
         )
+        components["create_camera"] = gr.Checkbox(
+            label=translator.t("ui.create_camera"),
+            value=False
+        )
+        components["camera_zoom"] = gr.Number(
+            label=translator.t("ui.camera_zoom"),
+            value=-5.0,
+            visible=False
+        )
+        components["camera_scene"] = gr.File(
+            label=translator.t("ui.camera_scene"),
+            file_types=["image", "video"],
+            visible=False
+        )
     
     return components
 
@@ -69,5 +83,20 @@ def update_developer_language(lang: str) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.developer_options")),  # developer_options_accordion
         gr.update(value=t.t("ui.cancel_current_jobs_info")),  # cancel_jobs_info_md
         gr.update(value=t.t("ui.cancel_current_jobs")),  # cancel_jobs_btn
-        gr.update(label=t.t("ui.export_personalized_body_obj"))  # export_personalized_body_obj
+        gr.update(label=t.t("ui.export_personalized_body_obj")),  # export_personalized_body_obj
+        gr.update(label=t.t("ui.create_camera")),  # create_camera
+        gr.update(label=t.t("ui.camera_zoom")),  # camera_zoom
+        gr.update(label=t.t("ui.camera_scene")),  # camera_scene
+    )
+
+
+def toggle_camera_inputs(create_camera_value: bool) -> Tuple[Any, Any]:
+    """
+    Toggle visibility of camera inputs based on checkbox.
+    """
+    if isinstance(create_camera_value, list):
+        create_camera_value = create_camera_value[0] if create_camera_value else False
+    return (
+        gr.update(visible=create_camera_value),
+        gr.update(visible=create_camera_value),
     )

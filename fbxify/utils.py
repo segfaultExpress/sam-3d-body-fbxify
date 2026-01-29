@@ -1,5 +1,6 @@
 from __future__ import annotations
 import numpy as np
+import cv2
 import tempfile
 import os
 import json
@@ -8,6 +9,12 @@ import time
 import shutil
 import re
 from tqdm import tqdm
+try:
+    from PIL import Image, ImageDraw, ImageFont
+except Exception:
+    Image = None
+    ImageDraw = None
+    ImageFont = None
 
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -28,6 +35,8 @@ MHR_EXTENDED_KEYPOINT_INDEX = {
     "left_shoulder_root": 78,
     "right_shoulder_root": 79,
 }
+
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".avi", ".mkv", ".webm", ".m4v", ".mpg", ".mpeg"}
 
 def get_profile(profile_name):
     return PROFILES[profile_name]
@@ -59,6 +68,60 @@ def to_serializable(obj, _seen=None):
     return obj
 
 
+def _run_blender_script(cmd_args, cwd):
+    process = subprocess.Popen(
+        cmd_args,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        universal_newlines=True,
+        bufsize=1,
+        cwd=cwd,
+    )
+    try:
+        for line in process.stdout:
+            print(line, end='', flush=True)
+        return_code = process.wait()
+        if return_code != 0:
+            raise subprocess.CalledProcessError(return_code, cmd_args)
+    except Exception:
+        if process.poll() is None:
+            process.kill()
+        raise
+
+
+def build_camera_extrinsics_json(
+    frame_count: int,
+    extrinsics_file: Optional[str],
+    sample_rate: int,
+    extrinsics_scale: float,
+    invert_quaternion: bool,
+    invert_translation: bool,
+    out_path: str,
+) -> Optional[str]:
+    if not extrinsics_file or not os.path.exists(extrinsics_file):
+        return None
+    entries = parse_extrinsics_file(extrinsics_file, extrinsics_scale)
+    if not entries:
+        return None
+    frame_extrinsics = build_frame_extrinsics(
+        frame_count,
+        sample_rate,
+        entries,
+        invert_quaternion=invert_quaternion,
+        invert_translation=invert_translation,
+    )
+    if not frame_extrinsics:
+        return None
+    payload = {
+        "frame_extrinsics": [
+            {"T_wc": frame_entry["T_wc"]} for frame_entry in frame_extrinsics
+        ]
+    }
+    with open(out_path, "w") as f:
+        json.dump(to_serializable(payload), f)
+    return out_path
+
+
 def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, mesh_obj_path=None, lod_fbx_path=None, 
                   progress_callback=None, lang=DEFAULT_LANGUAGE):
     tmp_dir = tempfile.mkdtemp(prefix="sam3d_fbx_")
@@ -68,7 +131,6 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, mesh_obj_path
         joint_mapping_path = os.path.join(tmp_dir, "armature_joint_mapping.json")
         root_motion_path = os.path.join(tmp_dir, "root_motion.json")
         rest_pose_path = os.path.join(tmp_dir, "armature_rest_pose.json")
-        faces_path = os.path.join(tmp_dir, "faces.json")
         script_path = os.path.join(tmp_dir, "blender_script.py")
         fbx_path = os.path.join(tmp_dir, "output.fbx")
         
@@ -198,6 +260,185 @@ def export_to_fbx(metadata, joint_mapping, root_motion, rest_pose, mesh_obj_path
         except:
             pass
 
+
+def export_camera_scene(
+    metadata: Dict,
+    camera_scene_path: Optional[str],
+    camera_zoom: float,
+    extrinsics_file: Optional[str],
+    progress_callback=None,
+) -> Optional[str]:
+    tmp_dir = tempfile.mkdtemp(prefix="sam3d_cam_")
+    try:
+        metadata_path = os.path.join(tmp_dir, "metadata.json")
+        output_blend_tmp_path = os.path.join(tmp_dir, "camera_scene.blend")
+        camera_script_path = os.path.join(tmp_dir, "build_camera.py")
+        camera_extrinsics_path = os.path.join(tmp_dir, "camera_extrinsics.json")
+        camera_media_path = camera_scene_path
+        media_is_video = bool(camera_scene_path and _is_video_path(camera_scene_path))
+
+        if media_is_video:
+            placeholder_path = os.path.join(tmp_dir, "camera_placeholder.png")
+            if progress_callback:
+                progress_callback(0.9, "Preparing camera scene placeholder")
+            _create_camera_placeholder_image(
+                placeholder_path,
+                overlay_text=_get_camera_placeholder_overlay_text(),
+            )
+            camera_media_path = placeholder_path
+            if not metadata.get("fps"):
+                metadata["fps"] = 30.0
+            if not metadata.get("num_keyframes"):
+                metadata["num_keyframes"] = 1
+
+        with open(metadata_path, "w") as f:
+            json.dump({"metadata": metadata}, f)
+
+        camera_script_source = os.path.join(os.path.dirname(__file__), "blender_utils", "build_camera.py")
+        if os.path.exists(camera_script_source):
+            shutil.copyfile(camera_script_source, camera_script_path)
+
+        extrinsics_sample_rate = int(metadata.get("extrinsics_sample_rate", 0))
+        extrinsics_scale = float(metadata.get("extrinsics_scale", 0.0))
+        extrinsics_invert_quaternion = bool(metadata.get("extrinsics_invert_quaternion", False))
+        extrinsics_invert_translation = bool(metadata.get("extrinsics_invert_translation", False))
+
+        camera_extrinsics_json = build_camera_extrinsics_json(
+            metadata.get("num_keyframes", 0),
+            extrinsics_file,
+            extrinsics_sample_rate,
+            extrinsics_scale,
+            extrinsics_invert_quaternion,
+            extrinsics_invert_translation,
+            camera_extrinsics_path,
+        )
+
+        camera_cmd = [
+            "blender", "-b",
+            "--factory-startup",
+            "--python", camera_script_path,
+            "--",
+            output_blend_tmp_path,
+            metadata_path,
+            camera_media_path or "",
+            str(camera_zoom if camera_zoom is not None else 0.0),
+            camera_extrinsics_json or "",
+            "1" if media_is_video else "0",
+        ]
+        _run_blender_script(camera_cmd, tmp_dir)
+
+        profile_name = metadata.get("profile_name", "unknown")
+        timestamp = int(time.time())
+        final_dir = tempfile.gettempdir()
+        final_path = os.path.join(
+            final_dir, f"{profile_name}_{timestamp:010d}_camera_scene.blend"
+        )
+        shutil.copyfile(output_blend_tmp_path, final_path)
+        return final_path
+    finally:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+
+def _get_camera_placeholder_overlay_text() -> str:
+    return (
+        "Blender does not currently support video packing.\n"
+        "You'll need to re-attach the reference:\n"
+        "1. Go to Shading\n"
+        "2. In the image texture, delete the reference\n"
+        "3. select \"Open\", choose your video\n"
+        "4. Select your uploaded video\n"
+        "5. Set the frame duration and \"Use Auto Refresh\"\n"
+    )
+
+
+def _create_camera_placeholder_image(
+    output_path: str,
+    width: int = 1920,
+    height: int = 1080,
+    overlay_text: Optional[str] = None,
+) -> None:
+    width = int(width) if width else 1920
+    height = int(height) if height else 1080
+    background = (20, 20, 20)
+    text_color = (240, 240, 240)
+
+    if Image is not None and ImageDraw is not None and ImageFont is not None:
+        img = Image.new("RGB", (width, height), color=background)
+        if overlay_text:
+            draw = ImageDraw.Draw(img)
+            font = None
+            try:
+                font = ImageFont.truetype("DejaVuSans.ttf", size=70)
+            except Exception:
+                font = ImageFont.load_default()
+            margin = 40
+            try:
+                line_height = int(font.getbbox("Ag")[3] - font.getbbox("Ag")[1]) + 6
+            except Exception:
+                line_height = 90
+            y = margin
+            for line in overlay_text.splitlines():
+                draw.text((margin, y), line, fill=text_color, font=font)
+                y += line_height
+        img.save(output_path)
+        return
+
+    img_array = np.zeros((height, width, 3), dtype=np.uint8)
+    img_array[:, :] = background
+    cv2.imwrite(output_path, img_array)
+
+def _is_video_path(path: str) -> bool:
+    ext = os.path.splitext(path)[1].lower()
+    return ext in VIDEO_EXTENSIONS
+
+
+def _extract_video_frames(
+    video_path: str,
+    output_dir: str,
+    jpg_quality: int = 85,
+    progress_callback=None,
+    progress_start: float = 0.9,
+    progress_end: float = 0.99,
+) -> tuple[list[str], float]:
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Unable to open video: {video_path}")
+    frame_paths = []
+    fps = cap.get(cv2.CAP_PROP_FPS)
+    if fps <= 0 or fps is None:
+        fps = 30.0
+    total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+    progress_span = max(float(progress_end) - float(progress_start), 0.0)
+    progress_bar = None
+    if progress_callback is None:
+        progress_bar = tqdm(
+            total=total_frames if total_frames > 0 else None,
+            desc="Extracting video frames",
+            unit="frame",
+        )
+    frame_idx = 0
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame_path = os.path.join(output_dir, f"frame_{frame_idx:06d}.jpg")
+        cv2.imwrite(frame_path, frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpg_quality)])
+        frame_paths.append(frame_path)
+        frame_idx += 1
+        if progress_bar:
+            progress_bar.update(1)
+        if progress_callback:
+            if total_frames > 0:
+                normalized = min(frame_idx / total_frames, 1.0)
+            else:
+                normalized = 0.0
+            progress_callback(
+                progress_start + (normalized * progress_span),
+                "Extracting video frames",
+            )
+    cap.release()
+    if progress_bar:
+        progress_bar.close()
+    return frame_paths, fps
 
 def extract_fbx_faces_with_blender(fbx_path: str, out_path: Optional[str] = None) -> Optional[np.ndarray]:
     """Extract triangle faces from an FBX using Blender in headless mode."""

@@ -405,7 +405,9 @@ class FbxDataPrepManager:
 
         return armature_rest_pose
 
-    def create_metadata(self, profile_name, id, num_keyframes=1, fps=30.0, height_offset: float = 0.0):
+    def create_metadata(self, profile_name, id, num_keyframes=1, fps=30.0, height_offset: float = 0.0,
+                        extrinsics_sample_rate: int = 0, extrinsics_scale: float = 0.0,
+                        extrinsics_invert_quaternion: bool = False, extrinsics_invert_translation: bool = False):
         """
         Create metadata for FBX export.
         
@@ -424,7 +426,11 @@ class FbxDataPrepManager:
             "id": id,
             "profile_name": profile_name,
             "fps": fps,
-            "height_offset": height_offset
+            "height_offset": height_offset,
+            "extrinsics_sample_rate": extrinsics_sample_rate,
+            "extrinsics_scale": extrinsics_scale,
+            "extrinsics_invert_quaternion": extrinsics_invert_quaternion,
+            "extrinsics_invert_translation": extrinsics_invert_translation
         }
 
     def convert_camera_space_to_armature_space(self, estimation_results: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:

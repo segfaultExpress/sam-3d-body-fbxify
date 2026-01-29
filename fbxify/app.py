@@ -19,7 +19,7 @@ from fbxify.gradio_ui.entry_section import create_entry_section, toggle_bbox_inp
 from fbxify.gradio_ui.fbx_processing_section import create_fbx_processing_section, update_fbx_processing_language, toggle_generate_fbx_button
 from fbxify.gradio_ui.fbx_options_section import create_fbx_options_section, toggle_mesh_inputs, toggle_personalized_body, toggle_extrinsics_inputs, update_fbx_options_language
 from fbxify import VERSION
-from fbxify.gradio_ui.developer_section import create_developer_section, update_developer_language
+from fbxify.gradio_ui.developer_section import create_developer_section, update_developer_language, toggle_camera_inputs
 from fbxify.gradio_ui.refinement_section import create_refinement_section, build_refinement_config_from_gui
 
 VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
@@ -184,6 +184,7 @@ def create_app(manager: FbxifyManager):
     def generate_fbx(pose_json_file, profile_name, use_root_motion, auto_floor, include_mesh, include_extrinsics,
                     extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion,
                     extrinsics_invert_translation, extrinsics_file,
+                    create_camera, camera_zoom, camera_scene,
                     use_personalized_body, lod, outlier_removal_percent,
                     export_personalized_body_obj,
                     input_file,
@@ -216,6 +217,7 @@ def create_app(manager: FbxifyManager):
             outlier_percent = float(outlier_removal_percent) if outlier_removal_percent is not None else 10.0
             
             extrinsics_file_path = extrinsics_file.name if (include_extrinsics and extrinsics_file is not None) else None
+            camera_scene_path = camera_scene.name if (create_camera and camera_scene is not None) else None
             process_result = manager.process_from_estimation_json(
                 json_path,
                 profile_name,
@@ -268,7 +270,12 @@ def create_app(manager: FbxifyManager):
                 mesh_obj_paths=process_result.mesh_obj_paths,  # Use generated meshes from JSON
                 lod_fbx_path=lod_fbx_path,
                 lang=translator.lang,
-                height_offset=process_result.height_offset
+                height_offset=process_result.height_offset,
+                metadata_extras=process_result.metadata_extras,
+                create_camera=bool(create_camera),
+                camera_scene_path=camera_scene_path,
+                camera_zoom=float(camera_zoom) if camera_zoom is not None else 0.0,
+                extrinsics_file=extrinsics_file_path
             )
             output_files.extend(fbx_paths)
             if export_personalized_body_obj and process_result.mesh_obj_paths:
@@ -412,7 +419,10 @@ def create_app(manager: FbxifyManager):
                 dev_components['cli_generator_accordion'], dev_components['cli_generator_info_md'],
                 dev_components['generate_cli_btn'], dev_components['cli_command'],
                 dev_components['developer_options_accordion'], dev_components['cancel_jobs_info_md'], dev_components['cancel_jobs_btn'],
-                dev_components['export_personalized_body_obj']  # developer
+                dev_components['export_personalized_body_obj'],
+                dev_components['create_camera'],
+                dev_components['camera_zoom'],
+                dev_components['camera_scene'],
             ]
         )
         
@@ -448,6 +458,13 @@ def create_app(manager: FbxifyManager):
                 fbx_options_components['extrinsics_invert_translation'],
                 fbx_options_components['extrinsics_file']
             ]
+        )
+        
+        # Camera toggle - show/hide camera inputs
+        dev_components['create_camera'].change(
+            fn=toggle_camera_inputs,
+            inputs=[dev_components['create_camera']],
+            outputs=[dev_components['camera_zoom'], dev_components['camera_scene']]
         )
         
         # Combined toggle for outlier removal - depends on both include_mesh and use_personalized_body
@@ -502,8 +519,8 @@ def create_app(manager: FbxifyManager):
         # Helper function to conditionally auto-run generate_fbx
         def auto_run_generate_fbx(pose_json_file, auto_run, profile_name, use_root_motion, auto_floor, include_mesh, include_extrinsics,
                                   extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion,
-                                  extrinsics_invert_translation, extrinsics_file, use_personalized_body, lod,
-                                  outlier_removal_percent, export_personalized_body_obj, input_file,
+                                  extrinsics_invert_translation, extrinsics_file, create_camera, camera_zoom, camera_scene,
+                                  use_personalized_body, lod, outlier_removal_percent, export_personalized_body_obj, input_file,
                                   *refinement_inputs, progress=gr.Progress()):
             """Conditionally trigger generate_fbx if auto_run is enabled."""
             if not auto_run or pose_json_file is None:
@@ -530,6 +547,9 @@ def create_app(manager: FbxifyManager):
                 extrinsics_invert_quaternion,
                 extrinsics_invert_translation,
                 extrinsics_file,
+                create_camera,
+                camera_zoom,
+                camera_scene,
                 use_personalized_body,
                 lod,
                 outlier_removal_percent,
@@ -591,6 +611,9 @@ def create_app(manager: FbxifyManager):
                 fbx_options_components['extrinsics_invert_quaternion'],
                 fbx_options_components['extrinsics_invert_translation'],
                 fbx_options_components['extrinsics_file'],
+                dev_components['create_camera'],
+                dev_components['camera_zoom'],
+                dev_components['camera_scene'],
                 fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
@@ -676,6 +699,9 @@ def create_app(manager: FbxifyManager):
                 fbx_options_components['extrinsics_invert_quaternion'],
                 fbx_options_components['extrinsics_invert_translation'],
                 fbx_options_components['extrinsics_file'],
+                dev_components['create_camera'],
+                dev_components['camera_zoom'],
+                dev_components['camera_scene'],
                 fbx_options_components['use_personalized_body'],
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],

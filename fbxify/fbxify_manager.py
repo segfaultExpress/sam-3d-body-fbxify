@@ -2,7 +2,6 @@
 FbxifyManager - Core business logic for processing videos/images and exporting FBX files.
 """
 import os
-import cv2
 import tempfile
 import shutil
 import subprocess
@@ -14,7 +13,7 @@ import numpy as np
 
 from fbxify.pose_estimation_manager import PoseEstimationManager
 from fbxify.fbx_data_prep_manager import FbxDataPrepManager
-from fbxify.utils import export_to_fbx, to_serializable
+from fbxify.utils import export_to_fbx, export_camera_scene, to_serializable, _extract_video_frames
 from fbxify.refinement.refinement_manager import RefinementManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 from fbxify.metadata import JOINT_NAMES_TO_INDEX
@@ -31,6 +30,7 @@ class ProcessResult:
     fps: float
     mesh_obj_paths: Optional[Dict[str, str]] = None
     height_offset: float = 0.0
+    metadata_extras: Optional[Dict[str, Any]] = None
 
 
 class FbxifyManager:
@@ -60,27 +60,10 @@ class FbxifyManager:
         Returns:
             Tuple of (frame_paths, fps) where fps is the video frame rate
         """
-        cap = cv2.VideoCapture(video_path)
-        frame_paths = []
-        frame_count = 0
-        
-        # Get FPS from video
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        if fps <= 0 or fps is None:
-            # Fallback to default if FPS cannot be determined
-            fps = 30.0
-        
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            
-            frame_path = os.path.join(temp_dir, f"frame_{frame_count:06d}.jpg")
-            cv2.imwrite(frame_path, frame)
-            frame_paths.append(frame_path)
-            frame_count += 1
-        
-        cap.release()
+        frame_paths, fps = _extract_video_frames(
+            video_path,
+            temp_dir,
+        )
         return frame_paths, fps
     
     def prepare_video(self, input_video_path: str) -> Tuple[List[str], str, float]:
@@ -444,7 +427,13 @@ class FbxifyManager:
             profile_name=profile_name,
             fps=fps,
             mesh_obj_paths=mesh_obj_paths if mesh_obj_paths else None,
-            height_offset=height_offset
+            height_offset=height_offset,
+            metadata_extras={
+                "extrinsics_sample_rate": extrinsics_sample_rate,
+                "extrinsics_scale": extrinsics_scale,
+                "extrinsics_invert_quaternion": extrinsics_invert_quaternion,
+                "extrinsics_invert_translation": extrinsics_invert_translation,
+            },
         )
         
     def export_fbx_files(self, profile_name: str, joint_to_bone_mappings: Dict[str, Any],
@@ -452,7 +441,10 @@ class FbxifyManager:
                          fps: float = 30.0, progress_callback: Optional[callable] = None,
                          lod: int = -1, mesh_obj_paths: Optional[Dict[str, str]] = None,
                          lod_fbx_path: Optional[str] = None, lang: str = DEFAULT_LANGUAGE,
-                         height_offset: float = 0.0) -> List[str]:
+                         height_offset: float = 0.0, metadata_extras: Optional[Dict[str, Any]] = None,
+                         create_camera: bool = False,
+                         camera_scene_path: Optional[str] = None, camera_zoom: float = 0.0,
+                         extrinsics_file: Optional[str] = None) -> List[str]:
         """
         Export FBX files for each person.
         
@@ -467,11 +459,16 @@ class FbxifyManager:
             mesh_obj_paths: Mapping of person ID to generated mesh OBJ file
             lod_fbx_path: Path to LOD FBX file
             height_offset: Offset to apply to pred_cam_t.y during FBX export
+            metadata_extras: Additional metadata values to include
+            create_camera: Whether to add a camera scene
+            camera_scene_path: Media file for camera scene plane
+            camera_zoom: Z offset for camera placement
+            extrinsics_file: Optional extrinsics file for camera keyframes
             
         Returns:
             List of exported FBX file paths
         """
-        fbx_paths = []
+        file_paths = []
         num_keyframes = len(frame_paths)
         num_people = len(joint_to_bone_mappings.keys())
         
@@ -496,14 +493,17 @@ class FbxifyManager:
                     return inner_callback
                 person_progress_callback = make_person_callback(person_index, num_people, progress_callback)
             
+            metadata = self.data_prep_manager.create_metadata(
+                profile_name,
+                identifier,
+                num_keyframes=num_keyframes,
+                fps=fps,
+                height_offset=height_offset,
+            )
+            if metadata_extras:
+                metadata.update(metadata_extras)
             fbx_path = export_to_fbx(
-                self.data_prep_manager.create_metadata(
-                    profile_name,
-                    identifier,
-                    num_keyframes=num_keyframes,
-                    fps=fps,
-                    height_offset=height_offset
-                ),
+                metadata,
                 joint_to_bone_mappings[identifier],
                 root_motion,
                 self.data_prep_manager.get_armature_rest_pose(profile_name),
@@ -511,11 +511,21 @@ class FbxifyManager:
                 if lod >= 0 and profile_name == "mhr" else None,
                 lod_fbx_path=lod_fbx_path if lod >= 0 and profile_name == "mhr" else None,
                 progress_callback=person_progress_callback,
-                lang=lang
+                lang=lang,
             )
             
             if fbx_path is not None:
-                fbx_paths.append(fbx_path)
+                file_paths.append(fbx_path)
 
-        return fbx_paths
+        if create_camera:
+            camera_scene_path = export_camera_scene(
+                metadata,
+                camera_scene_path=camera_scene_path,
+                camera_zoom=camera_zoom,
+                extrinsics_file=extrinsics_file
+            )
+            if camera_scene_path:
+                file_paths.append(camera_scene_path)
+
+        return file_paths
     
