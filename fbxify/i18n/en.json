@@ -53,7 +53,7 @@
     "extrinsics_sample_rate": "📊 Extrinsics Downsampling Rate",
     "extrinsics_sample_rate_info": "0 = auto (round(frame_count / extrinsics_count))",
     "extrinsics_scale": "📏 Extrinsics Scale",
-    "extrinsics_scale_info": "0 = auto (placeholder; currently uses 1.0)",
+    "extrinsics_scale_info": "Scales the extrinsics translation components",
     "extrinsics_invert_quaternion": "🔁 Invert Extrinsics Rotation",
     "extrinsics_invert_quaternion_info": "Treat qvec as camera→world instead of world→camera",
     "extrinsics_invert_translation": "🔁 Invert Extrinsics Translation",

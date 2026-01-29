@@ -70,10 +70,9 @@ For complete instructions, see [fbxify/Mapping_Guide.md](fbxify/Mapping_Guide.md
 
 Future improvements planned for FBXify:
 
-1. Camera extrinsics
-2. Extend the mesh capabilities by providing lod\<x\>_mixamo.fbx, in addition to MHR
-3. Facial animation integration (MHR specific maybe?)
-4. Add option to scale the armature based on estimator returned values
+1. Extend the mesh capabilities by providing lod\<x\>_mixamo.fbx, in addition to MHR
+2. Facial animation integration (MHR specific maybe?)
+3. Add option to scale the armature based on estimator returned values
 
 # SAM 3D
 

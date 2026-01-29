@@ -53,7 +53,7 @@
     "extrinsics_sample_rate": "📊 Tasa de Submuestreo de Extrínsecos",
     "extrinsics_sample_rate_info": "0 = auto (redondear fotogramas / extrínsecos)",
     "extrinsics_scale": "📏 Escala de Extrínsecos",
-    "extrinsics_scale_info": "0 = auto (marcador de posición; actualmente usa 1.0)",
+    "extrinsics_scale_info": "Scales the extrinsics translation components",
     "extrinsics_invert_quaternion": "🔁 Invertir Rotación de Extrínsecos",
     "extrinsics_invert_quaternion_info": "Trata qvec como cámara→mundo en vez de mundo→cámara",
     "extrinsics_invert_translation": "🔁 Invertir Traslación de Extrínsecos",
