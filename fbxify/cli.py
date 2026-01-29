@@ -281,8 +281,7 @@ def main():
                 process_result.frame_paths,
                 process_result.fps,
                 progress_callback=lambda p, d: print(f"Progress: {p*100:.1f}% - {d}"),
-                height_offset=process_result.height_offset,
-                camera_progress_callback=None
+                height_offset=process_result.height_offset
             )
             
             # Move files to output directory if specified
@@ -381,8 +380,7 @@ def main():
             process_result.frame_paths,
             process_result.fps,
             progress_callback,
-            height_offset=getattr(process_result, "height_offset", 0.0),
-            camera_progress_callback=None
+            height_offset=getattr(process_result, "height_offset", 0.0)
         )
         
         # Move files to output directory if specified

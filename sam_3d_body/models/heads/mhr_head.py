@@ -112,6 +112,8 @@ class MHRHead(nn.Module):
         self.lod = lod
         self.mhr_model_path = mhr_model_path
         self.mhr = None  # Lazy initialization - will be loaded when first needed
+        self._mhr_loaded_lod = None
+
         self._mhr_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         """ LOD SUPPORT FOR MHR HEAD - END """
 
@@ -165,12 +167,11 @@ class MHRHead(nn.Module):
         Args:
             lod: LOD level to use (if None, uses self.lod)
         """
-        if self.mhr is not None and lod is not None and lod == self.lod:
-            return  # Already loaded
-        
         lod_to_use = lod if lod is not None else self.lod
+        if self.mhr is not None and self._mhr_loaded_lod == lod_to_use:
+            return  # Already loaded for this LOD
+        
         self.lod = lod_to_use
-        print(f"_ensure_mhr_loaded(): LOD to use: {lod_to_use}")
         
         # Load MHR itself
         if MOMENTUM_ENABLED:
@@ -185,6 +186,8 @@ class MHRHead(nn.Module):
                 map_location=self._mhr_device,
             )
             print(f"MHR model loaded from {self.mhr_model_path} (LOD parameter not applicable for torch.jit models)")
+        
+        self._mhr_loaded_lod = lod_to_use
 
         for param in self.mhr.parameters():
             param.requires_grad = False

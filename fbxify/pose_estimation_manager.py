@@ -476,12 +476,11 @@ class PoseEstimationManager:
             else:
                 raise ValueError(f"bboxes must be either a list or numpy array, got {type(bboxes)}")
 
-        # IMPORTANT: process_one_image returns a list of dicts, in ORDER of bboxes passed in!
-        timer_start = time.time()
+        # Reset lod to 1 for estimator - the model can be swapped if fbx generation chooses a different lod
+        self.estimator.model.head_pose.lod = 1
+        self.estimator.model.head_pose_hand.lod = 1
+        # IMPORTANT: process_one_image returns a list of dicts
         outputs_raw = self.estimator.process_one_image(image_path, bboxes=bboxes_numpy, cam_int=self.cached_cam_int)
-        timer_process = time.time()
-        process_time = timer_process - timer_start
-        # Note: Detailed breakdown is printed inside process_one_image
         
         # Check if mesh was generated (pred_vertices present)
         mesh_generated = False
@@ -489,7 +488,7 @@ class PoseEstimationManager:
             mesh_generated = "pred_vertices" in outputs_raw[0] and outputs_raw[0]["pred_vertices"] is not None
             if mesh_generated:
                 vert_count = len(outputs_raw[0]["pred_vertices"]) if outputs_raw[0]["pred_vertices"] is not None else 0
-                print(f"  [INFO] Mesh generated: {vert_count} vertices (may not be needed)")
+                print(f"  [INFO] Mesh generated: {vert_count} vertices")
 
         # Convert outputs to serializable format and organize by person ID
         timer_filter_start = time.time()

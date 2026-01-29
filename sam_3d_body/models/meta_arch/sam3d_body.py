@@ -74,7 +74,10 @@ class SAM3DBody(BaseModel):
 
         # Define header for hand pose estimation
         self.head_pose_hand = build_head(
-            self.cfg, self.cfg.MODEL.PERSON_HEAD.POSE_TYPE, enable_hand_model=True
+            self.cfg,
+            self.cfg.MODEL.PERSON_HEAD.POSE_TYPE,
+            enable_hand_model=True,
+            lod=lod, # LOD SUPPORT FOR MHR HEAD
         )
         self.head_pose_hand.hand_pose_comps_ori = nn.Parameter(
             self.head_pose_hand.hand_pose_comps.clone(), requires_grad=False
