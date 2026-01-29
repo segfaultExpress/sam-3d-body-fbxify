@@ -287,7 +287,8 @@ def create_app(manager: FbxifyManager):
         # Return output files and re-enable estimate_pose_btn (only if input_file still exists)
         return (
             output_files if output_files else None,
-            gr.update(interactive=(input_file is not None))  # estimate_pose_btn (re-enable only if file still exists)
+            gr.update(interactive=(input_file is not None)),  # estimate_pose_btn (re-enable only if file still exists)
+            gr.update(interactive=(pose_json_file is not None))  # generate_fbx_btn
         )
 
     def _format_cli_arg(value: str) -> str:
@@ -507,7 +508,11 @@ def create_app(manager: FbxifyManager):
             """Conditionally trigger generate_fbx if auto_run is enabled."""
             if not auto_run or pose_json_file is None:
                 # Just re-enable estimate_pose_btn if input_file still exists
-                return None, gr.update(interactive=(input_file is not None))
+                return (
+                    None,
+                    gr.update(interactive=(input_file is not None)),
+                    gr.update(interactive=(pose_json_file is not None))
+                )
             
             # Build refinement config
             refinement_cfg = build_and_log_config(*refinement_inputs)
@@ -557,8 +562,21 @@ def create_app(manager: FbxifyManager):
             outputs=[fbx_processing_components['pose_json_file'], fbx_processing_components['generate_fbx_btn'], entry_components['estimate_pose_btn']]  # Update file and re-enable buttons when done
         )
         
+        def disable_buttons_for_auto_run(pose_json_file, auto_run):
+            """Disable buttons while auto-run generate_fbx is active."""
+            if auto_run and pose_json_file is not None:
+                return (
+                    gr.update(interactive=False),  # generate_fbx_btn
+                    gr.update(interactive=False)   # estimate_pose_btn
+                )
+            return gr.update(), gr.update()
+
         # Auto-run: If auto_run is checked, automatically trigger generate_fbx after estimate_pose completes
         estimate_pose_click.then(
+            fn=disable_buttons_for_auto_run,
+            inputs=[fbx_processing_components['pose_json_file'], fbx_options_components['auto_run']],
+            outputs=[fbx_processing_components['generate_fbx_btn'], entry_components['estimate_pose_btn']]
+        ).then(
             fn=auto_run_generate_fbx,
             inputs=[
                 fbx_processing_components['pose_json_file'],
@@ -580,7 +598,11 @@ def create_app(manager: FbxifyManager):
                 entry_components['input_file'],
                 *all_refinement_inputs
             ],
-            outputs=[fbx_processing_components['output_files'], entry_components['estimate_pose_btn']],
+            outputs=[
+                fbx_processing_components['output_files'],
+                entry_components['estimate_pose_btn'],
+                fbx_processing_components['generate_fbx_btn']
+            ],
             show_progress=True
         )
         
@@ -631,9 +653,9 @@ def create_app(manager: FbxifyManager):
         # Generate FBX button (Step 2)
         # Disable Estimate Pose button immediately when Generate FBX is clicked
         generate_fbx_click = fbx_processing_components['generate_fbx_btn'].click(
-            fn=lambda: gr.update(interactive=False),  # Disable Estimate Pose button immediately
+            fn=lambda: (gr.update(interactive=False), gr.update(interactive=False)),  # Disable buttons immediately
             inputs=[],
-            outputs=[entry_components['estimate_pose_btn']]
+            outputs=[fbx_processing_components['generate_fbx_btn'], entry_components['estimate_pose_btn']]
         ).then(
             # First, build the refinement config from all inputs
             fn=lambda *args: build_and_log_config(*args),
@@ -661,7 +683,11 @@ def create_app(manager: FbxifyManager):
                 entry_components['input_file'],  # Add input_file to check if it still exists
                 refinement_config_state,
             ],
-            outputs=[fbx_processing_components['output_files'], entry_components['estimate_pose_btn']]  # Re-enable Estimate Pose when done
+            outputs=[
+                fbx_processing_components['output_files'],
+                entry_components['estimate_pose_btn'],
+                fbx_processing_components['generate_fbx_btn']
+            ]  # Re-enable buttons when done
         )
 
         dev_components['generate_cli_btn'].click(

@@ -250,29 +250,82 @@ def extract_fbx_faces_with_blender(fbx_path: str, out_path: Optional[str] = None
 
 def convert_camera_space_to_armature_space_array(array):
     """ Convert camera space to armature space for an array of vectors """
+    # Camera space is the space defined by the estimation results
+    # Armature space is the space defined by the armatures provided via sam 3d body
+    # In camera space, X is right, Y is down, Z is forward
+    # In armature space, X is right, Y is up, Z is backward
     if array is None:
         return None
     return np.array([convert_camera_space_to_armature_space(vec) for vec in array])
 
 def convert_camera_space_to_armature_space(vec):
     """ Convert camera space to armature space, aka the space based on the armatures provided via sam 3d body """
+    # Camera space is the space defined by the estimation results
+    # Armature space is the space defined by the armatures provided via sam 3d body
+    # In camera space, X is right, Y is down, Z is forward
+    # In armature space, X is right, Y is up, Z is backward
     if vec is None:
         return None
     x, y, z = vec
     return np.array([x, -y, -z])
 
 def convert_armature_space_to_blender_space_array(array):
-    """ Convert armature space to armature space for an array of vectors """
+    """ Convert armature space to blender space for an array of vectors """
+    # Armature space is the space defined by the armatures provided via sam 3d body
+    # Blender space is the space defined by the blender scene
+    # In armature space, X is right, Y is up, Z is backward
+    # In blender space, X is right, Z is up, Y is forward
     if array is None:
         return None
     return np.array([convert_armature_space_to_blender_space(vec) for vec in array])
 
 def convert_armature_space_to_blender_space(vec):
     """ Not currently used by fbxify external to blender (which has its own function) but here to track world space conversion """
+    # Armature space is the space defined by the armatures provided via sam 3d body
+    # Blender space is the space defined by the blender scene
+    # In armature space, X is right, Y is up, Z is backward
+    # In blender space, X is right, Z is up, Y is forward
     if vec is None:
         return None
     x, y, z = vec
-    return np.array([x, z, y])
+    return np.array([x, -z, y])
+
+def convert_colmap_space_to_armature_space_array(array):
+    """ Convert colmap space to armature space for an array of vectors """
+    # Colmap space is the space defined by the colmap camera
+    # Armature space is the space defined by the armatures provided via sam 3d body
+    # In colmap space, X is right, Y is down, Z is forward
+    # In armature space, X is right, Y is up, Z is backward
+    if array is None:
+        return None
+    return np.array([convert_colmap_space_to_armature_space(vec) for vec in array])
+
+def convert_colmap_space_to_armature_space(vec):
+    """ Convert colmap space to armature space, aka the space based on the armatures provided via sam 3d body """
+    # Colmap space is the space defined by the colmap camera
+    # Armature space is the space defined by the armatures provided via sam 3d body
+    # In colmap space, X is right, Y is down, Z is forward
+    # In armature space, X is right, Y is up, Z is backward
+    if vec is None:
+        return None
+    x, y, z = vec
+    return np.array([x, -y, -z])
+
+
+def convert_colmap_rotation_to_armature_space(rot_mat: np.ndarray) -> np.ndarray:
+    """ Convert COLMAP rotation matrix to armature space. """
+    if rot_mat is None:
+        return None
+    rot_mat = np.asarray(rot_mat, dtype=np.float64).reshape(3, 3)
+    axis_flip = np.diag([1.0, -1.0, -1.0])
+    return axis_flip @ rot_mat @ axis_flip
+
+
+def convert_colmap_pose_to_armature_pose(R_cw: np.ndarray, t_cw: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Apply COLMAP->armature basis flip to a camera->world pose."""
+    R_cw = convert_colmap_rotation_to_armature_space(R_cw)
+    t_cw = convert_colmap_space_to_armature_space(t_cw)
+    return R_cw, t_cw
 
 def get_keypoint(joints, name):
     """キーポイント名からジョイント位置を取得"""
@@ -605,38 +658,42 @@ def build_frame_extrinsics(
     sample_frames = _build_sample_frames(entries, sample_rate, frame_count)
     sample_frames, entries = _sort_samples(sample_frames, entries)
 
-    q_cw_list = []
-    t_cw_list = []
+    q_cw_armature_list = []
+    t_cw_armature_list = []
     for entry in entries:
         if invert_quaternion:
-            q_cw = _normalize_quat(entry.qvec)
-            q_wc = _invert_quat(q_cw)
+            q_wc_colmap = _normalize_quat(entry.qvec)
+            q_cw_colmap = _invert_quat(q_wc_colmap)
         else:
-            q_wc = _normalize_quat(entry.qvec)
-            q_cw = _invert_quat(q_wc)
+            q_cw_colmap = _normalize_quat(entry.qvec)
+            q_wc_colmap = _invert_quat(q_cw_colmap)
 
-        R_wc = _qvec_to_rotmat(q_wc)
-        R_cw = R_wc.T
+        R_wc_colmap = _qvec_to_rotmat(q_wc_colmap)
+        R_cw_colmap = R_wc_colmap.T
 
         t_input = entry.tvec.reshape(3)
         if invert_translation:
-            t_cw = t_input
-            t_wc = -R_wc @ t_cw
+            t_wc_colmap = t_input
+            t_cw_colmap = -(R_cw_colmap @ t_wc_colmap)
         else:
-            t_wc = t_input
-            t_cw = -R_cw @ t_wc
+            t_cw_colmap = t_input
+            t_wc_colmap = -(R_wc_colmap @ t_cw_colmap)
 
-        q_cw_list.append(q_cw)
-        t_cw_list.append(t_cw)
+        # Need to convert into armature space here - since interpolation relies on valid armature-space q/t values
+        R_cw_armature, t_cw_armature = convert_colmap_pose_to_armature_pose(R_cw_colmap, t_cw_colmap)
+        q_cw_armature = _rotmat_to_qvec(R_cw_armature)
+
+        q_cw_armature_list.append(q_cw_armature)
+        t_cw_armature_list.append(t_cw_armature)
 
     per_frame: List[Dict[str, np.ndarray]] = []
     for frame_idx in range(frame_count):
         if frame_idx <= sample_frames[0]:
-            q_cw = q_cw_list[0]
-            t_cw = t_cw_list[0]
+            q_cw_armature = q_cw_armature_list[0]
+            t_cw_armature = t_cw_armature_list[0]
         elif frame_idx >= sample_frames[-1]:
-            q_cw = q_cw_list[-1]
-            t_cw = t_cw_list[-1]
+            q_cw_armature = q_cw_armature_list[-1]
+            t_cw_armature = t_cw_armature_list[-1]
         else:
             right = int(np.searchsorted(sample_frames, frame_idx, side="right"))
             left = max(0, right - 1)
@@ -647,36 +704,31 @@ def build_frame_extrinsics(
                 alpha = 0.0
             else:
                 alpha = (frame_idx - left_frame) / (right_frame - left_frame)
-            q_cw = _quat_slerp(q_cw_list[left], q_cw_list[right], alpha)
-            t_cw = _lerp_vec(t_cw_list[left], t_cw_list[right], alpha)
+            q_cw_armature = _quat_slerp(q_cw_armature_list[left], q_cw_armature_list[right], alpha)
+            t_cw_armature = _lerp_vec(t_cw_armature_list[left], t_cw_armature_list[right], alpha)
 
-        R_cw = _qvec_to_rotmat(q_cw)
-        R_wc = R_cw.T
-        t_wc = -R_wc @ t_cw
+        R_cw_armature = _qvec_to_rotmat(q_cw_armature)
+        R_wc_armature = R_cw_armature.T
+        t_wc_armature = -(R_wc_armature @ t_cw_armature)
 
-        T_cw = np.eye(4, dtype=np.float64)
-        T_cw[:3, :3] = R_cw
-        T_cw[:3, 3] = t_cw
+        T_cw_armature = np.eye(4, dtype=np.float64)
+        T_cw_armature[:3, :3] = R_cw_armature
+        T_cw_armature[:3, 3] = t_cw_armature
 
-        T_wc = np.eye(4, dtype=np.float64)
-        T_wc[:3, :3] = R_wc
-        T_wc[:3, 3] = t_wc
+        T_wc_armature = np.eye(4, dtype=np.float64)
+        T_wc_armature[:3, :3] = R_wc_armature
+        T_wc_armature[:3, 3] = t_wc_armature
 
         per_frame.append(
             {
-                "R_cw": R_cw,
-                "t_cw": t_cw,
-                "R_wc": R_wc,
-                "t_wc": t_wc,
-                "T_cw": T_cw,
-                "T_wc": T_wc,
+                "R_cw": R_cw_armature,
+                "t_cw": t_cw_armature,
+                "R_wc": R_wc_armature,
+                "t_wc": t_wc_armature,
+                "T_cw": T_cw_armature,
+                "T_wc": T_wc_armature,
             }
         )
-
-    # output every T_wc after interpolation as pretty JSON
-    output_path = os.path.join(os.getcwd(), "T_wc_fbxify.json")
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump([frame["T_wc"].tolist() for frame in per_frame], f, indent=2)
 
     return per_frame
 
@@ -719,7 +771,6 @@ def _identity_extrinsics() -> Dict[str, np.ndarray]:
         "R_wc": np.eye(3, dtype=np.float64),
         "T_wc": np.eye(4, dtype=np.float64),
     }
-
 
 def _is_monotonic(values: List[int]) -> bool:
     return all(a <= b for a, b in zip(values, values[1:]))
@@ -775,3 +826,34 @@ def _qvec_to_rotmat(qvec: np.ndarray) -> np.ndarray:
         ],
         dtype=np.float64,
     )
+
+
+def _rotmat_to_qvec(rot_mat: np.ndarray) -> np.ndarray:
+    rot_mat = np.asarray(rot_mat, dtype=np.float64).reshape(3, 3)
+    trace = np.trace(rot_mat)
+    if trace > 0.0:
+        s = np.sqrt(trace + 1.0) * 2.0
+        qw = 0.25 * s
+        qx = (rot_mat[2, 1] - rot_mat[1, 2]) / s
+        qy = (rot_mat[0, 2] - rot_mat[2, 0]) / s
+        qz = (rot_mat[1, 0] - rot_mat[0, 1]) / s
+    elif rot_mat[0, 0] > rot_mat[1, 1] and rot_mat[0, 0] > rot_mat[2, 2]:
+        s = np.sqrt(1.0 + rot_mat[0, 0] - rot_mat[1, 1] - rot_mat[2, 2]) * 2.0
+        qw = (rot_mat[2, 1] - rot_mat[1, 2]) / s
+        qx = 0.25 * s
+        qy = (rot_mat[0, 1] + rot_mat[1, 0]) / s
+        qz = (rot_mat[0, 2] + rot_mat[2, 0]) / s
+    elif rot_mat[1, 1] > rot_mat[2, 2]:
+        s = np.sqrt(1.0 + rot_mat[1, 1] - rot_mat[0, 0] - rot_mat[2, 2]) * 2.0
+        qw = (rot_mat[0, 2] - rot_mat[2, 0]) / s
+        qx = (rot_mat[0, 1] + rot_mat[1, 0]) / s
+        qy = 0.25 * s
+        qz = (rot_mat[1, 2] + rot_mat[2, 1]) / s
+    else:
+        s = np.sqrt(1.0 + rot_mat[2, 2] - rot_mat[0, 0] - rot_mat[1, 1]) * 2.0
+        qw = (rot_mat[1, 0] - rot_mat[0, 1]) / s
+        qx = (rot_mat[0, 2] + rot_mat[2, 0]) / s
+        qy = (rot_mat[1, 2] + rot_mat[2, 1]) / s
+        qz = 0.25 * s
+
+    return _normalize_quat(np.array([qw, qx, qy, qz], dtype=np.float64))

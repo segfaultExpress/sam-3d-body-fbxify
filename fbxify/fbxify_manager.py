@@ -215,9 +215,6 @@ class FbxifyManager:
         scale_params_array = np.array(scale_params_list)
         shape_params_array = np.array(shape_params_list)
         
-        # Debug: check shapes
-        print(f"  Parameter array shapes: scale={scale_params_array.shape}, shape={shape_params_array.shape}")
-        
         # Remove outliers using percentile-based method
         # Remove top/bottom outlier_percent/2% from each dimension, then remove frames that have outliers in any dimension
         if outlier_percent > 0 and len(body_params_list) > 2:

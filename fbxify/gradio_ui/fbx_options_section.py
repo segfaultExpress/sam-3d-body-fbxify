@@ -64,7 +64,7 @@ def create_fbx_options_section(translator: Translator) -> Dict[str, Any]:
             minimum=0,
             maximum=6,
             step=1,
-            value=0,
+            value=1,
             visible=False,
             info=translator.t("ui.lod_info")
         )
@@ -91,7 +91,7 @@ def create_fbx_options_section(translator: Translator) -> Dict[str, Any]:
         )
         components['extrinsics_scale'] = gr.Number(
             label=translator.t("ui.extrinsics_scale"),
-            value=0,
+            value=1,
             minimum=0,
             step=0.01,
             visible=False,
