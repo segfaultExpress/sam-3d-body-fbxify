@@ -2,7 +2,7 @@
 Gradio UI components for entry section.
 
 This module provides UI components for input controls including
-file upload, profile selection, bbox options, FOV options, and generate button.
+file upload, bbox options, FOV options, and precision selection.
 """
 import gradio as gr
 from typing import Dict, Any, Tuple
@@ -25,13 +25,6 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
     components['input_file'] = gr.File(
         label=translator.t("ui.input_file"),
         file_types=["image", "video"]
-    )
-    
-    # Estimate Pose button (Step 1) - moved here, right after input file
-    components['estimate_pose_btn'] = gr.Button(
-        translator.t("ui.step_1_estimate_pose"),
-        variant="primary",
-        interactive=False  # Disabled by default until file is uploaded
     )
     
     # Estimation Options section header
@@ -164,5 +157,4 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
         gr.update(label=t.t("ui.precision"), info=t.t("ui.precision_info")),  # precision
-        gr.update(value=t.t("ui.step_1_estimate_pose")),  # estimate_pose_btn
     )

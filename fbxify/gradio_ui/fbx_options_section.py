@@ -28,7 +28,7 @@ def create_fbx_options_section(translator: Translator) -> Dict[str, Any]:
     # Auto-run checkbox
     components['auto_run'] = gr.Checkbox(
         label=translator.t("ui.auto_run"),
-        value=True
+        value=False
     )
     
     # Root motion checkbox

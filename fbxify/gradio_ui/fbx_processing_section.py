@@ -1,7 +1,7 @@
 """
 Gradio UI components for FBX processing section.
 
-This module provides UI components for pose JSON selection, FBX generation, and output files.
+This module provides UI components for FBX inputs like profile and pose JSON.
 """
 import gradio as gr
 from typing import Dict, Any, Tuple
@@ -21,13 +21,6 @@ def create_fbx_processing_section(translator: Translator) -> Dict[str, Any]:
     """
     components = {}
     
-    # Profile dropdown (armature model selection)
-    components['profile_name'] = gr.Dropdown(
-        label=translator.t("ui.profile"),
-        choices=list(PROFILES.keys()),
-        value=list(PROFILES.keys())[0]
-    )
-    
     # Pose JSON file upload/dropdown
     components['pose_json_file'] = gr.File(
         label=translator.t("ui.pose_json_file"),
@@ -35,24 +28,17 @@ def create_fbx_processing_section(translator: Translator) -> Dict[str, Any]:
         interactive=True
     )
     
-    # Generate FBX button (Step 2) (disabled until JSON is available)
-    components['generate_fbx_btn'] = gr.Button(
-        translator.t("ui.step_2_generate_fbx"),
-        variant="primary",
-        interactive=False  # Disabled by default
-    )
-    
-    # Output files (only FBX and visualization)
-    components['output_files'] = gr.File(
-        label=translator.t("ui.output_files"),
-        interactive=False,
-        file_count="multiple"
+    # Profile dropdown (armature model selection)
+    components['profile_name'] = gr.Dropdown(
+        label=translator.t("ui.profile"),
+        choices=list(PROFILES.keys()),
+        value=list(PROFILES.keys())[0]
     )
     
     return components
 
 
-def update_fbx_processing_language(lang: str) -> Tuple[Any, Any, Any, Any]:
+def update_fbx_processing_language(lang: str) -> Tuple[Any, Any]:
     """
     Update FBX processing section components with new language.
     
@@ -66,8 +52,6 @@ def update_fbx_processing_language(lang: str) -> Tuple[Any, Any, Any, Any]:
     return (
         gr.update(label=t.t("ui.profile")),  # profile_name
         gr.update(label=t.t("ui.pose_json_file")),  # pose_json_file
-        gr.update(value=t.t("ui.step_2_generate_fbx")),  # generate_fbx_btn
-        gr.update(label=t.t("ui.output_files"))  # output_files
     )
 
 
