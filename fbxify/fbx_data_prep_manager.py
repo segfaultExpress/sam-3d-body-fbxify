@@ -566,12 +566,12 @@ class FbxDataPrepManager:
         """
         joint_coords_base_world = []
         for i, joint_coord_base_cam in enumerate(joint_coords_base_cam):
-            joint_coord_cam = joint_coord_base_cam - base_cam
+            joint_coord_cam = joint_coord_base_cam + base_cam
 
             # convert to homogeneous coordinates
             joint_coord_cam = np.append(joint_coord_cam, 1.0)
             joint_coord_world = (T_wc @ joint_coord_cam)[:3]
-            joint_coords_base_world.append(joint_coord_world + base_world)
+            joint_coords_base_world.append(joint_coord_world - base_world)
 
         return np.array(joint_coords_base_world)
 

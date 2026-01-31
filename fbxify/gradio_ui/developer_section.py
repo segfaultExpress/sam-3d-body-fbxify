@@ -46,6 +46,10 @@ def create_developer_section(translator: Translator) -> Dict[str, Any]:
             label=translator.t("ui.export_personalized_body_obj"),
             value=False
         )
+        components["graph_refinement"] = gr.Checkbox(
+            label=translator.t("ui.graph_refinement"),
+            value=False
+        )
         components["create_camera"] = gr.Checkbox(
             label=translator.t("ui.create_camera"),
             value=False
@@ -131,6 +135,10 @@ def create_fbx_dev_section(translator: Translator) -> Dict[str, Any]:
             label=translator.t("ui.export_personalized_body_obj"),
             value=False
         )
+        components["graph_refinement"] = gr.Checkbox(
+            label=translator.t("ui.graph_refinement"),
+            value=False
+        )
         components["create_camera"] = gr.Checkbox(
             label=translator.t("ui.create_camera"),
             value=False
@@ -168,6 +176,7 @@ def update_developer_language(lang: str) -> Tuple[Any, ...]:
         gr.update(value=t.t("ui.cancel_current_jobs_info")),  # cancel_jobs_info_md
         gr.update(value=t.t("ui.cancel_current_jobs")),  # cancel_jobs_btn
         gr.update(label=t.t("ui.export_personalized_body_obj")),  # export_personalized_body_obj
+        gr.update(label=t.t("ui.graph_refinement")),  # graph_refinement
         gr.update(label=t.t("ui.create_camera")),  # create_camera
         gr.update(label=t.t("ui.camera_zoom")),  # camera_zoom
         gr.update(label=t.t("ui.camera_scene")),  # camera_scene
@@ -214,6 +223,7 @@ def update_fbx_dev_language(lang: str) -> Tuple[Any, ...]:
         gr.update(value=t.t("ui.cancel_current_jobs_info")),
         gr.update(value=t.t("ui.cancel_current_jobs")),
         gr.update(label=t.t("ui.export_personalized_body_obj")),
+        gr.update(label=t.t("ui.graph_refinement")),
         gr.update(label=t.t("ui.create_camera")),
         gr.update(label=t.t("ui.camera_zoom")),
         gr.update(label=t.t("ui.camera_scene")),

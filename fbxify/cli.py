@@ -269,7 +269,8 @@ def main():
                 args.profile,
                 args.use_root_motion,
                 fps=30.0,
-                auto_floor=args.auto_floor
+                auto_floor=args.auto_floor,
+                collect_refinement_logs=False
             )
             
             # Export FBX files

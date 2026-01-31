@@ -31,6 +31,7 @@ class ProcessResult:
     mesh_obj_paths: Optional[Dict[str, str]] = None
     height_offset: float = 0.0
     metadata_extras: Optional[Dict[str, Any]] = None
+    refinement_logs: Optional[Dict[str, Any]] = None
 
 
 class FbxifyManager:
@@ -263,7 +264,8 @@ class FbxifyManager:
                                     extrinsics_sample_rate: int = 0,
                                     extrinsics_scale: float = 0.0,
                                     extrinsics_invert_quaternion: bool = False,
-                                    extrinsics_invert_translation: bool = False) -> ProcessResult:
+                                    extrinsics_invert_translation: bool = False,
+                                    collect_refinement_logs: bool = False) -> ProcessResult:
         """
         Process from saved estimation JSON file.
         
@@ -314,16 +316,21 @@ class FbxifyManager:
         # Apply refinement to estimation results if enabled (before joint mapping)
         translator = Translator(lang)
         print(f"FbxifyManager.process_from_estimation_json(): refinement_config is {'None' if refinement_config is None else 'not None'}")
+        refinement_logs = None
         if refinement_config is not None:
             print(f"FbxifyManager.process_from_estimation_json(): Creating RefinementManager with config")
             if progress_callback:
                 progress_callback(0.0, translator.t("progress.applying_refinement"))
             
             refinement_manager = RefinementManager(refinement_config, fps, lang=lang)
+            # print pred joint coords for person 0 on frame 0
             estimation_results = refinement_manager.apply(
                 estimation_results,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                collect_refinement_logs=collect_refinement_logs
             )
+            if collect_refinement_logs:
+                refinement_logs = refinement_manager.last_refinement_logs
         else:
             print(f"FbxifyManager.process_from_estimation_json(): refinement_config is None, skipping refinement")
 
@@ -434,6 +441,7 @@ class FbxifyManager:
                 "extrinsics_invert_quaternion": extrinsics_invert_quaternion,
                 "extrinsics_invert_translation": extrinsics_invert_translation,
             },
+            refinement_logs=refinement_logs,
         )
         
     def export_fbx_files(self, profile_name: str, joint_to_bone_mappings: Dict[str, Any],

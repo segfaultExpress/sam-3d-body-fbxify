@@ -201,7 +201,7 @@ def create_app(manager: FbxifyManager):
                     extrinsics_invert_translation, extrinsics_file,
                     create_camera, camera_zoom, camera_scene,
                     use_personalized_body, lod, outlier_removal_percent,
-                    export_personalized_body_obj,
+                    export_personalized_body_obj, graph_refinement,
                     input_file,
                     refinement_config,  # Single refinement config object from state
                     progress=gr.Progress()):
@@ -250,6 +250,7 @@ def create_app(manager: FbxifyManager):
                 extrinsics_scale=float(extrinsics_scale) if extrinsics_scale is not None else 0.0,
                 extrinsics_invert_quaternion=bool(extrinsics_invert_quaternion),
                 extrinsics_invert_translation=bool(extrinsics_invert_translation),
+                collect_refinement_logs=bool(graph_refinement),
             )
 
             # Export FBX files
@@ -297,6 +298,18 @@ def create_app(manager: FbxifyManager):
                 for mesh_path in process_result.mesh_obj_paths.values():
                     if mesh_path and os.path.exists(mesh_path):
                         output_files.append(mesh_path)
+            
+            if graph_refinement and process_result.refinement_logs:
+                try:
+                    from fbxify.refinement.refinement_graphs import convert_refinement_logs
+                    graph_files = convert_refinement_logs(process_result.refinement_logs)
+                    output_files.extend(graph_files)
+                except Exception as e:
+                    print(f"Graph Refinement: Failed to generate graphs: {e}")
+                    try:
+                        gr.Warning(f"Graph Refinement failed: {e}")
+                    except Exception:
+                        pass
 
         except Exception as e:
             error_type = type(e).__name__
@@ -483,6 +496,7 @@ def create_app(manager: FbxifyManager):
                 fbx_dev_components['fbx_cancel_jobs_info_md'],
                 fbx_dev_components['fbx_cancel_jobs_btn'],
                 fbx_dev_components['export_personalized_body_obj'],
+                fbx_dev_components['graph_refinement'],
                 fbx_dev_components['create_camera'],
                 fbx_dev_components['camera_zoom'],
                 fbx_dev_components['camera_scene'],
@@ -590,8 +604,8 @@ def create_app(manager: FbxifyManager):
         def auto_run_generate_fbx(pose_json_file, auto_run, profile_name, use_root_motion, auto_floor, include_mesh, include_extrinsics,
                                   extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion,
                                   extrinsics_invert_translation, extrinsics_file, create_camera, camera_zoom, camera_scene,
-                                  use_personalized_body, lod, outlier_removal_percent, export_personalized_body_obj, input_file,
-                                  *refinement_inputs, progress=gr.Progress()):
+                                  use_personalized_body, lod, outlier_removal_percent, export_personalized_body_obj,
+                                  graph_refinement, input_file, *refinement_inputs, progress=gr.Progress()):
             """Conditionally trigger generate_fbx if auto_run is enabled."""
             if not auto_run or pose_json_file is None:
                 # Just re-enable estimate_pose_btn if input_file still exists
@@ -624,6 +638,7 @@ def create_app(manager: FbxifyManager):
                 lod,
                 outlier_removal_percent,
                 export_personalized_body_obj,
+                graph_refinement,
                 input_file,
                 refinement_cfg,
                 progress=progress
@@ -711,6 +726,7 @@ def create_app(manager: FbxifyManager):
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
                 fbx_dev_components['export_personalized_body_obj'],
+                fbx_dev_components['graph_refinement'],
                 entry_components['input_file'],
                 *all_refinement_inputs
             ],
@@ -799,6 +815,7 @@ def create_app(manager: FbxifyManager):
                 fbx_options_components['lod'],
                 fbx_options_components['outlier_removal_percent'],
                 fbx_dev_components['export_personalized_body_obj'],
+                fbx_dev_components['graph_refinement'],
                 entry_components['input_file'],  # Add input_file to check if it still exists
                 refinement_config_state,
             ],

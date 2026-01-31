@@ -33,7 +33,7 @@ except ImportError:
 class MHRKeypointsVisualizer:
     """Class for managing MHR skeleton visualization in Blender"""
     
-    def __init__(self):
+    def __init__(self, marker_type="sphere", apply_axis_switch=True):
         # Scale factors for keypoint positions
         self.x_scale = 1
         self.y_scale = 1
@@ -43,6 +43,8 @@ class MHRKeypointsVisualizer:
         self.keypoint_objects = {}  # Dict to track keypoint objects by name
         self.line_objects = {}      # Dict to track line objects by name
         self.parent_axis = None     # Parent object for all skeleton components
+        self.marker_type = marker_type
+        self.apply_axis_switch = apply_axis_switch
         
         # Load MHR keypoint and skeleton info from pose_info
         self.MHR_KEYPOINTS = {}
@@ -169,11 +171,15 @@ class MHRKeypointsVisualizer:
         """Get the current number of materials in the scene"""
         return len(bpy.data.materials)
 
-    def _create_keypoint_sphere(self, position, color, name, radius=0.02):
-        """Create a colored sphere for a keypoint"""
-        bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=position)
-        sphere = bpy.context.active_object
-        sphere.name = f"Keypoint_{name}"
+    def _create_keypoint_marker(self, position, color, name, radius=0.02):
+        """Create a colored marker (sphere or cube) for a keypoint"""
+        if self.marker_type == "cube":
+            bpy.ops.mesh.primitive_cube_add(size=radius * 2.0, location=position)
+            marker = bpy.context.active_object
+        else:
+            bpy.ops.mesh.primitive_uv_sphere_add(radius=radius, location=position)
+            marker = bpy.context.active_object
+        marker.name = f"Keypoint_{name}"
         
         # Check if material already exists
         mat_name = f"Mat_{name}"
@@ -219,9 +225,9 @@ class MHRKeypointsVisualizer:
                     pass
         
         # Assign material to the sphere
-        sphere.data.materials.append(mat)
+        marker.data.materials.append(mat)
         
-        return sphere
+        return marker
 
     def _draw_line(self, sphere1_pos, sphere2_pos, color, name, radius=0.01):
         """Create a cylinder that connects two spheres like a line"""
@@ -332,13 +338,13 @@ class MHRKeypointsVisualizer:
                 color = kp_data["color"]
                 name = kp_data["name"]
                 
-                # Create sphere for keypoint
-                sphere = self._create_keypoint_sphere(position, color, name)
-                self.keypoint_objects[name] = sphere
+                # Create marker for keypoint
+                marker = self._create_keypoint_marker(position, color, name)
+                self.keypoint_objects[name] = marker
                 
-                # Make sphere a child of parent axis
-                sphere.parent = self.parent_axis
-                sphere.scale = self.keypoint_scale
+                # Make marker a child of parent axis
+                marker.parent = self.parent_axis
+                marker.scale = self.keypoint_scale
         
         # Create skeleton connections
         for start_id, end_id in self.MHR_SKELETON:
@@ -378,7 +384,8 @@ class MHRKeypointsVisualizer:
         position[1] *= self.y_scale
         position[2] *= self.z_scale
 
-        position = self.switch_axis(position)
+        if self.apply_axis_switch:
+            position = self.switch_axis(position)
 
         if keypoint_name in self.keypoint_objects:
             keypoint_obj = self.keypoint_objects[keypoint_name]
@@ -448,6 +455,28 @@ class MHRKeypointsVisualizer:
                     line_obj.matrix_world = translation_matrix @ rotation_matrix
             
             line_obj.scale = (self.line_scale_xy[0], self.line_scale_xy[1], distance)
+
+    def create_marker_cloud(self, positions, name_prefix="Joint", color=(255, 255, 255), radius=0.02):
+        """Create standalone markers at each position (no skeleton lines)."""
+        bpy.ops.object.empty_add(type='ARROWS', location=(0, 0, 0))
+        self.parent_axis = bpy.context.active_object
+        self.parent_axis.name = f"{name_prefix}_Markers"
+        self.parent_axis.scale = (1, 1, 1)
+
+        for idx, position in enumerate(positions):
+            pos = list(position)
+            pos[0] *= self.x_scale
+            pos[1] *= self.y_scale
+            pos[2] *= self.z_scale
+            if self.apply_axis_switch:
+                pos = self.switch_axis(pos)
+            name = f"{name_prefix}_{idx:02d}"
+            marker = self._create_keypoint_marker(pos, color, name, radius=radius)
+            self.keypoint_objects[name] = marker
+            marker.parent = self.parent_axis
+            marker.scale = self.keypoint_scale
+
+        print(f"Created {len(positions)} markers under '{self.parent_axis.name}'")
 
     def snapshot(self, frame_id):
         """Create keyframes for all objects at the specified frame"""
