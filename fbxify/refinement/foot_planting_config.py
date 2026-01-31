@@ -27,9 +27,7 @@ class FootPlantingConfig:
     use_mid_foot: bool = False  # Use mid_foot (average of heel/toes) vs ankle
     
     # Coordinate system: height direction vector (normalized)
-    # Joint space: [0, -1, 0] (negative Y is "up")
-    # Camera space: [0, 1, 0] (positive Y is "up")
-    height_direction: tuple = (0, -1, 0)  # Direction vector for "up" in the coordinate system being used
+    height_direction: tuple = (0, 1, 0)  # Direction vector for "up" in the coordinate system being used
     
     def to_dict(self):
         """Convert to dictionary for JSON serialization."""

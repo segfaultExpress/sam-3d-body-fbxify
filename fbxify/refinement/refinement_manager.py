@@ -982,21 +982,21 @@ class RefinementManager:
 
         return self._rebuild_series_from_items(refined_joint_rots, num_joints)
 
-    def _refine_root_rotations(self, root_rotations_series, profile_changes, bone_changes, profile_spike_counts):
-        if not root_rotations_series or not any(x is not None for x in root_rotations_series):
-            return root_rotations_series
+    def _refine_base_rotations(self, base_rotations_series, profile_changes, bone_changes, profile_spike_counts):
+        if not base_rotations_series or not any(x is not None for x in base_rotations_series):
+            return base_rotations_series
 
-        parsed_root_rotations = []
-        for rot in root_rotations_series:
+        parsed_base_rotations = []
+        for rot in base_rotations_series:
             if rot is None:
-                parsed_root_rotations.append(None)
+                parsed_base_rotations.append(None)
             else:
                 parsed = self._parse_rotation_matrix(rot)
-                parsed_root_rotations.append(parsed if parsed is not None else self._identity_matrix())
+                parsed_base_rotations.append(parsed if parsed is not None else self._identity_matrix())
 
         prof = self.config.profiles.get("root", self.config.profiles.get("*"))
         return self._process_rotation_series(
-            parsed_root_rotations,
+            parsed_base_rotations,
             prof,
             bone_name="root_rotation",
             profile_name="ROOT",
@@ -1005,13 +1005,13 @@ class RefinementManager:
             profile_spike_counts=profile_spike_counts,
         )
 
-    def _refine_root_translations(self, root_translations_series, profile_vector_changes, bone_vector_changes):
-        if not root_translations_series or not any(x is not None for x in root_translations_series):
-            return root_translations_series
+    def _refine_base_translations(self, base_translations_series, profile_vector_changes, bone_vector_changes):
+        if not base_translations_series or not any(x is not None for x in base_translations_series):
+            return base_translations_series
 
         prof = self.config.profiles.get("root", self.config.profiles.get("*"))
         return self._process_vector_series(
-            root_translations_series,
+            base_translations_series,
             prof,
             bone_name="root_translation",
             profile_name="ROOT",
@@ -1075,40 +1075,41 @@ class RefinementManager:
 
         return self._rebuild_series_from_items(refined_keypoints_3d, num_keypoints)
 
-    def _apply_root_motion_adjustments(self, root_rotations_series, root_translations_series, joint_coords_series, log_print):
-        if self.config.do_root_motion_fix and root_rotations_series and root_translations_series:
+    def _apply_base_motion_adjustments(self, base_rotations_series, base_translations_series, joint_coords_series, log_print):
+        # FYI - "root" is for user's reference, since MHR has a "root" joint, you'll see "base" refer to the armature obj, while "root" refer to the root joint here
+        if self.config.do_root_motion_fix and base_rotations_series and base_translations_series:
             log_print("\n" + "=" * 80)
             log_print("ROOT MOTION STABILIZATION")
             log_print("=" * 80)
-            root_motion_dict = {
-                "translation": root_translations_series,
-                "rotation": root_rotations_series,
+            base_motion_dict = {
+                "translation": base_translations_series,
+                "rotation": base_rotations_series,
             }
-            root_motion_dict = self._root_stabilization(root_motion_dict, log_print)
-            root_translations_series = root_motion_dict["translation"]
-            root_rotations_series = root_motion_dict["rotation"]
+            base_motion_dict = self._base_stabilization(base_motion_dict, log_print)
+            base_translations_series = base_motion_dict["translation"]
+            base_rotations_series = base_motion_dict["rotation"]
             log_print("=" * 80 + "\n")
 
-        if self.config.do_foot_planting and root_rotations_series and root_translations_series and joint_coords_series:
-            root_motion_dict = {
-                "translation": root_translations_series,
-                "rotation": root_rotations_series,
+        if self.config.do_foot_planting and base_rotations_series and base_translations_series and joint_coords_series:
+            base_motion_dict = {
+                "translation": base_translations_series,
+                "rotation": base_rotations_series,
             }
-            root_motion_dict, should_plant = self._prepare_root_motion_for_foot_planting(root_motion_dict, log_print)
+            base_motion_dict, should_plant = self._prepare_base_motion_for_foot_planting(base_motion_dict, log_print)
             if should_plant:
-                root_motion_dict = self._foot_planting_adjustment(root_motion_dict, joint_coords_series, log_print)
-                root_translations_series = root_motion_dict["translation"]
-                root_rotations_series = root_motion_dict["rotation"]
+                base_motion_dict = self._foot_planting_adjustment(base_motion_dict, joint_coords_series, log_print)
+                base_translations_series = base_motion_dict["translation"]
+                base_rotations_series = base_motion_dict["rotation"]
 
-        return root_translations_series, root_rotations_series
+        return base_translations_series, base_rotations_series
 
     def _build_person_refinement_logs(
         self,
         series_to_frame_map,
         orig_series,
         joint_rotations_series,
-        root_rotations_series,
-        root_translations_series,
+        base_rotations_series,
+        base_translations_series,
         joint_coords_series,
     ):
         person_logs = {
@@ -1144,7 +1145,7 @@ class RefinementManager:
         cam_deltas = self._build_per_frame_deltas(
             series_to_frame_map,
             orig_series["root_translations"],
-            root_translations_series,
+            base_translations_series,
             self._delta_vector_or_nan,
         )
         if cam_deltas:
@@ -1153,7 +1154,7 @@ class RefinementManager:
         global_rot_deltas = self._build_per_frame_deltas(
             series_to_frame_map,
             orig_series["root_rotations"],
-            root_rotations_series,
+            base_rotations_series,
             self._delta_euler_or_nan,
         )
         if global_rot_deltas:
@@ -1206,8 +1207,8 @@ class RefinementManager:
         original_frame_indices,
         template_person_data,
         joint_rotations_series,
-        root_rotations_series,
-        root_translations_series,
+        base_rotations_series,
+        base_translations_series,
         joint_coords_series,
         keypoints_3d_series,
     ):
@@ -1239,11 +1240,11 @@ class RefinementManager:
             if series_idx < len(joint_rotations_series) and joint_rotations_series[series_idx] is not None:
                 refined_person_data["pred_global_rots"] = joint_rotations_series[series_idx]
 
-            if series_idx < len(root_rotations_series) and root_rotations_series[series_idx] is not None:
-                refined_person_data["global_rot"] = root_rotations_series[series_idx]
+            if series_idx < len(base_rotations_series) and base_rotations_series[series_idx] is not None:
+                refined_person_data["global_rot"] = base_rotations_series[series_idx]
 
-            if series_idx < len(root_translations_series) and root_translations_series[series_idx] is not None:
-                refined_person_data["pred_cam_t"] = root_translations_series[series_idx]
+            if series_idx < len(base_translations_series) and base_translations_series[series_idx] is not None:
+                refined_person_data["pred_cam_t"] = base_translations_series[series_idx]
 
             if series_idx < len(joint_coords_series) and joint_coords_series[series_idx] is not None:
                 refined_person_data["pred_joint_coords"] = joint_coords_series[series_idx]
@@ -1284,10 +1285,10 @@ class RefinementManager:
         joint_rotations_series = self._refine_person_rotations(
             series["joint_rotations"], profile_changes, bone_changes, profile_spike_counts
         )
-        root_rotations_series = self._refine_root_rotations(
+        base_rotations_series = self._refine_base_rotations(
             series["root_rotations"], profile_changes, bone_changes, profile_spike_counts
         )
-        root_translations_series = self._refine_root_translations(
+        base_translations_series = self._refine_base_translations(
             series["root_translations"], profile_vector_changes, bone_vector_changes
         )
         joint_coords_series = self._refine_joint_coords(
@@ -1297,9 +1298,9 @@ class RefinementManager:
             series["keypoints_3d"], profile_vector_changes, bone_vector_changes
         )
 
-        root_translations_series, root_rotations_series = self._apply_root_motion_adjustments(
-            root_rotations_series,
-            root_translations_series,
+        base_translations_series, base_rotations_series = self._apply_base_motion_adjustments(
+            base_rotations_series,
+            base_translations_series,
             joint_coords_series,
             log_print,
         )
@@ -1310,8 +1311,8 @@ class RefinementManager:
                 series_to_frame_map,
                 orig_series,
                 joint_rotations_series,
-                root_rotations_series,
-                root_translations_series,
+                base_rotations_series,
+                base_translations_series,
                 joint_coords_series,
             )
 
@@ -1323,8 +1324,8 @@ class RefinementManager:
             original_frame_indices,
             template_person_data,
             joint_rotations_series,
-            root_rotations_series,
-            root_translations_series,
+            base_rotations_series,
+            base_translations_series,
             joint_coords_series,
             keypoints_3d_series,
         )
@@ -1847,7 +1848,7 @@ class RefinementManager:
         # Use search() instead of match() to allow matching anywhere in the string
         return regex.search(bone_name) is not None
 
-    def _prepare_root_translation(self, trans, log_print):
+    def _prepare_base_translation(self, trans, log_print):
         if trans is None:
             log_print("WARNING: root_motion['translation'] is None, skipping stabilization")
             return None
@@ -1867,7 +1868,7 @@ class RefinementManager:
             return None
         return trans
 
-    def _filter_root_translation(self, trans, prof):
+    def _filter_base_translation(self, trans, prof):
         T = len(trans)
         if T == 0:
             return trans
@@ -1928,15 +1929,15 @@ class RefinementManager:
 
         return self._process_vector_series(trans, prof, processing_island=False)
 
-    def _stabilize_root_translation(self, trans, prof, log_print):
-        prepared = self._prepare_root_translation(trans, log_print)
+    def _stabilize_base_translation(self, trans, prof, log_print):
+        prepared = self._prepare_base_translation(trans, log_print)
         if prepared is None:
             return None, None
         trans_original = [[t[i] for i in range(3)] for t in prepared]
-        filtered = self._filter_root_translation(prepared, prof)
+        filtered = self._filter_base_translation(prepared, prof)
         return filtered, trans_original
 
-    def _stabilize_root_rotation(self, rot, prof, log_print):
+    def _stabilize_base_rotation(self, rot, prof, log_print):
         if rot is None:
             log_print("WARNING: root_motion['rotation'] is None, skipping stabilization")
             return None, None
@@ -1944,7 +1945,7 @@ class RefinementManager:
         stabilized = self._process_rotation_series(rot, prof, bone_name=None)
         return stabilized, rot_original
 
-    def _prepare_root_motion_for_foot_planting(self, root_motion, log_print):
+    def _prepare_base_motion_for_foot_planting(self, root_motion, log_print):
         # Handle None values: interpolate if enabled, otherwise forward-fill.
         if self.config.do_interpolate_missing_keyframes:
             if any(t is None for t in root_motion["translation"]):
@@ -1980,7 +1981,7 @@ class RefinementManager:
 
         return root_motion, True
 
-    def _root_stabilization(self, root_motion, log_print):
+    def _base_stabilization(self, root_motion, log_print):
         """
         Stabilize root motion to reduce jitter and unwanted movement.
         root_motion: dict with keys like "translation" [T][3] and "rotation" [T][3][3]
@@ -1993,7 +1994,7 @@ class RefinementManager:
         stabilized = {}
         
         if "translation" in root_motion:
-            filtered_trans, trans_original = self._stabilize_root_translation(
+            filtered_trans, trans_original = self._stabilize_base_translation(
                 root_motion["translation"],
                 prof,
                 log_print
@@ -2007,7 +2008,7 @@ class RefinementManager:
     
 
         if "rotation" in root_motion:
-            stabilized_rot, rot_original = self._stabilize_root_rotation(
+            stabilized_rot, rot_original = self._stabilize_base_rotation(
                 root_motion["rotation"],
                 prof,
                 log_print
@@ -2052,7 +2053,6 @@ class RefinementManager:
     
     def _get_foot_contact_indices(self, fp_config, log_print):
         """Get joint indices for root and foot contact points."""
-        root_idx = JOINT_NAMES.index("root")
         if fp_config.use_mid_foot:
             l_contact_idx = JOINT_NAMES.index("l_ball")
             r_contact_idx = JOINT_NAMES.index("r_ball")
@@ -2061,22 +2061,15 @@ class RefinementManager:
             l_contact_idx = JOINT_NAMES.index("l_foot")
             r_contact_idx = JOINT_NAMES.index("r_foot")
             log_print(f"Using FOOT: l_foot={l_contact_idx}, r_foot={r_contact_idx}")
-        return root_idx, l_contact_idx, r_contact_idx
+        return l_contact_idx, r_contact_idx
     
-    def _extract_joint_positions(self, joint_coords_series, T, root_idx, l_contact_idx, r_contact_idx):
+    def _extract_joint_positions(self, joint_coords_series, T, l_contact_idx, r_contact_idx):
         """Extract root and foot positions from joint coordinates series."""
-        root_joint_space = []
         left_foot_joint_space = []
         right_foot_joint_space = []
                 
         for t in range(T):
             if t < len(joint_coords_series) and joint_coords_series[t] is not None:
-                # Check and extract root position
-                if root_idx < len(joint_coords_series[t]) and joint_coords_series[t][root_idx] is not None:
-                    root_pos = list(joint_coords_series[t][root_idx][:3])
-                else:
-                    root_pos = [0.0, 0.0, 0.0]
-                
                 # Check and extract left foot position
                 if l_contact_idx < len(joint_coords_series[t]) and joint_coords_series[t][l_contact_idx] is not None:
                     left_pos = list(joint_coords_series[t][l_contact_idx][:3])
@@ -2089,39 +2082,22 @@ class RefinementManager:
                 else:
                     right_pos = [0.0, 0.0, 0.0]
                 
-                root_joint_space.append(root_pos)
                 left_foot_joint_space.append(left_pos)
                 right_foot_joint_space.append(right_pos)
             else:
-                root_joint_space.append([0.0, 0.0, 0.0])
                 left_foot_joint_space.append([0.0, 0.0, 0.0])
                 right_foot_joint_space.append([0.0, 0.0, 0.0])
         
         return (
-            np.array(root_joint_space),
             np.array(left_foot_joint_space),
             np.array(right_foot_joint_space)
         )
     
-    def _convert_joint_to_camera_space(self, joint_space_positions):
-        """Convert positions from joint space to camera space by flipping Y and Z axes."""
-        return np.array([
-            [pos[0], -pos[1], -pos[2]]
-            for pos in joint_space_positions
-        ])
-    
-    def _calculate_foot_world_positions(self, root_trans, root_rot, foot_offset_camera, T):
-        """Calculate foot world positions in camera space."""
-        foot_world = np.zeros((T, 3))
-        for t in range(T):
-            foot_world[t] = root_trans[t] + root_rot[t] @ foot_offset_camera[t]
-        return foot_world
-    
-    def _calculate_foot_velocities(self, foot_offset_camera, foot_joint_space, T, dt, log_print):
-        """Calculate foot offset velocities relative to root."""
+    def _calculate_foot_velocities(self, foot_offset, T, dt, log_print):
+        """Calculate foot offset velocities relative to base."""
         foot_offset_velocity = np.zeros((T, 3))
         for t in range(1, T):
-            foot_offset_velocity[t] = (foot_offset_camera[t] - foot_offset_camera[t-1]) / dt
+            foot_offset_velocity[t] = (foot_offset[t] - foot_offset[t-1]) / dt
         foot_offset_speed = np.linalg.norm(foot_offset_velocity, axis=1)
         return foot_offset_velocity, foot_offset_speed
     
@@ -2140,55 +2116,51 @@ class RefinementManager:
             return np.dot(foot_position, height_dir)
         return np.dot(foot_position, height_dir)
 
-    def _calculate_ground_height_reference(self, root_trans, height_direction, log_print):
+    def _calculate_ground_height_reference(self, base_trans, height_direction, log_print):
         """Compute per-frame ground height reference using root motion auto-flooring."""
         height_dir = np.array(height_direction)
-        root_height = np.dot(root_trans, height_dir)
-        valid_mask = np.isfinite(root_height)
+        base_height = np.dot(base_trans, height_dir)
+        valid_mask = np.isfinite(base_height)
         if np.any(valid_mask):
-            avg_root_height = float(np.mean(root_height[valid_mask]))
+            avg_base_height = float(np.mean(base_height[valid_mask]))
         else:
-            avg_root_height = 0.0
-        auto_floor_offset = -avg_root_height
-        ground_height = root_height + auto_floor_offset
+            avg_base_height = 0.0
+        auto_floor_offset = -avg_base_height
+        ground_height = base_height + auto_floor_offset
         log_print(
-            f"Auto-floor (refinement): avg_root_h={avg_root_height:.4f}, "
+            f"Auto-floor (refinement): avg_base_h={avg_base_height:.4f}, "
             f"auto_floor_offset={auto_floor_offset:.4f}"
         )
-        return root_height, ground_height
+        return ground_height
 
-    def _log_foot_height_debug(self, foot_label, foot_height, foot_offset_speed, root_height,
+    def _log_foot_height_debug(self, foot_label, foot_height, foot_offset_speed,
                                ground_height, height_threshold, velocity_threshold, log_print):
         """Log detailed foot height vs ground diagnostics for debugging."""
-        height_delta = ground_height - foot_height
-        height_check = (height_delta >= 0.0) & (height_delta <= height_threshold)
+        height_delta = foot_height - (ground_height + height_threshold)
+        height_check = height_delta < 0.0
         velocity_check = foot_offset_speed < velocity_threshold
         in_contact = height_check & velocity_check
 
-        above_ground = height_delta < 0.0
-        above_indices = np.where(above_ground)[0]
+        # Highlight when the foot was below the ground threshold, but maybe was too fast
+        below_indices = np.where(height_check)[0]
         total_frames = len(foot_height)
 
         log_print(f"{foot_label} foot height debug:")
-        log_print(
-            f"  Above ground frames: {len(above_indices)}/{total_frames} "
-            f"({(100.0 * len(above_indices) / total_frames) if total_frames else 0.0:.1f}%)"
-        )
 
-        if len(above_indices) == 0:
-            return
+        above_deltas = height_delta[below_indices]
+        if above_deltas.size:
+            log_print(
+                f"  Above-ground delta (ground - foot): min={np.min(above_deltas):.4f}m, "
+                f"max={np.max(above_deltas):.4f}m, avg={np.mean(above_deltas):.4f}m"
+            )
+        else:
+            log_print("  Above-ground delta (ground - foot): no below-threshold frames")
 
-        above_deltas = height_delta[above_indices]
-        log_print(
-            f"  Above-ground delta (ground - foot): min={np.min(above_deltas):.4f}m, "
-            f"max={np.max(above_deltas):.4f}m, avg={np.mean(above_deltas):.4f}m"
-        )
-
-        for t in above_indices:
+        for t in range(total_frames):
             log_print(
                 f"  t={t:04d} foot_h={foot_height[t]:.4f} "
                 f"ground_h={ground_height[t]:.4f} "
-                f"delta={height_delta[t]:.4f} root_h={root_height[t]:.4f} "
+                f"delta={height_delta[t]:.4f} "
                 f"speed={foot_offset_speed[t]:.4f} h_thr={height_threshold:.4f} v_thr={velocity_threshold:.4f} "
                 f"height_ok={height_check[t]} vel_ok={velocity_check[t]} "
                 f"in_contact={in_contact[t]}"
@@ -2207,8 +2179,9 @@ class RefinementManager:
         Returns:
             Boolean array indicating contact
         """
-        height_delta = ground_height - foot_height
-        height_check = (height_delta >= 0.0) & (height_delta <= height_threshold)
+        # Find whether the foot_height is above or below the ground (plus some foot threshold to solidify 'lifted' foot)
+        height_delta = foot_height - (ground_height + height_threshold)
+        height_check = height_delta < 0.0
         velocity_check = foot_offset_speed < velocity_threshold
         return height_check & velocity_check
     
@@ -2233,11 +2206,11 @@ class RefinementManager:
                 confidence[t] = vel_score
         return confidence
     
-    def _lock_foot_on_contact_start(self, foot_contact, was_in_contact, curr_root, root_rot, foot_offset_camera, t, log_print, foot_name):
+    def _lock_foot_on_contact_start(self, foot_contact, was_in_contact, curr_root, root_rot, foot_offset_world, t, log_print, foot_name):
         """Lock foot position when contact starts."""
         if not (foot_contact and not was_in_contact):
             return None
-        foot_world = curr_root + root_rot[t] @ foot_offset_camera[t]
+        foot_world = curr_root + root_rot[t] @ foot_offset_world[t]
         # Per-frame logging removed - summary will be printed at the end
         return foot_world.copy()
     
@@ -2257,123 +2230,95 @@ class RefinementManager:
             return (True, False)
         return (False, True)
     
-    def _adjust_root_for_locked_foot(self, curr_root, locked_foot_pos, root_rot, foot_offset_camera, blend_factor, t, log_print, foot_name):
+    def _adjust_base_for_locked_foot(self, curr_root, locked_foot_pos, root_rot, foot_offset_world, blend_factor, t, log_print, foot_name):
         """Adjust root position to maintain locked foot position."""
-        desired_root = locked_foot_pos - root_rot[t] @ foot_offset_camera[t]
+        desired_root = locked_foot_pos - root_rot[t] @ foot_offset_world[t]
         root_adjustment = desired_root - curr_root
         adjusted_root = curr_root + root_adjustment * blend_factor
         # Per-frame logging removed - summary will be printed at the end
         return adjusted_root
     
-    def _smooth_root_motion(self, root_trans, window_size):
+    def _smooth_base_motion(self, base_trans, window_size):
         """Smooth root motion using moving average."""
         if window_size <= 1:
-            return root_trans
-        smoothed = root_trans.copy()
+            return base_trans
+        smoothed = base_trans.copy()
         kernel = np.ones(window_size) / window_size
         for dim in range(3):
             # Use edge padding instead of zero padding to prevent drift to 0,0,0 at boundaries
             # This ensures the last frames maintain their position instead of being averaged with zeros
             pad_width = window_size // 2
-            padded = np.pad(root_trans[:, dim], pad_width, mode='edge')
+            padded = np.pad(base_trans[:, dim], pad_width, mode='edge')
             convolved = np.convolve(padded, kernel, mode='valid')
             smoothed[:, dim] = convolved
         return smoothed
     
-    def _foot_planting_adjustment(self, root_motion, joint_coords_series, log_print):
+    def _foot_planting_adjustment(self, base_motion, joint_coords_series, log_print):
         """
         Adjust root motion based on foot contact to reduce jitter.
         
         Coordinate systems:
         - Joint space: negative Y is "up", coordinates are absolute relative to body_world at [0,0,0]
-        - Camera space (root_motion): positive Y is "up"
+        - Camera space (base_motion): positive Y is "up"
         - Conversion: camera = [joint[0], -joint[1], -joint[2]]
         
         Args:
-            root_motion: dict with "translation" [T][3] (camera space) and "rotation" [T][3][3]
+            base_motion: dict with "translation" [T][3] (camera space) and "rotation" [T][3][3]
             joint_coords_series: [T][num_joints][3] - joint coordinates per frame (absolute in joint space, relative to body_world)
         
         Returns:
-            Adjusted root_motion dict with corrected translation
+            Adjusted base_motion dict with corrected translation
         """
         if not self.config.do_foot_planting:
-            return root_motion
+            return base_motion
         
         log_print("\n" + "="*80)
         log_print("FOOT PLANTING")
         log_print("="*80)
         
-        if not self._validate_foot_planting_inputs(root_motion, joint_coords_series, log_print):
-            return root_motion
+        if not self._validate_foot_planting_inputs(base_motion, joint_coords_series, log_print):
+            return base_motion
         
         fp_config = self.config.foot_planting_config
-        T = len(root_motion["translation"])
+        T = len(base_motion["translation"])
 
         print(f"T: {T}")
         
         try:
-            root_idx, l_contact_idx, r_contact_idx = self._get_foot_contact_indices(fp_config, log_print)
+            l_contact_idx, r_contact_idx = self._get_foot_contact_indices(fp_config, log_print)
         except ValueError as e:
             log_print(f"ERROR: Joint names not found: {e}")
-            return root_motion
+            return base_motion
         
-        root_trans = np.array(root_motion["translation"])
-        root_rot = np.array(root_motion["rotation"])
+        base_trans = np.array(base_motion["translation"])
+        base_rot = np.array(base_motion["rotation"])
         
-        root_joint_space, left_foot_joint_space, right_foot_joint_space = self._extract_joint_positions(
-            joint_coords_series, T, root_idx, l_contact_idx, r_contact_idx
+        left_foot_joint_space, right_foot_joint_space = self._extract_joint_positions(
+            joint_coords_series, T, l_contact_idx, r_contact_idx
         )
 
-        # print(f"root_joint_space: {root_joint_space}")
-        # print(f"left_foot_joint_space: {left_foot_joint_space}")
-        # print(f"right_foot_joint_space: {right_foot_joint_space}")
-        
-        root_camera_space = self._convert_joint_to_camera_space(root_joint_space)
-        left_foot_camera_space = self._convert_joint_to_camera_space(left_foot_joint_space)
-        right_foot_camera_space = self._convert_joint_to_camera_space(right_foot_joint_space)
-        
-        # print(f"root_camera_space: {root_camera_space}")
-        # print(f"left_foot_camera_space: {left_foot_camera_space}")
-        # print(f"right_foot_camera_space: {right_foot_camera_space}")
-        
-        left_foot_offset_camera = left_foot_camera_space - root_camera_space
-        right_foot_offset_camera = right_foot_camera_space - root_camera_space
-
-        # print(f"left_foot_offset_camera: {left_foot_offset_camera}")
-        # print(f"right_foot_offset_camera: {right_foot_offset_camera}")
-        
-        # Calculate foot offset in joint space for velocity (no jitter from pred_cam_t)
-        left_foot_offset_joint = left_foot_joint_space - root_joint_space
-        right_foot_offset_joint = right_foot_joint_space - root_joint_space
-        
-        # print(f"left_foot_offset_joint: {left_foot_offset_joint}")
-        # print(f"right_foot_offset_joint: {right_foot_offset_joint}")
+        left_foot_world_space = left_foot_joint_space + base_trans
+        right_foot_world_space = right_foot_joint_space + base_trans
         
         # Calculate velocity from joint space (pred_coords delta) to avoid jitter from pred_cam_t
-        _, left_foot_offset_speed = self._calculate_foot_velocities(left_foot_offset_joint, left_foot_joint_space, T, self.dt, log_print)
-        _, right_foot_offset_speed = self._calculate_foot_velocities(right_foot_offset_joint, right_foot_joint_space, T, self.dt, log_print)
-        
-        # print(f"left_foot_offset_speed: {left_foot_offset_speed}")
-        # print(f"right_foot_offset_speed: {right_foot_offset_speed}")
-        
+        # since we're tryping to assist base jitter, we should use the joint space velocity instead of the camera space velocity
+        _, left_foot_offset_speed = self._calculate_foot_velocities(left_foot_joint_space, T, self.dt, log_print)
+        _, right_foot_offset_speed = self._calculate_foot_velocities(right_foot_joint_space, T, self.dt, log_print)
+                
         velocity_threshold = fp_config.foot_contact_velocity_threshold
         height_threshold = fp_config.foot_contact_min_height
         height_direction = np.array(fp_config.height_direction)
-        root_height, ground_height = self._calculate_ground_height_reference(root_trans, height_direction, log_print)
+        ground_height = self._calculate_ground_height_reference(base_trans, height_direction, log_print)
         
-        # print(f"root_height: {root_height}")
-        # print(f"ground_height: {ground_height}")
         
         left_foot_height = self._calculate_foot_height(left_foot_joint_space, height_direction)
         right_foot_height = self._calculate_foot_height(right_foot_joint_space, height_direction)
 
         # Extensive debug logs for foot height vs ground checks
-        """
         self._log_foot_height_debug(
             "LEFT",
             left_foot_height,
             left_foot_offset_speed,
-            root_height,
             ground_height,
             height_threshold,
             velocity_threshold,
@@ -2383,13 +2328,11 @@ class RefinementManager:
             "RIGHT",
             right_foot_height,
             right_foot_offset_speed,
-            root_height,
             ground_height,
             height_threshold,
             velocity_threshold,
             log_print
         )
-        """
         
         left_in_contact = self._detect_foot_contact(
             left_foot_height,
@@ -2416,9 +2359,9 @@ class RefinementManager:
         log_print(f"Contact summary: Left {np.sum(left_in_contact)}/{T} frames ({100.0*np.sum(left_in_contact)/T:.1f}%), "
                   f"Right {np.sum(right_in_contact)}/{T} frames ({100.0*np.sum(right_in_contact)/T:.1f}%)")
         
-        adjusted_root_trans, foot_planting_stats = self._adjust_root_for_foot_planting(
-            root_trans, root_rot, left_in_contact, right_in_contact,
-            left_foot_offset_camera, right_foot_offset_camera,
+        adjusted_base_trans, foot_planting_stats = self._adjust_base_for_foot_planting(
+            base_trans, base_rot, left_in_contact, right_in_contact,
+            left_foot_world_space, right_foot_world_space,
             left_contact_confidence, right_contact_confidence,
             fp_config.blend_factor, T, log_print
         )
@@ -2434,25 +2377,24 @@ class RefinementManager:
         log_print(f"  Frames with feet planted: {frames_with_contact}/{total_frames} ({contact_percentage:.1f}%)")
         log_print(f"  Frames without feet planted: {frames_without_contact}/{total_frames} ({no_contact_percentage:.1f}%)")
         
-        adjusted_before_smooth = adjusted_root_trans.copy()
-        adjusted_root_trans = self._smooth_root_motion(adjusted_root_trans, fp_config.root_smoothing_window)
+        adjusted_base_trans = self._smooth_base_motion(adjusted_base_trans, fp_config.root_smoothing_window)
         
-        max_adjustment = np.max(np.abs(adjusted_root_trans - root_trans))
-        avg_adjustment = np.mean(np.abs(adjusted_root_trans - root_trans))
+        max_adjustment = np.max(np.abs(adjusted_base_trans - base_trans))
+        avg_adjustment = np.mean(np.abs(adjusted_base_trans - base_trans))
         log_print(f"\nRoot adjustment: max={max_adjustment:.4f}m, avg={avg_adjustment:.4f}m")
         log_print("="*80 + "\n")
         
         return {
-            "translation": adjusted_root_trans.tolist(),
-            "rotation": root_motion["rotation"]
+            "translation": adjusted_base_trans.tolist(),
+            "rotation": base_motion["rotation"]
         }
     
-    def _adjust_root_for_foot_planting(self, root_trans, root_rot, left_in_contact, right_in_contact,
-                                     left_foot_offset_camera, right_foot_offset_camera,
+    def _adjust_base_for_foot_planting(self, base_trans, base_rot, left_in_contact, right_in_contact,
+                                     left_foot_offset_world, right_foot_offset_world,
                                      left_contact_confidence, right_contact_confidence,
                                      blend_factor, T, log_print):
         """Adjust root motion based on locked foot positions."""
-        adjusted_root_trans = root_trans.copy()
+        adjusted_base_trans = base_trans.copy()
         left_foot_locked_pos = None
         right_foot_locked_pos = None
         
@@ -2461,20 +2403,20 @@ class RefinementManager:
         frames_without_contact = 0
         
         for t in range(T):
-            curr_root = self._get_current_root_position(adjusted_root_trans, root_trans, t)
+            curr_root = self._get_current_base_position(adjusted_base_trans, base_trans, t)
             left_contact = left_in_contact[t]
             right_contact = right_in_contact[t]
             left_was_in_contact = left_in_contact[t-1] if t > 0 else False
             right_was_in_contact = right_in_contact[t-1] if t > 0 else False
             
             new_left_locked = self._lock_foot_on_contact_start(
-                left_contact, left_was_in_contact, curr_root, root_rot, left_foot_offset_camera, t, log_print, "LEFT"
+                left_contact, left_was_in_contact, curr_root, base_rot, left_foot_offset_world, t, log_print, "LEFT"
             )
             if new_left_locked is not None:
                 left_foot_locked_pos = new_left_locked
             
             new_right_locked = self._lock_foot_on_contact_start(
-                right_contact, right_was_in_contact, curr_root, root_rot, right_foot_offset_camera, t, log_print, "RIGHT"
+                right_contact, right_was_in_contact, curr_root, base_rot, right_foot_offset_world, t, log_print, "RIGHT"
             )
             if new_right_locked is not None:
                 right_foot_locked_pos = new_right_locked
@@ -2489,9 +2431,9 @@ class RefinementManager:
             else:
                 frames_without_contact += 1
             
-            adjusted_root_trans[t] = self._apply_root_adjustment_for_frame(
+            adjusted_base_trans[t] = self._apply_base_adjustment_for_frame(
                 curr_root, left_foot_locked_pos, right_foot_locked_pos,
-                root_rot, left_foot_offset_camera, right_foot_offset_camera,
+                base_rot, left_foot_offset_world, right_foot_offset_world,
                 left_contact_confidence, right_contact_confidence,
                 blend_factor, t, log_print
             )
@@ -2500,17 +2442,17 @@ class RefinementManager:
             'frames_with_contact': frames_with_contact,
             'frames_without_contact': frames_without_contact
         }
-        return adjusted_root_trans, stats
+        return adjusted_base_trans, stats
     
-    def _get_current_root_position(self, adjusted_root_trans, root_trans, t):
+    def _get_current_base_position(self, adjusted_base_trans, root_trans, t):
         """Get current root position for frame t."""
         if t == 0:
             return root_trans[t].copy()
-        curr_root = adjusted_root_trans[t-1].copy()
+        curr_root = adjusted_base_trans[t-1].copy()
         return curr_root + (root_trans[t] - root_trans[t-1])
     
-    def _apply_root_adjustment_for_frame(self, curr_root, left_foot_locked_pos, right_foot_locked_pos,
-                                        root_rot, left_foot_offset_camera, right_foot_offset_camera,
+    def _apply_base_adjustment_for_frame(self, curr_root, left_foot_locked_pos, right_foot_locked_pos,
+                                        root_rot, left_foot_offset_world, right_foot_offset_world,
                                         left_contact_confidence, right_contact_confidence,
                                         blend_factor, t, log_print):
         """Apply root adjustment for a single frame."""
@@ -2524,14 +2466,14 @@ class RefinementManager:
         )
         
         if use_left:
-            adjusted = self._adjust_root_for_locked_foot(
-                curr_root, left_foot_locked_pos, root_rot, left_foot_offset_camera, blend_factor, t, log_print, "LEFT"
+            adjusted = self._adjust_base_for_locked_foot(
+                curr_root, left_foot_locked_pos, root_rot, left_foot_offset_world, blend_factor, t, log_print, "LEFT"
             )
             return adjusted
         
         if use_right:
-            adjusted = self._adjust_root_for_locked_foot(
-                curr_root, right_foot_locked_pos, root_rot, right_foot_offset_camera, blend_factor, t, log_print, "RIGHT"
+            adjusted = self._adjust_base_for_locked_foot(
+                curr_root, right_foot_locked_pos, root_rot, right_foot_offset_world, blend_factor, t, log_print, "RIGHT"
             )
             return adjusted
         

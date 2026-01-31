@@ -393,11 +393,20 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
                     info=translator.t("ui.refinement.interpolate_missing_keyframes_info")
                 )
                 
-                use_foot_planting = gr.Checkbox(
-                    label=translator.t("ui.refinement.use_foot_planting"),
-                    value=True,
-                    info=translator.t("ui.refinement.use_foot_planting_info")
+                """
+                gr.Markdown(
+                    "EXPERIMENTAL FEATURE - I can't seem to get this working, it consistently makes my animations worse even when 'working' - "
+                    "But if you'd like to take a crack at it, be my guest."
                 )
+                # Foot planting UI is commented out; keep hidden placeholders.
+                use_foot_planting = gr.State(value=False)
+                """
+                foot_planting_velocity_threshold = gr.State(value=0.15)
+                foot_planting_min_height = gr.State(value=0.10)
+                foot_planting_contact_window = gr.State(value=3)
+                foot_planting_blend_factor = gr.State(value=0.3)
+                foot_planting_root_window = gr.State(value=5)
+                foot_planting_use_mid_foot = gr.State(value=True)
             
             config_file_upload = gr.File(
                 label=translator.t("ui.refinement.load_config"),
@@ -412,7 +421,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
             interactive=False,
             visible=False
         )
-    
+    """
     # Foot Planting section (conditionally visible)
     from fbxify.refinement.foot_planting_config import FootPlantingConfig
     default_foot_planting_config = FootPlantingConfig()
@@ -478,6 +487,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         inputs=[use_foot_planting],
         outputs=[foot_planting_group]
     )
+    """
     
     # Create profile sections in a row layout
     profile_components = {}
@@ -573,6 +583,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         
         # Add global checkboxes
         outputs_list.append(gr.update(interactive=enabled_value))  # interpolate_missing_keyframes
+        """
         outputs_list.append(gr.update(interactive=enabled_value))  # use_foot_planting
         
         # Add foot planting inputs
@@ -582,7 +593,8 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         outputs_list.append(gr.update(interactive=enabled_value))  # foot_planting_blend_factor
         outputs_list.append(gr.update(interactive=enabled_value))  # foot_planting_root_window
         outputs_list.append(gr.update(interactive=enabled_value))  # foot_planting_use_mid_foot
-        
+        """
+
         # Add all profile components
         for profile_name, components in profile_components.items():
             for key in ['max_pos_speed', 'max_pos_accel', 'max_ang_speed_deg', 'max_ang_accel_deg',
@@ -598,6 +610,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         return outputs_list
     
     # Collect all outputs for the toggle function
+    """
     toggle_outputs = [
         interpolate_missing_keyframes,
         use_foot_planting,
@@ -607,6 +620,10 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         foot_planting_blend_factor,
         foot_planting_root_window,
         foot_planting_use_mid_foot,
+    ]
+    """
+    toggle_outputs = [
+        interpolate_missing_keyframes,
     ]
     
     # Add all profile components to outputs
@@ -771,10 +788,11 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
             "do_vector_smoothing": True,
             "do_root_motion_fix": True,
             "do_interpolate_missing_keyframes": interpolate_missing_keyframes,
-            "do_foot_planting": use_foot_planting,
+            # "do_foot_planting": use_foot_planting,
         }
-        
+
         # Add foot planting config if enabled
+        """
         if use_foot_planting:
             from fbxify.refinement.foot_planting_config import FootPlantingConfig
             foot_planting_config = FootPlantingConfig(
@@ -786,7 +804,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
                 use_mid_foot=foot_planting_use_mid_foot if foot_planting_use_mid_foot is not None else True,
             )
             config["foot_planting_config"] = foot_planting_config.to_dict()
-        
+        """
         # Create a temporary file with the JSON
         temp_file = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(config, temp_file, indent=2)
@@ -794,7 +812,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         return temp_file.name
     
     # Collect all inputs for save function
-    save_inputs = [refinement_enabled, interpolate_missing_keyframes, use_foot_planting]
+    save_inputs = [refinement_enabled, interpolate_missing_keyframes] # , use_foot_planting]
     
     # Add root profile inputs
     save_inputs.extend([
@@ -859,7 +877,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         default_components['one_euro_min_cutoff'], default_components['one_euro_beta'],
         default_components['one_euro_d_cutoff'],
     ])
-    
+
     # Add foot planting inputs
     save_inputs.extend([
         foot_planting_velocity_threshold,
@@ -905,7 +923,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         
         # Update use_foot_planting checkbox
         updates.append(gr.update(value=config.get("do_foot_planting", False)))
-        
+
         # Update each profile
         profiles = config.get("profiles", {})
         
@@ -982,11 +1000,11 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         updates.append(gr.update(value=foot_planting_config.get("blend_factor", 0.3)))
         updates.append(gr.update(value=foot_planting_config.get("root_smoothing_window", 5)))
         updates.append(gr.update(value=foot_planting_config.get("use_mid_foot", True)))
-        
+
         return updates
     
     # Wire up load file
-    load_outputs = [refinement_enabled, interpolate_missing_keyframes, use_foot_planting] + save_inputs[3:]  # enabled, interpolate_missing_keyframes, use_foot_planting, then all profile fields
+    load_outputs = [refinement_enabled, interpolate_missing_keyframes] + save_inputs[2:] # , use_foot_planting] + save_inputs[3:]  # enabled, interpolate_missing_keyframes, use_foot_planting, then all profile fields
     config_file_upload.change(
         fn=load_configuration,
         inputs=[config_file_upload],
@@ -1001,7 +1019,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
     def build_refinement_config_wrapper(*args):
         """Wrapper that takes all refinement inputs and builds the config."""
         # Unpack all arguments in the correct order
-        (enabled, interpolate_missing_keyframes, use_foot_planting,
+        (enabled, interpolate_missing_keyframes,
          root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
          root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
          root_cutoff_xy_hz, root_cutoff_z_hz,
@@ -1022,7 +1040,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
          foot_planting_root_window, foot_planting_use_mid_foot) = args
         
         return build_refinement_config_from_gui(
-            enabled, interpolate_missing_keyframes, use_foot_planting, translator,
+            enabled, interpolate_missing_keyframes, translator,
             root_max_pos_speed, root_max_pos_accel, root_max_ang_speed_deg, root_max_ang_accel_deg,
             root_method, root_cutoff_hz, root_one_euro_min_cutoff, root_one_euro_beta, root_one_euro_d_cutoff,
             root_cutoff_xy_hz, root_cutoff_z_hz,
@@ -1045,7 +1063,7 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
     
     # Collect all refinement inputs in the correct order
     all_refinement_inputs = [
-        refinement_enabled, interpolate_missing_keyframes, use_foot_planting,
+        refinement_enabled, interpolate_missing_keyframes,
         root_components['max_pos_speed'], root_components['max_pos_accel'],
         root_components['max_ang_speed_deg'], root_components['max_ang_accel_deg'],
         root_components['method'], root_components['cutoff_hz'],
@@ -1094,7 +1112,6 @@ def create_refinement_section(translator: Translator) -> Dict[str, Any]:
         "build_refinement_config_wrapper": build_refinement_config_wrapper,
         "refinement_enabled": refinement_enabled,
         "interpolate_missing_keyframes": interpolate_missing_keyframes,
-        "use_foot_planting": use_foot_planting,
         "foot_planting_velocity_threshold": foot_planting_velocity_threshold,
         "foot_planting_min_height": foot_planting_min_height,
         "foot_planting_contact_window": foot_planting_contact_window,
