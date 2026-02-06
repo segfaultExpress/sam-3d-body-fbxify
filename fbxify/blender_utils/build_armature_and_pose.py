@@ -46,6 +46,13 @@ height_offset = metadata.get("height_offset", 0.0)
 fps = metadata.get("fps", 30.0)  # Frame rate, default to 30.0 if not present
 armature_name = f"sam3d_body_{profile_name}_armature"
 
+# Ensure scene FPS reflects metadata (used by FBX bake/export).
+if fps and fps > 0:
+    scene_fps = max(1, int(round(fps)))
+    bpy.context.scene.render.fps = scene_fps
+    # Support non-integer frame rates (e.g. 29.97) via fps_base.
+    bpy.context.scene.render.fps_base = scene_fps / float(fps)
+
 # ------------------------------------------------------------------------
 # RECONSTRUCT WORLD/ARMATURE-SPACE HEAD & TAIL
 # ------------------------------------------------------------------------

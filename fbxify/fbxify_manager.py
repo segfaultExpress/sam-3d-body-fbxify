@@ -100,19 +100,30 @@ class FbxifyManager:
             return None
 
         bbox_dict = {}
-        with open(bbox_file_path, "r") as f:
-            try:
-                for line in f:
-                    if line.strip() == "":
-                        continue
-                    frame_index, person_id, x1, y1, w, h, conf, x_world, y_world, z_world = line.strip().split(",")
-                    # Convert frame_index to int to standardize keys (handles '1', '1.0', etc.)
+        with open(bbox_file_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = [p.strip() for p in line.split(",")]
+                # Skip header line (e.g. "frame, id, x, y, w, h, score, class, visibility")
+                if len(parts) >= 1 and parts[0].lower() == "frame":
+                    continue
+                # Support 9-column MOT (frame, id, x, y, w, h, score, class, visibility) or 10-column with world
+                if len(parts) == 9:
+                    frame_index, person_id, x1, y1, w, h, conf = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6]
+                    x_world, y_world, z_world = "-1", "-1", "-1"
+                elif len(parts) >= 10:
+                    frame_index, person_id, x1, y1, w, h, conf, x_world, y_world, z_world = parts[0], parts[1], parts[2], parts[3], parts[4], parts[5], parts[6], parts[7], parts[8], parts[9]
+                else:
+                    raise ValueError(f"Error preparing bboxes: expected 9 or 10 columns, got {len(parts)}")
+                try:
                     frame_index_int = int(float(frame_index))
-                    if frame_index_int not in bbox_dict:
-                        bbox_dict[frame_index_int] = []
-                    bbox_dict[frame_index_int].append((person_id, x1, y1, w, h, conf, x_world, y_world, z_world))
-            except Exception as e:
-                raise ValueError(f"Error preparing bboxes: {e}")
+                except (ValueError, TypeError) as e:
+                    raise ValueError(f"Error preparing bboxes: invalid frame index '{frame_index}'") from e
+                if frame_index_int not in bbox_dict:
+                    bbox_dict[frame_index_int] = []
+                bbox_dict[frame_index_int].append((person_id, x1, y1, w, h, conf, x_world, y_world, z_world))
         return bbox_dict
     
     def set_camera_intrinsics(self, fov_method: str, fov_file_path: Optional[str], 
@@ -252,9 +263,61 @@ class FbxifyManager:
         shape_params_avg = np.mean(shape_params_array, axis=0)
         
         return scale_params_avg, shape_params_avg
-    
+
+    def process_frames(
+        self,
+        frame_paths: List[str],
+        profile_name: str,
+        num_people: int,
+        bbox_dict: Optional[Dict[int, List[Tuple]]],
+        use_root_motion: bool,
+        fps: float,
+        progress_callback: Optional[callable],
+        save_estimation_json: Optional[str] = None,
+        missing_bbox_behavior: str = "Run Detection",
+        frame_batch_size: Optional[int] = None,
+        detection_batch_size: Optional[int] = 1,
+    ) -> ProcessResult:
+        """
+        Run pose estimation on frames, then process results into FBX-ready data.
+        Used by the CLI.
+        """
+        estimation_results = self.estimation_manager.estimate_all_frames(
+            frame_paths,
+            num_people=num_people,
+            bbox_dict=bbox_dict,
+            progress_callback=progress_callback,
+            missing_bbox_behavior=missing_bbox_behavior,
+            frame_batch_size=frame_batch_size,
+            detection_batch_size=detection_batch_size,
+        )
+        json_path = save_estimation_json
+        if not json_path:
+            fd, json_path = tempfile.mkstemp(suffix=".json", prefix="pose_estimation_")
+            os.close(fd)
+        self.estimation_manager.save_estimation_results(
+            estimation_results,
+            json_path,
+            num_people=num_people,
+            fps=fps,
+        )
+        try:
+            return self.process_from_estimation_json(
+                json_path,
+                profile_name,
+                use_root_motion=use_root_motion,
+                fps=fps,
+                progress_callback=progress_callback,
+            )
+        finally:
+            if not save_estimation_json and os.path.exists(json_path):
+                try:
+                    os.remove(json_path)
+                except OSError:
+                    pass
+
     def process_from_estimation_json(self, estimation_json_path: str, profile_name: str,
-                                    use_root_motion: bool = True, fps: float = 30.0,
+                                    use_root_motion: bool = True, fps: Optional[float] = None,
                                     refinement_config=None, progress_callback: Optional[callable] = None,
                                     lod: int = -1, use_personalized_body: bool = False,
                                     outlier_removal_percent: float = 10.0,
@@ -273,7 +336,7 @@ class FbxifyManager:
             estimation_json_path: Path to estimation JSON file
             profile_name: Profile name
             use_root_motion: Whether to use root motion
-            fps: Frame rate
+            fps: Frame rate (uses metadata value if None)
             refinement_config: Optional RefinementConfig to apply before joint mapping
             progress_callback: Optional callback function(progress, description)
             lod: Level of Detail for mesh (-1 = no mesh, 0-6 = LOD level)
@@ -286,6 +349,12 @@ class FbxifyManager:
         """
         # Load estimation results (returns tuple of frames and metadata)
         estimation_results, metadata = self.estimation_manager.load_estimation_results(estimation_json_path)
+        metadata_fps = metadata.get("fps") if isinstance(metadata, dict) else None
+        if fps is None or fps <= 0:
+            if isinstance(metadata_fps, (int, float)) and metadata_fps > 0:
+                fps = float(metadata_fps)
+            else:
+                fps = 30.0
 
         # Convert camera space to armature space
         estimation_results = self.data_prep_manager.convert_camera_space_to_armature_space(estimation_results)

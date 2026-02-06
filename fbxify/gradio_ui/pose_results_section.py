@@ -23,7 +23,9 @@ def create_pose_results_section(translator: Translator) -> Dict[str, Any]:
 
     components["pose_json_file"] = gr.File(
         label=translator.t("ui.pose_json_file"),
-        file_types=[".json"],
+        file_types=[".json", ".mp4", ".txt", ".csv", ".png", ".jpg"],
+        file_count="multiple",
+        type="filepath",
         interactive=False
     )
 

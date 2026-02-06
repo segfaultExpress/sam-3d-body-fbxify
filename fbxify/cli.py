@@ -80,6 +80,19 @@ def parse_args():
         help="Armature profile to use (default: mhr)"
     )
     parser.add_argument(
+        "--tracking_mode",
+        type=str,
+        default="count",
+        choices=["bbox", "count", "inference", "inference_bbox"],
+        help="Tracking mode: bbox (use bbox file), count (N people), inference (tracklets), inference_bbox (bbox file + tracklets) (default: count)"
+    )
+    parser.add_argument(
+        "--tracking_config",
+        type=str,
+        default=None,
+        help="Path to tracking config JSON (used in inference tracking mode)"
+    )
+    parser.add_argument(
         "--num_people",
         type=int,
         default=1,
@@ -98,7 +111,19 @@ def parse_args():
         choices=["Run Detection", "Skip Frame"],
         help="What to do when bbox data is missing for a frame: Run Detection (use num_people to detect) or Skip Frame (skip pose estimation for that frame) (default: Run Detection)"
     )
-    
+    parser.add_argument(
+        "--frame_batch_size",
+        type=int,
+        default=1,
+        help="Run pose model once per N frames (1=per-frame). 4 or 8 can speed up video. Higher uses more GPU memory (default: 1)"
+    )
+    parser.add_argument(
+        "--detection_batch_size",
+        type=int,
+        default=1,
+        help="When no bbox file: number of images per detector batch (1=per-frame). Higher can speed up detection (default: 1)"
+    )
+
     # FOV options
     parser.add_argument(
         "--fov_method",
@@ -195,6 +220,10 @@ def main():
         print(f"Error: Bbox file not found: {args.bbox_file}")
         sys.exit(1)
     
+    if args.tracking_config and not os.path.exists(args.tracking_config):
+        print(f"Error: Tracking config file not found: {args.tracking_config}")
+        sys.exit(1)
+    
     # Determine checkpoint path
     if args.model == "vith":
         checkpoint_base_path = VITH_CHECKPOINT_PATH
@@ -268,7 +297,7 @@ def main():
                 args.load_estimation_json,
                 args.profile,
                 args.use_root_motion,
-                fps=30.0,
+                fps=None,
                 auto_floor=args.auto_floor,
                 collect_refinement_logs=False
             )
@@ -281,7 +310,7 @@ def main():
                 process_result.root_motions,
                 process_result.frame_paths,
                 process_result.fps,
-                progress_callback=lambda p, d: print(f"Progress: {p*100:.1f}% - {d}"),
+                progress_callback=None,
                 height_offset=process_result.height_offset
             )
             
@@ -326,10 +355,18 @@ def main():
         
         print(f"Processing {len(frame_paths)} frame(s)...")
         
-        # Prepare bboxes
+        # Prepare bboxes / tracking mode
+        tracking_mode = args.tracking_mode
+        if tracking_mode != "bbox" and args.bbox_file:
+            print("Info: bbox file provided, switching tracking_mode to bbox")
+            tracking_mode = "bbox"
+
         bbox_dict = None
         num_people = args.num_people
-        if args.bbox_file:
+        if tracking_mode == "bbox":
+            if not args.bbox_file:
+                print("Error: --bbox_file is required when --tracking_mode is bbox")
+                sys.exit(1)
             print("Loading bounding boxes...")
             bbox_dict = manager.prepare_bboxes(args.bbox_file)
             # Count unique person IDs
@@ -340,64 +377,67 @@ def main():
                         unique_person_ids.add(bbox[0])
             num_people = len(unique_person_ids) if unique_person_ids else 0
             print(f"Found {num_people} unique person(s) in bbox file")
-        
-        # Set camera intrinsics
-        if args.fov_method != "Default":
-            print(f"Setting camera intrinsics (method: {args.fov_method})...")
-            fov_file_path = args.fov_file if args.fov_method == "File" else None
-            manager.set_camera_intrinsics(
-                args.fov_method,
-                fov_file_path,
+        else:
+            if num_people <= 0:
+                print("Error: --num_people must be greater than 0")
+                sys.exit(1)
+            
+            # Set camera intrinsics
+            if args.fov_method != "Default":
+                print(f"Setting camera intrinsics (method: {args.fov_method})...")
+                fov_file_path = args.fov_file if args.fov_method == "File" else None
+                manager.set_camera_intrinsics(
+                    args.fov_method,
+                    fov_file_path,
+                    frame_paths,
+                    args.sample_number
+                )
+            
+            # Process frames (tqdm used internally for progress)
+            process_result = manager.process_frames(
                 frame_paths,
-                args.sample_number
+                args.profile,
+                num_people,
+                bbox_dict,
+                args.use_root_motion,
+                fps,
+                None,
+                save_estimation_json=args.save_estimation_json,
+                missing_bbox_behavior=args.missing_bbox_behavior,
+                frame_batch_size=args.frame_batch_size,
+                detection_batch_size=args.detection_batch_size,
             )
-        
-        # Process frames
-        def progress_callback(progress_value, description):
-            print(f"Progress: {progress_value*100:.1f}% - {description}")
-        
-        process_result = manager.process_frames(
-            frame_paths,
-            args.profile,
-            num_people,
-            bbox_dict,
-            args.use_root_motion,
-            fps,
-            progress_callback,
-            save_estimation_json=args.save_estimation_json,
-            missing_bbox_behavior=args.missing_bbox_behavior
-        )
-        
-        # Print estimation JSON path if saved
-        if args.save_estimation_json:
-            print(f"Estimation results saved to: {args.save_estimation_json}")
-        
-        # Export FBX files
-        print("Exporting FBX files...")
-        fbx_paths = manager.export_fbx_files(
-            process_result.profile_name,
-            process_result.joint_to_bone_mappings,
-            process_result.root_motions,
-            process_result.frame_paths,
-            process_result.fps,
-            progress_callback,
-            height_offset=getattr(process_result, "height_offset", 0.0)
-        )
-        
-        # Move files to output directory if specified
-        if args.output_dir:
-            os.makedirs(args.output_dir, exist_ok=True)
-            moved_paths = []
+            
+            # Print estimation JSON path if saved
+            if args.save_estimation_json:
+                print(f"Estimation results saved to: {args.save_estimation_json}")
+            
+            # Export FBX files
+            print("Exporting FBX files...")
+            fbx_paths = manager.export_fbx_files(
+                process_result.profile_name,
+                process_result.joint_to_bone_mappings,
+                process_result.root_motions,
+                process_result.frame_paths,
+                process_result.fps,
+                None,
+                height_offset=getattr(process_result, "height_offset", 0.0)
+            )
+            
+            # Move files to output directory if specified
+            if args.output_dir:
+                os.makedirs(args.output_dir, exist_ok=True)
+                moved_paths = []
+                for fbx_path in fbx_paths:
+                    filename = os.path.basename(fbx_path)
+                    dest_path = os.path.join(args.output_dir, filename)
+                    shutil.copy2(fbx_path, dest_path)
+                    moved_paths.append(dest_path)
+                fbx_paths = moved_paths
+            
+            print(f"Exported {len(fbx_paths)} FBX file(s):")
             for fbx_path in fbx_paths:
-                filename = os.path.basename(fbx_path)
-                dest_path = os.path.join(args.output_dir, filename)
-                shutil.copy2(fbx_path, dest_path)
-                moved_paths.append(dest_path)
-            fbx_paths = moved_paths
-        
-        print(f"Exported {len(fbx_paths)} FBX file(s):")
-        for fbx_path in fbx_paths:
-            print(f"  - {fbx_path}")
+                print(f"  - {fbx_path}")
         
     except Exception as e:
         print(f"Error: {e}")

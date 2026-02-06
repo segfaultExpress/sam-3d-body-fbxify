@@ -7,6 +7,7 @@ This module is responsible for:
 - Saving/loading estimation results as JSON files
 - Camera intrinsics caching
 """
+from tqdm import tqdm
 import torch
 import numpy as np
 from sam_3d_body import load_sam_3d_body, SAM3DBodyEstimator
@@ -109,6 +110,156 @@ class PoseEstimationManager:
         self._cancel_event = threading.Event()
         self._lod_faces_cache: Dict[int, np.ndarray] = {}
         self._lod_faces_initialized = False
+
+    def run_detection_on_frames(
+        self,
+        frame_paths: List[str],
+        detection_batch_size: int = 1,
+        progress_callback: Optional[callable] = None,
+        output_mot_path: Optional[str] = None,
+    ) -> Dict[int, List[Tuple]]:
+        """
+        Run human detection on all frames and return bbox_dict (and optionally write MOT file).
+        Single code path used by estimation (when no bbox file) and by "Export detection to MOT".
+
+        Args:
+            frame_paths: List of image paths.
+            detection_batch_size: Number of images to send to the detector per batch (1 = per-frame).
+            progress_callback: Optional callback(progress_float, description_str).
+            output_mot_path: If set, write bbox_dict to this MOT-format file.
+
+        Returns:
+            bbox_dict: Dict mapping 1-based frame index to list of bbox tuples
+                       (person_id, x1, y1, w, h, conf, x_world, y_world, z_world).
+
+        Raises:
+            RuntimeError: If no human detector is available.
+        """
+        if self.estimator.detector is None:
+            raise RuntimeError(
+                "No human detector is configured. Detection requires a detector (e.g. vitdet)."
+            )
+        import cv2
+
+        detector = self.estimator.detector
+        has_batch = getattr(detector, "run_human_detection_batch", None) is not None
+        use_batch = has_batch and detection_batch_size > 1
+
+        bbox_dict: Dict[int, List[Tuple]] = {}
+        n_frames = len(frame_paths)
+        tqdm_bar = tqdm(total=n_frames, desc="Detecting frames", unit="frame")
+
+        if use_batch:
+            for chunk_start in range(0, n_frames, detection_batch_size):
+                self._check_cancelled()
+                chunk_end = min(chunk_start + detection_batch_size, n_frames)
+                paths_chunk = frame_paths[chunk_start:chunk_end]
+                images = []
+                valid_indices = []
+                for i, p in enumerate(paths_chunk):
+                    img = cv2.imread(p)
+                    if img is not None:
+                        images.append(img)
+                        valid_indices.append(chunk_start + i)
+                for frame_index_0 in range(chunk_start, chunk_end):
+                    if frame_index_0 not in valid_indices:
+                        bbox_dict[frame_index_0 + 1] = []
+                if not images:
+                    tqdm_bar.update(len(paths_chunk))
+                    if progress_callback:
+                        progress_callback(chunk_end / n_frames, f"Detecting frame {chunk_end}/{n_frames}")
+                    continue
+                boxes_list = detector.run_human_detection_batch(
+                    images,
+                    det_cat_id=0,
+                    bbox_thr=0.5,
+                    nms_thr=0.3,
+                    default_to_full_image=False,
+                )
+                for idx, frame_index_0 in enumerate(valid_indices):
+                    frame_1based = frame_index_0 + 1
+                    boxes_xyxy = boxes_list[idx] if idx < len(boxes_list) else np.empty((0, 4))
+                    if len(boxes_xyxy) == 0:
+                        bbox_dict[frame_1based] = []
+                        continue
+                    tuples_list = []
+                    for person_id, box in enumerate(boxes_xyxy):
+                        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+                        w, h = x2 - x1, y2 - y1
+                        tuples_list.append((person_id, x1, y1, w, h, 1.0, -1, -1, -1))
+                    bbox_dict[frame_1based] = tuples_list
+                tqdm_bar.update(len(paths_chunk))
+                if progress_callback:
+                    progress_callback(chunk_end / n_frames, f"Detecting frame {chunk_end}/{n_frames}")
+        else:
+            for frame_index, frame_path in enumerate(frame_paths):
+                tqdm_bar.update(1)
+                self._check_cancelled()
+                if progress_callback:
+                    progress_callback((frame_index + 1) / n_frames, f"Detecting frame {frame_index + 1}/{n_frames}")
+                img = cv2.imread(frame_path)
+                if img is None:
+                    continue
+                boxes_xyxy = detector.run_human_detection(
+                    img,
+                    det_cat_id=0,
+                    bbox_thr=0.5,
+                    nms_thr=0.3,
+                    default_to_full_image=False,
+                )
+                frame_1based = frame_index + 1
+                if len(boxes_xyxy) == 0:
+                    bbox_dict[frame_1based] = []
+                    continue
+                tuples_list = []
+                for person_id, box in enumerate(boxes_xyxy):
+                    x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+                    w, h = x2 - x1, y2 - y1
+                    tuples_list.append((person_id, x1, y1, w, h, 1.0, -1, -1, -1))
+                bbox_dict[frame_1based] = tuples_list
+
+        tqdm_bar.close()
+
+        if output_mot_path:
+            lines = ["frame, id, x, y, w, h, score, class, visibility"]
+            for frame_1based in sorted(bbox_dict.keys()):
+                for tup in bbox_dict[frame_1based]:
+                    person_id, x1, y1, w, h, conf, _xw, _yw, _zw = tup
+                    line = f"{frame_1based},{person_id},{x1:.2f},{y1:.2f},{w:.2f},{h:.2f},{conf:.2f},-1,-1"
+                    lines.append(line)
+            with open(output_mot_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines))
+
+        return bbox_dict
+
+    def run_detection_only(
+        self,
+        frame_paths: List[str],
+        output_mot_path: str,
+        progress_callback: Optional[callable] = None,
+        detection_batch_size: int = 1,
+    ) -> str:
+        """
+        Run detection on all frames and export results to an MOT file (no pose estimation).
+        Same detection as used when estimating without a bbox file; use this to export once
+        then load the file for "Inference Tracking + BBOX File" to skip re-detection.
+
+        Args:
+            frame_paths: List of image paths.
+            output_mot_path: Path to write MOT CSV.
+            progress_callback: Optional callback(progress_float, description_str).
+            detection_batch_size: Number of images per detector batch (1 = per-frame).
+
+        Returns:
+            output_mot_path on success.
+        """
+        self.run_detection_on_frames(
+            frame_paths,
+            detection_batch_size=detection_batch_size,
+            progress_callback=progress_callback,
+            output_mot_path=output_mot_path,
+        )
+        return output_mot_path
 
     def _extract_faces_from_fbx(self, fbx_path: str) -> Optional[np.ndarray]:
         return extract_fbx_faces_with_blender(fbx_path)
@@ -376,15 +527,17 @@ class PoseEstimationManager:
                            f"  - Dict with COLMAP parameters\n"
                            f"Got: {type(cam_int)}")
 
-    def estimate_all_frames(self, frame_paths: List[str], num_people: int = 1,
+    def estimate_all_frames(self, frame_paths: List[str], num_people: Optional[int] = 1,
                            bbox_dict: Optional[Dict[int, List[Tuple]]] = None,
                            progress_callback: Optional[callable] = None,
                            source_name: Optional[str] = None,
                            missing_bbox_behavior: str = "Run Detection",
-                           lang: str = DEFAULT_LANGUAGE) -> Dict[str, Dict[str, Any]]:
+                           lang: str = DEFAULT_LANGUAGE,
+                           frame_batch_size: Optional[int] = None,
+                           detection_batch_size: Optional[int] = 1) -> Dict[str, Dict[str, Any]]:
         """
         Estimate poses for all frames.
-        
+
         Args:
             frame_paths: List of frame file paths
             num_people: Number of people to detect (if bboxes not provided)
@@ -392,57 +545,149 @@ class PoseEstimationManager:
             progress_callback: Optional callback function(progress, description)
             source_name: Optional source filename for metadata
             missing_bbox_behavior: What to do when bbox is missing for a frame.
-                                  "Run Detection" (default): Use num_people to run detection.
+                                  "Run Detection" (default): Run detection phase first, then estimate.
                                   "Skip Frame": Skip pose estimation for that frame (store empty dict).
-            
+            frame_batch_size: If set to an integer > 1, run pose model once per this many frames
+                              (batched body forward, then hand refinement per frame). Default None = 1 (current behavior).
+            detection_batch_size: When no bbox file and Run Detection, number of images per detector batch (1 = per-frame).
+
         Returns:
             Dictionary in format: {frame_X: {person_id: estimation_data}}
             If no people detected in a frame, frame_X will be an empty dict but present.
         """
-        total_start = time.time()
         estimation_results = {}
         translator = Translator(lang)
-                
+        use_batching = frame_batch_size is not None and frame_batch_size > 1
+
+        # Run detection phase once when no bbox file and we need boxes (decoupled from estimation loop)
+        if bbox_dict is None and missing_bbox_behavior == "Run Detection" and self.estimator.detector is not None:
+            batch_size = detection_batch_size if detection_batch_size is not None else 1
+            bbox_dict = self.run_detection_on_frames(
+                frame_paths,
+                detection_batch_size=batch_size,
+                progress_callback=progress_callback,
+                output_mot_path=None,
+            )
+
+        if use_batching:
+            self._estimate_all_frames_batched(
+                frame_paths=frame_paths,
+                num_people=num_people,
+                bbox_dict=bbox_dict,
+                progress_callback=progress_callback,
+                missing_bbox_behavior=missing_bbox_behavior,
+                translator=translator,
+                estimation_results=estimation_results,
+                frame_batch_size=frame_batch_size,
+            )
+        else:
+            tqdm_bar = tqdm(total=len(frame_paths), desc="Estimating frames", unit="frame")
+            for frame_index, frame_path in enumerate(frame_paths):
+                self._check_cancelled()
+                if progress_callback:
+                    progress = frame_index / len(frame_paths)
+                    progress_callback(progress, translator.t("progress.estimating_frame", frame_index=frame_index + 1, total_frames=len(frame_paths)))
+                bboxes = None
+                bbox_missing = False
+                if bbox_dict is not None:
+                    if (frame_index + 1) in bbox_dict:
+                        bboxes = bbox_dict[frame_index + 1]
+                    else:
+                        bbox_missing = True
+                tqdm_bar.set_description(translator.t("progress.estimating_frame", frame_index=frame_index + 1, total_frames=len(frame_paths)))
+                tqdm_bar.update(1)
+                if bbox_missing and missing_bbox_behavior == "Skip Frame":
+                    print(f"  [INFO] Bbox missing for frame {frame_index + 1}, skipping (behavior: Skip Frame)")
+                    estimation_results[str(frame_index)] = {}
+                    continue
+                if bboxes is not None and len(bboxes) == 0:
+                    estimation_results[str(frame_index)] = {}
+                    continue
+                frame_results = self._estimate_single_frame(
+                    frame_path, num_people=num_people, bboxes=bboxes
+                )
+                estimation_results[str(frame_index)] = frame_results
+            tqdm_bar.close()
+
+        return estimation_results
+
+    def _estimate_all_frames_batched(
+        self,
+        frame_paths: List[str],
+        num_people: Optional[int],
+        bbox_dict: Optional[Dict[int, List[Tuple]]],
+        progress_callback: Optional[callable],
+        missing_bbox_behavior: str,
+        translator: Translator,
+        estimation_results: Dict[str, Dict[str, Any]],
+        frame_batch_size: int,
+    ) -> None:
+        """Process frames in chunks of frame_batch_size using process_batch_of_frames."""
+        import cv2
+        tqdm_bar = tqdm(total=len(frame_paths), desc="Estimating frames", unit="frame")
+        chunk = []
+        processed = 0
+
+        def flush_chunk():
+            nonlocal chunk, processed
+            if not chunk:
+                return
+            frames_list = []
+            for _fi, _path, bboxes_np, _ids, _orig in chunk:
+                frames_list.append({
+                    "img": _path,
+                    "bboxes": bboxes_np,
+                    "cam_int": self.cached_cam_int,
+                })
+            self.estimator.model.head_pose.lod = 1
+            self.estimator.model.head_pose_hand.lod = 1
+            batch_result = self.estimator.process_batch_of_frames(frames_list, inference_type="full")
+            for k, (frame_index, _path, _bboxes_np, ids, bboxes_orig) in enumerate(chunk):
+                all_out_k = batch_result[k] if k < len(batch_result) else []
+                frame_results = {}
+                for i, person_id in enumerate(ids):
+                    if i < len(all_out_k):
+                        filtered = self._filter_estimation_output(all_out_k[i])
+                        if bboxes_orig is not None and isinstance(bboxes_orig, list) and i < len(bboxes_orig):
+                            try:
+                                bt = bboxes_orig[i]
+                                if len(bt) >= 6:
+                                    x1, y1, w, h = float(bt[1]), float(bt[2]), float(bt[3]), float(bt[4])
+                                    filtered["bbox_xywh"] = [x1, y1, w, h]
+                                    filtered["bbox_xyxy"] = [x1, y1, x1 + w, y1 + h]
+                            except Exception:
+                                pass
+                        frame_results[str(person_id)] = to_serializable(filtered)
+                estimation_results[str(frame_index)] = frame_results
+            processed += len(chunk)
+            tqdm_bar.update(len(chunk))
+            if progress_callback:
+                progress_callback(processed / len(frame_paths), translator.t("progress.estimating_frame", frame_index=processed, total_frames=len(frame_paths)))
+            chunk = []
+
         for frame_index, frame_path in enumerate(frame_paths):
             self._check_cancelled()
-            # Update progress bar if callback is provided
-            if progress_callback:
-                progress = frame_index / len(frame_paths)
-                progress_callback(progress, translator.t("progress.estimating_frame", frame_index=frame_index + 1, total_frames=len(frame_paths)))
-            
-            # Get bboxes for this frame (bbox_dict uses 1-based indexing for MOT format)
-            bboxes = None
-            bbox_missing = False
-            if bbox_dict is not None:
-                if (frame_index + 1) in bbox_dict:
-                    bboxes = bbox_dict[frame_index + 1]
-                else:
-                    bbox_missing = True
-            
-            # Handle missing bbox based on behavior
+            bbox_missing = bbox_dict is not None and (frame_index + 1) not in bbox_dict
             if bbox_missing and missing_bbox_behavior == "Skip Frame":
-                print(f"  [INFO] Bbox missing for frame {frame_index + 1}, skipping (behavior: Skip Frame)")
-                # Store empty dict to skip this frame
                 estimation_results[str(frame_index)] = {}
+                tqdm_bar.update(1)
                 continue
-            
-            # Process this frame (either bbox exists, or missing_bbox_behavior is "Run Detection")
-            frame_results = self._estimate_single_frame(
-                frame_path,
-                num_people=num_people,
-                bboxes=bboxes
-            )
-            
-            # Store results with frame index as string key
-            estimation_results[str(frame_index)] = frame_results
-        
-        total_end = time.time()
-        total_time = total_end - total_start
-        avg_time_per_frame = total_time / len(frame_paths) if frame_paths else 0
-        
-        return estimation_results
+            bboxes = bbox_dict[frame_index + 1] if bbox_dict and (frame_index + 1) in bbox_dict else None
+            if bboxes is None:
+                # No detection in estimation loop; missing frames get empty result or skip
+                estimation_results[str(frame_index)] = {}
+                tqdm_bar.update(1)
+                continue
+            ids = self._get_person_ids(bboxes) if isinstance(bboxes, list) else list(range(len(bboxes)))
+            bboxes_numpy = self._convert_bboxes_to_numpy(bboxes) if isinstance(bboxes, list) else np.asarray(bboxes, dtype=np.float32)
+            bboxes_orig = bboxes if isinstance(bboxes, list) else None
+            chunk.append((frame_index, frame_path, bboxes_numpy, ids, bboxes_orig))
+            if len(chunk) >= frame_batch_size:
+                flush_chunk()
+        flush_chunk()
+        tqdm_bar.close()
     
-    def _estimate_single_frame(self, image_path: str, num_people: int = 1,
+    def _estimate_single_frame(self, image_path: str, num_people: Optional[int] = 1,
                               bboxes: Optional[List[Tuple]] = None) -> Dict[str, Any]:
         """
         Estimate pose for a single frame.
@@ -459,8 +704,11 @@ class PoseEstimationManager:
         ids = []
         bboxes_numpy = None
         
-        if num_people > 0 and bboxes is None:
-            ids = [i for i in range(num_people)]  # without bboxes, name people 0, 1, 2, ...
+        if bboxes is None:
+            if num_people is not None and num_people > 0:
+                ids = [i for i in range(num_people)]  # without bboxes, name people 0, 1, 2, ...
+            elif num_people is not None and num_people <= 0:
+                raise ValueError(f"num_people must be > 0 when bboxes are not provided, got {num_people}")
         else:
             # Check if bboxes is a list (original format) or numpy array
             if isinstance(bboxes, list):
@@ -482,20 +730,16 @@ class PoseEstimationManager:
         # IMPORTANT: process_one_image returns a list of dicts
         outputs_raw = self.estimator.process_one_image(image_path, bboxes=bboxes_numpy, cam_int=self.cached_cam_int)
         
-        # Check if mesh was generated (pred_vertices present)
-        mesh_generated = False
-        if outputs_raw and len(outputs_raw) > 0:
-            mesh_generated = "pred_vertices" in outputs_raw[0] and outputs_raw[0]["pred_vertices"] is not None
-            if mesh_generated:
-                vert_count = len(outputs_raw[0]["pred_vertices"]) if outputs_raw[0]["pred_vertices"] is not None else 0
-                print(f"  [INFO] Mesh generated: {vert_count} vertices")
+        # If num_people is None and bboxes are not provided, use all detections
+        if bboxes is None and num_people is None:
+            ids = [i for i in range(len(outputs_raw))]
 
         # Convert outputs to serializable format and organize by person ID
         timer_filter_start = time.time()
         frame_results = {}
         for i, person_id in enumerate(ids):
-            if bboxes is not None:
-                # Use the output at index i (matches bbox order)
+            if bboxes is not None or num_people is None:
+                # Use the output at index i (matches bbox order or all detections)
                 if i < len(outputs_raw):
                     outputs = outputs_raw[i]
                 else:
@@ -508,6 +752,18 @@ class PoseEstimationManager:
             
             # Filter to only required keys and convert to serializable format
             filtered_output = self._filter_estimation_output(outputs)
+            if bboxes is not None and isinstance(bboxes, list):
+                try:
+                    bbox_tuple = bboxes[i]
+                    if len(bbox_tuple) >= 6:
+                        x1 = float(bbox_tuple[1])
+                        y1 = float(bbox_tuple[2])
+                        w = float(bbox_tuple[3])
+                        h = float(bbox_tuple[4])
+                        filtered_output["bbox_xywh"] = [x1, y1, w, h]
+                        filtered_output["bbox_xyxy"] = [x1, y1, x1 + w, y1 + h]
+                except Exception:
+                    pass
             estimation_data = to_serializable(filtered_output)
             frame_results[str(person_id)] = estimation_data
         
@@ -636,7 +892,8 @@ class PoseEstimationManager:
             "global_rot",
             "pred_cam_t",
             "scale_params",
-            "shape_params"
+            "shape_params",
+            "bbox",
         ]
         
         filtered = {}
@@ -645,13 +902,28 @@ class PoseEstimationManager:
                 filtered[key] = output[key]
             else:
                 # Warn if required key is missing (except optional mesh params)
-                if key not in ["scale_params", "shape_params"]:
+                if key not in ["scale_params", "shape_params", "bbox"]:
                     print(f"  WARNING: Missing required key '{key}' in estimation output")
+
+        if "bbox" in filtered and filtered["bbox"] is not None:
+            bbox = np.array(filtered["bbox"]).astype(np.float32).flatten()
+            if bbox.size >= 4:
+                x1, y1, x2, y2 = bbox[:4].tolist()
+                filtered["bbox_xyxy"] = [x1, y1, x2, y2]
+                filtered["bbox_xywh"] = [x1, y1, (x2 - x1), (y2 - y1)]
         
         return filtered
     
-    def save_estimation_results(self, estimation_results: Dict[str, Dict[str, Any]], file_path: str,
-                               source_name: Optional[str] = None, num_people: Optional[int] = None):
+    def save_estimation_results(
+        self,
+        estimation_results: Dict[str, Dict[str, Any]],
+        file_path: str,
+        source_name: Optional[str] = None,
+        num_people: Optional[int] = None,
+        tracking_metadata: Optional[Dict[str, Any]] = None,
+        output_files: Optional[List[str]] = None,
+        fps: Optional[float] = None,
+    ):
         """
         Save estimation results to JSON file with metadata wrapper.
         
@@ -660,6 +932,7 @@ class PoseEstimationManager:
             file_path: Path to save JSON file
             source_name: Optional source filename for metadata
             num_people: Optional number of people (from bbox file or user input)
+            fps: Optional frame rate to persist in metadata
         """
         # Count unique person IDs from estimation results if num_people not provided
         if num_people is None:
@@ -676,8 +949,14 @@ class PoseEstimationManager:
             "creation_date": datetime.utcnow().isoformat() + "Z",
             "version": VERSION,
             "num_people": num_people,
-            "frames": estimation_results
+            "frames": estimation_results,
         }
+        if fps is not None:
+            metadata["fps"] = float(fps)
+        if tracking_metadata is not None:
+            metadata["tracking"] = tracking_metadata
+        if output_files:
+            metadata["outputs"] = output_files
         
         with open(file_path, 'w') as f:
             json.dump(metadata, f, indent=2)
@@ -711,7 +990,10 @@ class PoseEstimationManager:
                 "source": data.get("source", "unknown"),
                 "creation_date": data.get("creation_date", "unknown"),
                 "version": data.get("version", "unknown"),
-                "num_people": data.get("num_people", None)
+                "num_people": data.get("num_people", None),
+                "tracking": data.get("tracking", None),
+                "outputs": data.get("outputs", None),
+                "fps": data.get("fps", None),
             }
             frames = data["frames"]
             
@@ -742,7 +1024,8 @@ class PoseEstimationManager:
                 "source": "unknown",
                 "creation_date": "unknown",
                 "version": "unknown",
-                "num_people": None
+                "num_people": None,
+                "fps": None,
             }
             return data, metadata
     

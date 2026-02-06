@@ -1233,6 +1233,28 @@ class SAM3DBody(BaseModel):
 
         # Step 1. For full-body inference, we first inference with the body decoder.
         pose_output = self.forward_step(batch, decoder_type="body")
+        """ BATCHING SUPPORT FOR FBXIFY """
+        return self.run_hand_refinement(
+            img, batch, pose_output, transform_hand, thresh_wrist_angle
+        )
+        """ BATCHING SUPPORT FOR FBXIFY """
+    def run_hand_refinement(
+        self,
+        img,
+        batch: Dict,
+        pose_output: Dict,
+        transform_hand: Any,
+        thresh_wrist_angle: float = 1.4,
+    ):
+        """ BATCHING SUPPORT FOR FBXIFY """
+        """
+        Run hand refinement and fusion given body pose_output.
+        Used by run_inference(full) and by process_batch_of_frames (per-frame).
+        Expects batch with shape (1, N) and pose_output["mhr"] with (N, ...).
+        Modifies pose_output in place and returns (pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output).
+        """
+        height, width = img.shape[:2]
+        cam_int = batch["cam_int"].clone()
         left_xyxy, right_xyxy = self._get_hand_box(pose_output, batch)
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
@@ -1240,7 +1262,7 @@ class SAM3DBody(BaseModel):
                 1, (2, 3)
             ),
         )
-
+        """ BATCHING SUPPORT FOR FBXIFY """
         # Step 2. Re-run with each hand
         ## Left... Flip image & box
         flipped_img = img[:, ::-1]
@@ -1252,6 +1274,7 @@ class SAM3DBody(BaseModel):
             flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone()
         )
         batch_lhand = recursive_to(batch_lhand, "cuda")
+        self._initialize_batch(batch_lhand) # BATCHING SUPPORT FOR FBXIFY
         lhand_output = self.forward_step(batch_lhand, decoder_type="hand")
 
         # Unflip output
@@ -1288,6 +1311,7 @@ class SAM3DBody(BaseModel):
             img, transform_hand, right_xyxy, cam_int=cam_int.clone()
         )
         batch_rhand = recursive_to(batch_rhand, "cuda")
+        self._initialize_batch(batch_rhand) # BATCHING SUPPORT FOR FBXIFY
         rhand_output = self.forward_step(batch_rhand, decoder_type="hand")
 
         # Step 3. replace hand pose estimation from the body decoder.

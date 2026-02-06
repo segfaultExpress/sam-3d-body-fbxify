@@ -17,7 +17,7 @@ except Exception:
     ImageFont = None
 
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 
 from fbxify.metadata import PROFILES, MHR_KEYPOINT_INDEX
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
@@ -389,6 +389,138 @@ def _create_camera_placeholder_image(
 def _is_video_path(path: str) -> bool:
     ext = os.path.splitext(path)[1].lower()
     return ext in VIDEO_EXTENSIONS
+
+
+def _get_tracking_color(person_id) -> tuple:
+    palette = [
+        (255, 99, 71),
+        (54, 162, 235),
+        (255, 206, 86),
+        (75, 192, 192),
+        (153, 102, 255),
+        (255, 159, 64),
+        (46, 204, 113),
+        (231, 76, 60),
+        (241, 196, 15),
+        (52, 152, 219),
+        (155, 89, 182),
+        (26, 188, 156),
+    ]
+    try:
+        idx = int(person_id) % len(palette)
+    except Exception:
+        idx = abs(hash(str(person_id))) % len(palette)
+    bgr = palette[idx]
+    return (int(bgr[2]), int(bgr[1]), int(bgr[0]))
+
+
+def render_tracking_bbox_overlay(
+    frame_paths: List[str],
+    estimation_results: Dict[str, Dict[str, Any]],
+    output_path: str,
+    fps: float = 30.0,
+) -> Optional[str]:
+    if not frame_paths:
+        return None
+
+    is_video = len(frame_paths) > 1
+    writer = None
+    output_written = False
+
+    for frame_index, frame_path in enumerate(frame_paths):
+        frame = cv2.imread(frame_path)
+        if frame is None:
+            continue
+
+        frame_key = str(frame_index)
+        frame_data = estimation_results.get(frame_key, {})
+        if isinstance(frame_data, dict):
+            for person_id, data in frame_data.items():
+                if not isinstance(data, dict):
+                    continue
+                bbox_xyxy = data.get("bbox_xyxy")
+                bbox_xywh = data.get("bbox_xywh")
+                if bbox_xyxy is None and bbox_xywh is not None:
+                    try:
+                        x1, y1, w, h = [float(v) for v in bbox_xywh[:4]]
+                        bbox_xyxy = [x1, y1, x1 + w, y1 + h]
+                    except Exception:
+                        bbox_xyxy = None
+                if bbox_xyxy is None:
+                    continue
+
+                try:
+                    x1, y1, x2, y2 = [int(round(float(v))) for v in bbox_xyxy[:4]]
+                except Exception:
+                    continue
+
+                color = _get_tracking_color(person_id)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, thickness=3)
+
+                label = f"ID: {person_id}"
+                font = cv2.FONT_HERSHEY_SIMPLEX
+                font_scale = 2.0
+                thickness = 4
+                (text_w, text_h), _ = cv2.getTextSize(label, font, font_scale, thickness)
+                text_x = max(0, x1 + 4)
+                text_y = max(text_h + 8, y1 - 10)
+                bg_x2 = text_x + text_w + 10
+                bg_y2 = text_y + 8
+                cv2.rectangle(frame, (text_x - 6, text_y - text_h - 6), (bg_x2, bg_y2), (0, 0, 0), thickness=-1)
+                cv2.rectangle(frame, (text_x - 6, text_y - text_h - 6), (bg_x2, bg_y2), color, thickness=3)
+                cv2.putText(frame, label, (text_x, text_y), font, font_scale, color, thickness=thickness, lineType=cv2.LINE_AA)
+
+        if is_video:
+            if writer is None:
+                height, width = frame.shape[:2]
+                fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+                writer = cv2.VideoWriter(output_path, fourcc, fps if fps else 30.0, (width, height))
+            writer.write(frame)
+            output_written = True
+        else:
+            cv2.imwrite(output_path, frame)
+            output_written = True
+            break
+
+    if writer is not None:
+        writer.release()
+
+    return output_path if output_written else None
+
+
+def export_mot_bboxes(
+    estimation_results: Dict[str, Dict[str, Any]],
+    output_path: str,
+) -> Optional[str]:
+    if not estimation_results:
+        return None
+    lines = []
+    header = "frame, id, x, y, w, h, score, class, visibility"
+    lines.append(header)
+    for frame_index_str in sorted(estimation_results.keys(), key=lambda v: int(v)):
+        frame_data = estimation_results.get(frame_index_str, {})
+        if not isinstance(frame_data, dict):
+            continue
+        try:
+            frame_index = int(frame_index_str)
+        except Exception:
+            continue
+        for person_id, data in frame_data.items():
+            if not isinstance(data, dict):
+                continue
+            bbox_xywh = data.get("bbox_xywh")
+            if bbox_xywh is None or len(bbox_xywh) < 4:
+                continue
+            try:
+                x, y, w, h = [float(v) for v in bbox_xywh[:4]]
+            except Exception:
+                continue
+            line = f"{frame_index + 1:.1f},{person_id},{x:.2f},{y:.2f},{w:.2f},{h:.2f},1,-1,-1"
+            lines.append(line)
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+    return output_path
 
 
 def _extract_video_frames(

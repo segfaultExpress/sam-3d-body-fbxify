@@ -117,6 +117,23 @@ def create_pose_dev_section(translator: Translator) -> Dict[str, Any]:
             variant="stop",
             interactive=True
         )
+        components["pose_output_tracking_bbox"] = gr.Checkbox(
+            label=translator.t("ui.pose_dev.output_tracking_bbox"),
+            value=False
+        )
+        components["pose_run_bbox_detection_btn"] = gr.Button(
+            translator.t("ui.pose_dev.run_bbox_detection_now"),
+            variant="secondary",
+        )
+        components["pose_run_bbox_detection_info"] = gr.Markdown(
+            translator.t("ui.pose_dev.run_bbox_detection_now_info"),
+            visible=True,
+        )
+        components["pose_bbox_detection_output"] = gr.File(
+            label=translator.t("ui.pose_dev.bbox_detection_output"),
+            interactive=False,
+            visible=False,
+        )
     return components
 
 
@@ -212,6 +229,10 @@ def update_pose_dev_language(lang: str) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.developer_options")),
         gr.update(value=t.t("ui.cancel_current_jobs_info")),
         gr.update(value=t.t("ui.cancel_current_jobs")),
+        gr.update(label=t.t("ui.pose_dev.output_tracking_bbox")),
+        gr.update(value=t.t("ui.pose_dev.run_bbox_detection_now")),
+        gr.update(value=t.t("ui.pose_dev.run_bbox_detection_now_info")),
+        gr.update(label=t.t("ui.pose_dev.bbox_detection_output")),
     )
 
 
