@@ -5,6 +5,29 @@ from fbxify.tracking.mhr_tracker import MHRTracker
 from fbxify.tracking.tracking_config import TrackingConfig
 
 
+def apply_frame_assignments(
+    estimation_results: Dict[str, Dict[str, Any]],
+    frame_assignments: Dict[str, Dict[str, int]],
+) -> Dict[str, Dict[str, Any]]:
+    """
+    Remap estimation results so person_id keys become track_id (stable across frames).
+
+    frame_assignments: { frame_key: { original_person_id_str: track_id_int } }
+    Returns a new estimation_results dict with the same structure but keys remapped to track_id.
+    """
+    remapped: Dict[str, Dict[str, Any]] = {}
+    for frame_key, frame_data in estimation_results.items():
+        if not isinstance(frame_data, dict):
+            remapped[frame_key] = frame_data if frame_data is not None else {}
+            continue
+        frame_map = frame_assignments.get(frame_key, {})
+        remapped[frame_key] = {}
+        for orig_id_str, track_id in frame_map.items():
+            if orig_id_str in frame_data:
+                remapped[frame_key][str(track_id)] = frame_data[orig_id_str]
+    return remapped
+
+
 class TrackingManager:
     """
     Orchestrates inference tracking and prepares metadata for JSON export.
@@ -18,6 +41,9 @@ class TrackingManager:
         estimation_results: Dict[str, Dict[str, Any]],
         config: TrackingConfig,
         mode: str = "Inference Tracking",
+        debug_per_frame: bool = False,
+        step_through: bool = False,
+        debug_start_frame: int = 0,
     ) -> Dict[str, Any]:
         if not config.enabled:
             return {
@@ -27,7 +53,13 @@ class TrackingManager:
                 "tracklets": [],
             }
 
-        tracklets = self.tracker.build_tracklets(estimation_results, config)
+        tracklets = self.tracker.build_tracklets(
+            estimation_results,
+            config,
+            debug_per_frame=debug_per_frame,
+            step_through=step_through,
+            debug_start_frame=debug_start_frame,
+        )
         tracking_metadata = {
             "mode": mode,
             "enabled": True,

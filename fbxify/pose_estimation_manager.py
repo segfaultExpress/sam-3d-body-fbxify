@@ -934,6 +934,7 @@ class PoseEstimationManager:
             num_people: Optional number of people (from bbox file or user input)
             fps: Optional frame rate to persist in metadata
         """
+        print("Saving Estimation Results...")
         # Count unique person IDs from estimation results if num_people not provided
         if num_people is None:
             unique_person_ids = set()
@@ -957,6 +958,11 @@ class PoseEstimationManager:
             metadata["tracking"] = tracking_metadata
         if output_files:
             metadata["outputs"] = output_files
+        
+        # Ensure directory exists before saving
+        dir_path = os.path.dirname(file_path)
+        if dir_path:
+            os.makedirs(dir_path, exist_ok=True)
         
         with open(file_path, 'w') as f:
             json.dump(metadata, f, indent=2)

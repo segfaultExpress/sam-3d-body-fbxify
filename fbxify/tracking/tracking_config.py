@@ -22,6 +22,29 @@ class TrackingConfig:
     pose_distance_threshold: float = 0.9
     iou_distance_threshold: float = 0.5
 
+    # Minimum cam similarity when use_pred_cam_t is True (rejects "teleport" matches)
+    # Pairs with cam similarity below this get total similarity 0. Default 0.01 rejects cam=0.
+    min_cam_similarity: float = 0.01
+
+    # Minimum pose similarity when use_pose_aux is True (rejects weak pose agreement)
+    # Pairs with pose similarity below this get total similarity 0. Default 0.0 = no gate.
+    # Set e.g. 0.3–0.4 to reject matches where pose is only ~30% the same.
+    min_pose_similarity: float = 0.0
+
+    # Age-aware (moving gate): trust shape only after this many detections in the tracklet
+    shape_maturity_frames: int = 20
+    # When mature and shape_sim >= high_shape_threshold, allow match even if cam < min_cam (re-emerged person)
+    high_shape_override_cam: bool = True
+    high_shape_threshold: float = 0.95
+
+    # Mature-track shape: spike-removed weighted average over recent detections
+    # Max number of detections to use for track shape average (most recent)
+    shape_avg_max_frames: int = 50
+    # Exclude frames whose L1 distance to median shape > median_dist + this * MAD (outlier removal)
+    shape_spike_mad_factor: float = 3.0
+    # Exponential weight decay per frame going back in time (1.0 = most recent, decay^1 = one frame back)
+    shape_avg_weight_decay: float = 0.98
+
     # Weights for similarity score
     shape_weight: float = 0.5
     cam_weight: float = 0.3

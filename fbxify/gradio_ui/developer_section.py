@@ -134,6 +134,26 @@ def create_pose_dev_section(translator: Translator) -> Dict[str, Any]:
             interactive=False,
             visible=False,
         )
+        components["pose_rerun_tracking_file"] = gr.File(
+            label=translator.t("ui.pose_dev.estimation_file_rerun_tracking"),
+            file_types=[".json"],
+            type="filepath",
+        )
+        components["pose_rerun_tracking_btn"] = gr.Button(
+            translator.t("ui.pose_dev.rerun_tracking_btn"),
+            variant="secondary",
+        )
+        components["pose_rerun_tracking_step_through"] = gr.Checkbox(
+            label=translator.t("ui.pose_dev.step_through_console"),
+            value=False,
+        )
+        components["pose_rerun_tracking_debug_start_frame"] = gr.Number(
+            label=translator.t("ui.pose_dev.debug_start_frame"),
+            value=0,
+            precision=0,
+            minimum=0,
+            info=translator.t("ui.pose_dev.debug_start_frame_info"),
+        )
     return components
 
 
@@ -233,6 +253,10 @@ def update_pose_dev_language(lang: str) -> Tuple[Any, ...]:
         gr.update(value=t.t("ui.pose_dev.run_bbox_detection_now")),
         gr.update(value=t.t("ui.pose_dev.run_bbox_detection_now_info")),
         gr.update(label=t.t("ui.pose_dev.bbox_detection_output")),
+        gr.update(label=t.t("ui.pose_dev.estimation_file_rerun_tracking")),
+        gr.update(value=t.t("ui.pose_dev.rerun_tracking_btn")),
+        gr.update(label=t.t("ui.pose_dev.step_through_console")),
+        gr.update(label=t.t("ui.pose_dev.debug_start_frame"), info=t.t("ui.pose_dev.debug_start_frame_info")),
     )
 
 

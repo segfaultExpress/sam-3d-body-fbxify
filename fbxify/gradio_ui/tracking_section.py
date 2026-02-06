@@ -70,12 +70,50 @@ def create_tracking_section(translator: Translator) -> Dict[str, Any]:
                     step=0.05,
                     info=translator.t("ui.tracking.cam_distance_threshold_info"),
                 )
+                components["min_cam_similarity"] = gr.Number(
+                    label=translator.t("ui.tracking.min_cam_similarity"),
+                    value=0.01,
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.01,
+                    info=translator.t("ui.tracking.min_cam_similarity_info"),
+                )
                 components["pose_distance_threshold"] = gr.Number(
                     label=translator.t("ui.tracking.pose_distance_threshold"),
                     value=0.9,
                     minimum=0.0,
                     step=0.05,
                     info=translator.t("ui.tracking.pose_distance_threshold_info"),
+                )
+                components["min_pose_similarity"] = gr.Number(
+                    label=translator.t("ui.tracking.min_pose_similarity"),
+                    value=0.0,
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.05,
+                    info=translator.t("ui.tracking.min_pose_similarity_info"),
+                )
+
+            with gr.Row():
+                components["shape_maturity_frames"] = gr.Number(
+                    label=translator.t("ui.tracking.shape_maturity_frames"),
+                    value=20,
+                    precision=0,
+                    minimum=0,
+                    info=translator.t("ui.tracking.shape_maturity_frames_info"),
+                )
+                components["high_shape_override_cam"] = gr.Checkbox(
+                    label=translator.t("ui.tracking.high_shape_override_cam"),
+                    value=True,
+                    info=translator.t("ui.tracking.high_shape_override_cam_info"),
+                )
+                components["high_shape_threshold"] = gr.Number(
+                    label=translator.t("ui.tracking.high_shape_threshold"),
+                    value=0.95,
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.05,
+                    info=translator.t("ui.tracking.high_shape_threshold_info"),
                 )
 
             components["iou_distance_threshold"] = gr.Number(
@@ -178,7 +216,12 @@ def build_tracking_config_from_gui(
     min_similarity,
     shape_distance_threshold,
     cam_distance_threshold,
+    min_cam_similarity,
     pose_distance_threshold,
+    min_pose_similarity,
+    shape_maturity_frames,
+    high_shape_override_cam,
+    high_shape_threshold,
     iou_distance_threshold,
     shape_weight,
     cam_weight,
@@ -200,7 +243,12 @@ def build_tracking_config_from_gui(
         min_similarity=float(min_similarity),
         shape_distance_threshold=float(shape_distance_threshold),
         cam_distance_threshold=float(cam_distance_threshold),
+        min_cam_similarity=float(min_cam_similarity),
         pose_distance_threshold=float(pose_distance_threshold),
+        min_pose_similarity=float(min_pose_similarity),
+        shape_maturity_frames=int(shape_maturity_frames),
+        high_shape_override_cam=bool(high_shape_override_cam),
+        high_shape_threshold=float(high_shape_threshold),
         iou_distance_threshold=float(iou_distance_threshold),
         shape_weight=float(shape_weight),
         cam_weight=float(cam_weight),
@@ -225,7 +273,12 @@ def _updates_from_config(config: TrackingConfig) -> List[gr.update]:
         gr.update(value=config.min_similarity),
         gr.update(value=config.shape_distance_threshold),
         gr.update(value=config.cam_distance_threshold),
+        gr.update(value=getattr(config, "min_cam_similarity", 0.01)),
         gr.update(value=config.pose_distance_threshold),
+        gr.update(value=getattr(config, "min_pose_similarity", 0.0)),
+        gr.update(value=getattr(config, "shape_maturity_frames", 20)),
+        gr.update(value=getattr(config, "high_shape_override_cam", True)),
+        gr.update(value=getattr(config, "high_shape_threshold", 0.95)),
         gr.update(value=config.iou_distance_threshold),
         gr.update(value=config.shape_weight),
         gr.update(value=config.cam_weight),
@@ -258,7 +311,12 @@ def save_tracking_configuration(
     min_similarity,
     shape_distance_threshold,
     cam_distance_threshold,
+    min_cam_similarity,
     pose_distance_threshold,
+    min_pose_similarity,
+    shape_maturity_frames,
+    high_shape_override_cam,
+    high_shape_threshold,
     iou_distance_threshold,
     shape_weight,
     cam_weight,
@@ -280,7 +338,12 @@ def save_tracking_configuration(
         min_similarity,
         shape_distance_threshold,
         cam_distance_threshold,
+        min_cam_similarity,
         pose_distance_threshold,
+        min_pose_similarity,
+        shape_maturity_frames,
+        high_shape_override_cam,
+        high_shape_threshold,
         iou_distance_threshold,
         shape_weight,
         cam_weight,
@@ -311,7 +374,12 @@ def update_tracking_language(lang: str, translator: Translator) -> Tuple[Any, ..
         gr.update(label=t.t("ui.tracking.min_similarity"), info=t.t("ui.tracking.min_similarity_info")),  # min_similarity
         gr.update(label=t.t("ui.tracking.shape_distance_threshold"), info=t.t("ui.tracking.shape_distance_threshold_info")),  # shape_distance_threshold
         gr.update(label=t.t("ui.tracking.cam_distance_threshold"), info=t.t("ui.tracking.cam_distance_threshold_info")),  # cam_distance_threshold
+        gr.update(label=t.t("ui.tracking.min_cam_similarity"), info=t.t("ui.tracking.min_cam_similarity_info")),  # min_cam_similarity
         gr.update(label=t.t("ui.tracking.pose_distance_threshold"), info=t.t("ui.tracking.pose_distance_threshold_info")),  # pose_distance_threshold
+        gr.update(label=t.t("ui.tracking.min_pose_similarity"), info=t.t("ui.tracking.min_pose_similarity_info")),  # min_pose_similarity
+        gr.update(label=t.t("ui.tracking.shape_maturity_frames"), info=t.t("ui.tracking.shape_maturity_frames_info")),  # shape_maturity_frames
+        gr.update(label=t.t("ui.tracking.high_shape_override_cam"), info=t.t("ui.tracking.high_shape_override_cam_info")),  # high_shape_override_cam
+        gr.update(label=t.t("ui.tracking.high_shape_threshold"), info=t.t("ui.tracking.high_shape_threshold_info")),  # high_shape_threshold
         gr.update(label=t.t("ui.tracking.iou_distance_threshold"), info=t.t("ui.tracking.iou_distance_threshold_info")),  # iou_distance_threshold
         gr.update(label=t.t("ui.tracking.shape_weight"), info=t.t("ui.tracking.shape_weight_info")),  # shape_weight
         gr.update(label=t.t("ui.tracking.cam_weight"), info=t.t("ui.tracking.cam_weight_info")),  # cam_weight

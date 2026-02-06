@@ -1,18 +1,18 @@
 """
 Command-line interface for SAM 3D Body to FBX conversion.
 
-This module provides a CLI interface that uses FbxifyManager for all processing.
+Unified entry point: dispatches to pose-only or FBX-only logic, or runs full pipeline.
+For pose-only use: python -m fbxify.cli_pose_estimation --output <JSON> <INPUT>.
+For FBX-only use: python -m fbxify.cli_fbx_generation [options] <ESTIMATION_JSON>.
 """
 import os
 import argparse
 import sys
 import shutil
+from fbxify.cli_common import get_checkpoint_paths
 from fbxify.pose_estimation_manager import PoseEstimationManager
 from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.fbxify_manager import FbxifyManager
-
-VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
-DINOV3_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-dinov3"
 
 
 def parse_args():
@@ -195,7 +195,45 @@ def parse_args():
         default=None,
         help="Path to load estimation results JSON file (skips estimation step)"
     )
-    
+
+    # FBX-only options (used when --load_estimation_json is set)
+    parser.add_argument(
+        "--refinement_config",
+        type=str,
+        default=None,
+        help="Path to refinement config JSON (FBX-from-JSON only)"
+    )
+    parser.add_argument(
+        "--extrinsics_file",
+        type=str,
+        default=None,
+        help="Path to camera extrinsics file, e.g. COLMAP images.txt (FBX-from-JSON only)"
+    )
+    parser.add_argument(
+        "--extrinsics_sample_rate",
+        type=int,
+        default=0,
+        help="Extrinsics downsampling rate; 0 = auto (FBX-from-JSON only)"
+    )
+    parser.add_argument(
+        "--extrinsics_scale",
+        type=float,
+        default=0.0,
+        help="Scale for extrinsics translation (FBX-from-JSON only)"
+    )
+    parser.add_argument(
+        "--extrinsics_invert_quaternion",
+        action="store_true",
+        default=False,
+        help="Treat qvec as camera→world (FBX-from-JSON only)"
+    )
+    parser.add_argument(
+        "--extrinsics_invert_translation",
+        action="store_true",
+        default=False,
+        help="Treat tvec as camera→world (FBX-from-JSON only)"
+    )
+
     return parser.parse_args()
 
 
@@ -223,117 +261,59 @@ def main():
     if args.tracking_config and not os.path.exists(args.tracking_config):
         print(f"Error: Tracking config file not found: {args.tracking_config}")
         sys.exit(1)
-    
-    # Determine checkpoint path
-    if args.model == "vith":
-        checkpoint_base_path = VITH_CHECKPOINT_PATH
-    elif args.model == "dinov3":
-        checkpoint_base_path = DINOV3_CHECKPOINT_PATH
-    else:
-        print(f"Error: Invalid model: {args.model}")
+
+    # Delegate to FBX-only CLI when loading from estimation JSON
+    if args.load_estimation_json:
+        from fbxify.cli_fbx_generation import run as run_fbx_generation
+        fbx_args = argparse.Namespace(
+            estimation_json=args.load_estimation_json,
+            output_dir=args.output_dir,
+            profile=args.profile,
+            use_root_motion=args.use_root_motion,
+            auto_floor=args.auto_floor,
+            model=args.model,
+            detector_name=args.detector_name,
+            detector_path=args.detector_path,
+            fov_name=args.fov_name,
+            fov_path=args.fov_path,
+            precision=args.precision,
+            refinement_config=getattr(args, "refinement_config", None),
+            extrinsics_file=getattr(args, "extrinsics_file", None),
+            extrinsics_sample_rate=getattr(args, "extrinsics_sample_rate", 0),
+            extrinsics_scale=getattr(args, "extrinsics_scale", 0.0),
+            extrinsics_invert_quaternion=getattr(args, "extrinsics_invert_quaternion", False),
+            extrinsics_invert_translation=getattr(args, "extrinsics_invert_translation", False),
+        )
+        run_fbx_generation(fbx_args)
+        return
+
+    # Full pipeline: resolve checkpoint path and initialize managers
+    try:
+        checkpoint_path, mhr_path = get_checkpoint_paths(args.model)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Error: {e}")
         sys.exit(1)
-    
-    checkpoint_path = os.path.join(checkpoint_base_path, "model.ckpt")
-    mhr_path = os.path.join(checkpoint_base_path, "assets", "mhr_model.pt")
-    
-    if not os.path.exists(checkpoint_path):
-        print(f"Error: Checkpoint not found: {checkpoint_path}")
-        sys.exit(1)
-    
-    if not os.path.exists(mhr_path):
-        print(f"Error: MHR model not found: {mhr_path}")
-        sys.exit(1)
-    
-    # Get detector and FOV paths from args or environment
+
     detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
     fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
-    
-    # Initialize managers
-    estimation_manager = None
-    if args.load_estimation_json is None:
-        # Only initialize estimation manager if we're not loading from JSON
-        print("Initializing SAM 3D Body estimator...")
-        try:
-            estimation_manager = PoseEstimationManager(
-                checkpoint_path=checkpoint_path,
-                mhr_path=mhr_path,
-                detector_name=args.detector_name,
-                detector_path=detector_path,
-                fov_name=args.fov_name,
-                fov_path=fov_path,
-                precision=args.precision
-            )
-        except Exception as e:
-            print(f"Error initializing estimator: {e}")
-            sys.exit(1)
-    else:
-        # Still need estimation manager for faces, but can use minimal initialization
-        # Actually, we need it for faces in export, so let's initialize it anyway
-        print("Initializing SAM 3D Body estimator (for mesh export)...")
-        try:
-            estimation_manager = PoseEstimationManager(
-                checkpoint_path=checkpoint_path,
-                mhr_path=mhr_path,
-                detector_name=args.detector_name,
-                detector_path=detector_path,
-                fov_name=args.fov_name,
-                fov_path=fov_path,
-                precision=args.precision
-            )
-        except Exception as e:
-            print(f"Error initializing estimator: {e}")
-            sys.exit(1)
-    
+
+    print("Initializing SAM 3D Body estimator...")
+    try:
+        estimation_manager = PoseEstimationManager(
+            checkpoint_path=checkpoint_path,
+            mhr_path=mhr_path,
+            detector_name=args.detector_name,
+            detector_path=detector_path,
+            fov_name=args.fov_name,
+            fov_path=fov_path,
+            precision=args.precision,
+        )
+    except Exception as e:
+        print(f"Error initializing estimator: {e}")
+        sys.exit(1)
+
     data_prep_manager = FbxDataPrepManager()
-    
-    # Create manager
     manager = FbxifyManager(estimation_manager, data_prep_manager)
-    
-    # Handle loading from estimation JSON
-    if args.load_estimation_json:
-        print(f"Loading from estimation JSON: {args.load_estimation_json}")
-        try:
-            process_result = manager.process_from_estimation_json(
-                args.load_estimation_json,
-                args.profile,
-                args.use_root_motion,
-                fps=None,
-                auto_floor=args.auto_floor,
-                collect_refinement_logs=False
-            )
-            
-            # Export FBX files
-            print("Exporting FBX files...")
-            fbx_paths = manager.export_fbx_files(
-                process_result.profile_name,
-                process_result.joint_to_bone_mappings,
-                process_result.root_motions,
-                process_result.frame_paths,
-                process_result.fps,
-                progress_callback=None,
-                height_offset=process_result.height_offset
-            )
-            
-            # Move files to output directory if specified
-            if args.output_dir:
-                os.makedirs(args.output_dir, exist_ok=True)
-                moved_paths = []
-                for fbx_path in fbx_paths:
-                    filename = os.path.basename(fbx_path)
-                    dest_path = os.path.join(args.output_dir, filename)
-                    shutil.copy2(fbx_path, dest_path)
-                    moved_paths.append(dest_path)
-                fbx_paths = moved_paths
-            
-            print(f"Exported {len(fbx_paths)} FBX file(s):")
-            for fbx_path in fbx_paths:
-                print(f"  - {fbx_path}")
-        except Exception as e:
-            print(f"Error processing from estimation JSON: {e}")
-            import traceback
-            traceback.print_exc()
-            sys.exit(1)
-        return
     
     # Process input file
     print(f"Processing: {args.input_file}")

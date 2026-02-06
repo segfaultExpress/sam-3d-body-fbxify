@@ -316,6 +316,39 @@ class FbxifyManager:
                 except OSError:
                     pass
 
+    def run_pose_estimation_only(
+        self,
+        frame_paths: List[str],
+        num_people: int,
+        bbox_dict: Optional[Dict[int, List[Tuple]]],
+        fps: float,
+        save_estimation_json: str,
+        progress_callback: Optional[callable] = None,
+        missing_bbox_behavior: str = "Run Detection",
+        frame_batch_size: Optional[int] = None,
+        detection_batch_size: Optional[int] = 1,
+    ) -> None:
+        """
+        Run pose estimation on frames and save results to JSON only.
+        Does not run process_from_estimation_json or export FBX.
+        Used by the pose-only CLI.
+        """
+        estimation_results = self.estimation_manager.estimate_all_frames(
+            frame_paths,
+            num_people=num_people,
+            bbox_dict=bbox_dict,
+            progress_callback=progress_callback,
+            missing_bbox_behavior=missing_bbox_behavior,
+            frame_batch_size=frame_batch_size,
+            detection_batch_size=detection_batch_size,
+        )
+        self.estimation_manager.save_estimation_results(
+            estimation_results,
+            save_estimation_json,
+            num_people=num_people,
+            fps=fps,
+        )
+
     def process_from_estimation_json(self, estimation_json_path: str, profile_name: str,
                                     use_root_motion: bool = True, fps: Optional[float] = None,
                                     refinement_config=None, progress_callback: Optional[callable] = None,

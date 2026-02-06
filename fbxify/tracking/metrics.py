@@ -68,6 +68,9 @@ def bbox_iou_xywh(a: Any, b: Any) -> Optional[float]:
 
 
 def similarity_from_distance(distance: Optional[float], threshold: float) -> float:
+    """
+    Linear similarity from distance: sim = max(0, 1 - distance / threshold).
+    """
     if distance is None:
         return 0.0
     if threshold <= 0:

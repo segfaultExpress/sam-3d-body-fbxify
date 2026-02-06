@@ -32,7 +32,7 @@ from fbxify.gradio_ui.tracking_section import (
     save_tracking_configuration,
     update_tracking_language,
 )
-from fbxify.tracking.tracking_manager import TrackingManager
+from fbxify.tracking.tracking_manager import TrackingManager, apply_frame_assignments
 from fbxify.gradio_ui.pose_results_section import update_pose_results_language
 from fbxify.gradio_ui.fbx_processing_section import update_fbx_processing_language, toggle_generate_fbx_button
 from fbxify.gradio_ui.fbx_results_section import update_fbx_results_language
@@ -108,7 +108,12 @@ def create_app(manager: FbxifyManager):
         min_similarity,
         shape_distance_threshold,
         cam_distance_threshold,
+        min_cam_similarity,
         pose_distance_threshold,
+        min_pose_similarity,
+        shape_maturity_frames,
+        high_shape_override_cam,
+        high_shape_threshold,
         iou_distance_threshold,
         shape_weight,
         cam_weight,
@@ -226,7 +231,12 @@ def create_app(manager: FbxifyManager):
                     min_similarity,
                     shape_distance_threshold,
                     cam_distance_threshold,
+                    min_cam_similarity,
                     pose_distance_threshold,
+                    min_pose_similarity,
+                    shape_maturity_frames,
+                    high_shape_override_cam,
+                    high_shape_threshold,
                     iou_distance_threshold,
                     shape_weight,
                     cam_weight,
@@ -511,8 +521,10 @@ def create_app(manager: FbxifyManager):
         cmd_parts.append("<INPUT_FILE>")
         return " ".join(cmd_parts)
 
-    def build_fbx_cli_command(profile_name, use_root_motion, auto_floor):
-        cmd_parts = ["python", "-m", "fbxify.cli"]
+    def build_fbx_cli_command(profile_name, use_root_motion, auto_floor, include_extrinsics,
+                              extrinsics_file, extrinsics_sample_rate, extrinsics_scale,
+                              extrinsics_invert_quaternion, extrinsics_invert_translation):
+        cmd_parts = ["python", "-m", "fbxify.cli_fbx_generation"]
 
         if profile_name:
             cmd_parts += ["--profile", _format_cli_arg(profile_name)]
@@ -522,8 +534,20 @@ def create_app(manager: FbxifyManager):
         if auto_floor is False:
             cmd_parts.append("--no_auto_floor")
 
-        cmd_parts += ["--load_estimation_json", "<POSE_JSON>"]
-        cmd_parts.append("<INPUT_FILE>")
+        cmd_parts += ["--output_dir", "<OUTPUT_DIR>"]
+        cmd_parts += ["--refinement_config", "<REFINEMENT_JSON>"]
+        if include_extrinsics:
+            cmd_parts += ["--extrinsics_file", "<EXTRINSICS_FILE>"]
+            if extrinsics_sample_rate is not None and int(extrinsics_sample_rate) != 0:
+                cmd_parts += ["--extrinsics_sample_rate", str(int(extrinsics_sample_rate))]
+            if extrinsics_scale is not None and float(extrinsics_scale) != 0.0:
+                cmd_parts += ["--extrinsics_scale", str(float(extrinsics_scale))]
+            if extrinsics_invert_quaternion:
+                cmd_parts.append("--extrinsics_invert_quaternion")
+            if extrinsics_invert_translation:
+                cmd_parts.append("--extrinsics_invert_translation")
+
+        cmd_parts.append("<POSE_JSON>")
         return " ".join(cmd_parts)
     
     def on_lang_change(lang):
@@ -650,7 +674,12 @@ def create_app(manager: FbxifyManager):
                 entry_components['min_similarity'],
                 entry_components['shape_distance_threshold'],
                 entry_components['cam_distance_threshold'],
+                entry_components['min_cam_similarity'],
                 entry_components['pose_distance_threshold'],
+                entry_components['min_pose_similarity'],
+                entry_components['shape_maturity_frames'],
+                entry_components['high_shape_override_cam'],
+                entry_components['high_shape_threshold'],
                 entry_components['iou_distance_threshold'],
                 entry_components['shape_weight'],
                 entry_components['cam_weight'],
@@ -687,6 +716,10 @@ def create_app(manager: FbxifyManager):
                 pose_dev_components['pose_run_bbox_detection_btn'],
                 pose_dev_components['pose_run_bbox_detection_info'],
                 pose_dev_components['pose_bbox_detection_output'],
+                pose_dev_components['pose_rerun_tracking_file'],
+                pose_dev_components['pose_rerun_tracking_btn'],
+                pose_dev_components['pose_rerun_tracking_step_through'],
+                pose_dev_components['pose_rerun_tracking_debug_start_frame'],
                 fbx_dev_components['fbx_developer_options_accordion'],
                 fbx_dev_components['fbx_cancel_jobs_info_md'],
                 fbx_dev_components['fbx_cancel_jobs_btn'],
@@ -729,7 +762,12 @@ def create_app(manager: FbxifyManager):
                 entry_components['min_similarity'],
                 entry_components['shape_distance_threshold'],
                 entry_components['cam_distance_threshold'],
+                entry_components['min_cam_similarity'],
                 entry_components['pose_distance_threshold'],
+                entry_components['min_pose_similarity'],
+                entry_components['shape_maturity_frames'],
+                entry_components['high_shape_override_cam'],
+                entry_components['high_shape_threshold'],
                 entry_components['iou_distance_threshold'],
                 entry_components['shape_weight'],
                 entry_components['cam_weight'],
@@ -755,7 +793,12 @@ def create_app(manager: FbxifyManager):
                 entry_components['min_similarity'],
                 entry_components['shape_distance_threshold'],
                 entry_components['cam_distance_threshold'],
+                entry_components['min_cam_similarity'],
                 entry_components['pose_distance_threshold'],
+                entry_components['min_pose_similarity'],
+                entry_components['shape_maturity_frames'],
+                entry_components['high_shape_override_cam'],
+                entry_components['high_shape_threshold'],
                 entry_components['iou_distance_threshold'],
                 entry_components['shape_weight'],
                 entry_components['cam_weight'],
@@ -937,7 +980,9 @@ def create_app(manager: FbxifyManager):
                 entry_components['min_similarity'],
                 entry_components['shape_distance_threshold'],
                 entry_components['cam_distance_threshold'],
+                entry_components['min_cam_similarity'],
                 entry_components['pose_distance_threshold'],
+                entry_components['min_pose_similarity'],
                 entry_components['iou_distance_threshold'],
                 entry_components['shape_weight'],
                 entry_components['cam_weight'],
@@ -1126,6 +1171,12 @@ def create_app(manager: FbxifyManager):
                 fbx_processing_components['profile_name'],
                 fbx_options_components['use_root_motion'],
                 fbx_options_components['auto_floor'],
+                fbx_options_components['include_extrinsics'],
+                fbx_options_components['extrinsics_file'],
+                fbx_options_components['extrinsics_sample_rate'],
+                fbx_options_components['extrinsics_scale'],
+                fbx_options_components['extrinsics_invert_quaternion'],
+                fbx_options_components['extrinsics_invert_translation'],
             ],
             outputs=[fbx_cli_components['fbx_cli_command']]
         )
@@ -1184,6 +1235,170 @@ def create_app(manager: FbxifyManager):
             fn=run_bbox_detection_now,
             inputs=[entry_components['input_file'], entry_components['detection_batch_size']],
             outputs=[pose_dev_components['pose_bbox_detection_output']],
+        )
+
+        def rerun_tracking(
+            estimation_file,
+            step_through,
+            debug_start_frame,
+            tracking_enabled,
+            max_gap_frames,
+            merge_max_gap_frames,
+            min_tracklet_length,
+            min_similarity,
+            shape_distance_threshold,
+            cam_distance_threshold,
+            min_cam_similarity,
+            pose_distance_threshold,
+            min_pose_similarity,
+            shape_maturity_frames,
+            high_shape_override_cam,
+            high_shape_threshold,
+            iou_distance_threshold,
+            shape_weight,
+            cam_weight,
+            pose_weight,
+            iou_weight,
+            use_shape_params,
+            use_pred_cam_t,
+            use_pose_aux,
+            use_bbox_iou,
+            export_frame_assignments,
+            export_tracklet_detections,
+            export_mot_bboxes,
+        ):
+            """Load estimation JSON, re-run tracking with debug, remap IDs, save and set as pose output."""
+            if estimation_file is None:
+                return (
+                    gr.update(),
+                    gr.update(),
+                    None,
+                    gr.update(),
+                )
+            path = estimation_file
+            if isinstance(estimation_file, list):
+                path = estimation_file[0] if estimation_file else None
+            elif hasattr(estimation_file, "name"):
+                path = estimation_file.name
+            if not path or not os.path.isfile(path):
+                return (
+                    gr.update(),
+                    gr.update(),
+                    None,
+                    gr.update(),
+                )
+            try:
+                estimation_results, metadata = manager.estimation_manager.load_estimation_results(path)
+                config = build_tracking_config_from_gui(
+                    True,  # force enabled so tracking runs
+                    max_gap_frames,
+                    merge_max_gap_frames,
+                    min_tracklet_length,
+                    min_similarity,
+                    shape_distance_threshold,
+                    cam_distance_threshold,
+                    min_cam_similarity,
+                    pose_distance_threshold,
+                    min_pose_similarity,
+                    shape_maturity_frames,
+                    high_shape_override_cam,
+                    high_shape_threshold,
+                    iou_distance_threshold,
+                    shape_weight,
+                    cam_weight,
+                    pose_weight,
+                    iou_weight,
+                    use_shape_params,
+                    use_pred_cam_t,
+                    use_pose_aux,
+                    use_bbox_iou,
+                    export_frame_assignments,
+                    export_tracklet_detections,
+                    export_mot_bboxes,
+                )
+                tracking_metadata = tracking_manager.run(
+                    estimation_results,
+                    config,
+                    mode="Re-run Tracking (debug)",
+                    debug_per_frame=True,
+                    step_through=bool(step_through),
+                    debug_start_frame=int(debug_start_frame or 0),
+                )
+                frame_assignments = tracking_metadata.get("frame_assignments")
+                if not frame_assignments:
+                    frame_assignments = {}
+                remapped_results = apply_frame_assignments(estimation_results, frame_assignments)
+                output_id = uuid.uuid4().hex
+                output_dir = tempfile.gettempdir()
+                new_path = os.path.join(output_dir, f"pose_outputs_rerun_{output_id}.json")
+                source_name = metadata.get("source", "unknown")
+                num_people = metadata.get("num_people")
+                fps = metadata.get("fps")
+                # Avoid 2x file size: tracking_metadata includes full tracklet detections (shape_params,
+                # pred_cam_t, etc.) which duplicate the data already in "frames". Keep only summaries.
+                save_tracking = dict(tracking_metadata)
+                if "tracklets" in save_tracking:
+                    save_tracking["tracklets"] = [
+                        {k: v for k, v in t.items() if k != "detections"}
+                        for t in save_tracking["tracklets"]
+                    ]
+                manager.estimation_manager.save_estimation_results(
+                    remapped_results,
+                    new_path,
+                    source_name=source_name,
+                    num_people=num_people,
+                    tracking_metadata=save_tracking,
+                    output_files=[new_path],
+                    fps=fps,
+                )
+                return (
+                    gr.update(value=[new_path]),
+                    gr.update(value=new_path),
+                    new_path,
+                    gr.update(interactive=True),
+                )
+            except Exception as e:
+                print(f"[Re-run tracking] Error: {e}")
+                raise
+
+        pose_dev_components['pose_rerun_tracking_btn'].click(
+            fn=rerun_tracking,
+            inputs=[
+                pose_dev_components['pose_rerun_tracking_file'],
+                pose_dev_components['pose_rerun_tracking_step_through'],
+                pose_dev_components['pose_rerun_tracking_debug_start_frame'],
+                entry_components['tracking_enabled'],
+                entry_components['max_gap_frames'],
+                entry_components['merge_max_gap_frames'],
+                entry_components['min_tracklet_length'],
+                entry_components['min_similarity'],
+                entry_components['shape_distance_threshold'],
+                entry_components['cam_distance_threshold'],
+                entry_components['min_cam_similarity'],
+                entry_components['pose_distance_threshold'],
+                entry_components['min_pose_similarity'],
+                entry_components['shape_maturity_frames'],
+                entry_components['high_shape_override_cam'],
+                entry_components['high_shape_threshold'],
+                entry_components['iou_distance_threshold'],
+                entry_components['shape_weight'],
+                entry_components['cam_weight'],
+                entry_components['pose_weight'],
+                entry_components['iou_weight'],
+                entry_components['use_shape_params'],
+                entry_components['use_pred_cam_t'],
+                entry_components['use_pose_aux'],
+                entry_components['use_bbox_iou'],
+                entry_components['export_frame_assignments'],
+                entry_components['export_tracklet_detections'],
+                entry_components['export_mot_bboxes'],
+            ],
+            outputs=[
+                pose_results_components['pose_json_file'],
+                fbx_processing_components['pose_json_file'],
+                pose_json_state,
+                fbx_results_components['generate_fbx_btn'],
+            ],
         )
 
         fbx_dev_components['fbx_cancel_jobs_btn'].click(
