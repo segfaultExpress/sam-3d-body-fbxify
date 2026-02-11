@@ -1489,6 +1489,7 @@ def create_app(manager: FbxifyManager):
                     bg_tracklet_score_threshold,
                     bg_min_tracklet_frames_for_scoring,
                     bg_w_length,
+                    bg_w_size,
                     bg_w_size_stability,
                     bg_w_centering,
                     bg_auto_roi_enabled,
