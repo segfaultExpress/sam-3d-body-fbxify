@@ -190,6 +190,173 @@ def create_tracking_section(translator: Translator) -> Dict[str, Any]:
                     value=False,
                 )
 
+        # Background Filtering (optional)
+        with gr.Group():
+            gr.Markdown(f"### {translator.t('ui.tracking.bg_title')}")
+            components["bg_filter_enabled"] = gr.Checkbox(
+                label=translator.t("ui.tracking.bg_enabled"),
+                value=False,
+                info=translator.t("ui.tracking.bg_enabled_info"),
+            )
+
+            with gr.Accordion(label=translator.t("ui.tracking.bg_detection_gates_title"), open=False):
+                with gr.Row():
+                    components["bg_min_bbox_height_px"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_min_bbox_height_px"),
+                        value=0.0,
+                        minimum=0.0,
+                        step=1.0,
+                        info=translator.t("ui.tracking.bg_min_bbox_height_px_info"),
+                    )
+                    components["bg_min_bbox_area_px2"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_min_bbox_area_px2"),
+                        value=0.0,
+                        minimum=0.0,
+                        step=100.0,
+                        info=translator.t("ui.tracking.bg_min_bbox_area_px2_info"),
+                    )
+                with gr.Row():
+                    components["bg_depth_max_z"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_depth_max_z"),
+                        value=0.0,
+                        minimum=0.0,
+                        step=0.1,
+                        info=translator.t("ui.tracking.bg_depth_max_z_info"),
+                    )
+                    components["bg_keep_nearest_z_quantile"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_keep_nearest_z_quantile"),
+                        value=0.0,
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_keep_nearest_z_quantile_info"),
+                    )
+
+            with gr.Accordion(label=translator.t("ui.tracking.bg_auto_size_title"), open=False):
+                with gr.Row():
+                    components["bg_size_auto_method"] = gr.Dropdown(
+                        label=translator.t("ui.tracking.bg_size_auto_method"),
+                        choices=["none", "percentile", "otsu", "gmm2"],
+                        value="none",
+                        info=translator.t("ui.tracking.bg_size_auto_method_info"),
+                    )
+                    components["bg_size_feature"] = gr.Dropdown(
+                        label=translator.t("ui.tracking.bg_size_feature"),
+                        choices=["bbox_height", "bbox_area"],
+                        value="bbox_height",
+                        info=translator.t("ui.tracking.bg_size_feature_info"),
+                    )
+                components["bg_size_percentile"] = gr.Number(
+                    label=translator.t("ui.tracking.bg_size_percentile"),
+                    value=0.0,
+                    minimum=0.0,
+                    maximum=1.0,
+                    step=0.05,
+                    info=translator.t("ui.tracking.bg_size_percentile_info"),
+                )
+
+            with gr.Accordion(label=translator.t("ui.tracking.bg_tracklet_scoring_title"), open=False):
+                components["bg_tracklet_score_enabled"] = gr.Checkbox(
+                    label=translator.t("ui.tracking.bg_tracklet_score_enabled"),
+                    value=True,
+                    info=translator.t("ui.tracking.bg_tracklet_score_enabled_info"),
+                )
+                with gr.Row():
+                    components["bg_tracklet_score_threshold"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_tracklet_score_threshold"),
+                        value=0.0,
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_tracklet_score_threshold_info"),
+                    )
+                    components["bg_min_tracklet_frames_for_scoring"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_min_tracklet_frames_for_scoring"),
+                        value=10,
+                        precision=0,
+                        minimum=0,
+                        info=translator.t("ui.tracking.bg_min_tracklet_frames_for_scoring_info"),
+                    )
+                with gr.Row():
+                    components["bg_w_length"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_w_length"),
+                        value=0.45,
+                        minimum=0.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_w_length_info"),
+                    )
+                    components["bg_w_size"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_w_size"),
+                        value=0.25,
+                        minimum=0.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_w_size_info"),
+                    )
+                    components["bg_w_size_stability"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_w_size_stability"),
+                        value=0.15,
+                        minimum=0.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_w_size_stability_info"),
+                    )
+                    components["bg_w_centering"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_w_centering"),
+                        value=0.15,
+                        minimum=0.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_w_centering_info"),
+                    )
+
+            with gr.Accordion(label=translator.t("ui.tracking.bg_auto_roi_title"), open=False):
+                components["bg_auto_roi_enabled"] = gr.Checkbox(
+                    label=translator.t("ui.tracking.bg_auto_roi_enabled"),
+                    value=False,
+                    info=translator.t("ui.tracking.bg_auto_roi_enabled_info"),
+                )
+                with gr.Row():
+                    components["bg_auto_roi_window_frames"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_auto_roi_window_frames"),
+                        value=30,
+                        precision=0,
+                        minimum=1,
+                        info=translator.t("ui.tracking.bg_auto_roi_window_frames_info"),
+                    )
+                    components["bg_auto_roi_point"] = gr.Dropdown(
+                        label=translator.t("ui.tracking.bg_auto_roi_point"),
+                        choices=["bottom_center", "center"],
+                        value="bottom_center",
+                        info=translator.t("ui.tracking.bg_auto_roi_point_info"),
+                    )
+                with gr.Row():
+                    components["bg_auto_roi_mad_k"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_auto_roi_mad_k"),
+                        value=3.0,
+                        minimum=0.0,
+                        step=0.1,
+                        info=translator.t("ui.tracking.bg_auto_roi_mad_k_info"),
+                    )
+                    components["bg_auto_roi_min_radius_px"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_auto_roi_min_radius_px"),
+                        value=60.0,
+                        minimum=0.0,
+                        step=5.0,
+                        info=translator.t("ui.tracking.bg_auto_roi_min_radius_px_info"),
+                    )
+                    components["bg_auto_roi_smoothing_alpha"] = gr.Number(
+                        label=translator.t("ui.tracking.bg_auto_roi_smoothing_alpha"),
+                        value=0.2,
+                        minimum=0.0,
+                        maximum=1.0,
+                        step=0.05,
+                        info=translator.t("ui.tracking.bg_auto_roi_smoothing_alpha_info"),
+                    )
+
+            components["bg_refine_second_pass"] = gr.Checkbox(
+                label=translator.t("ui.tracking.bg_refine_second_pass"),
+                value=False,
+                info=translator.t("ui.tracking.bg_refine_second_pass_info"),
+            )
+
         components["tracking_config_upload"] = gr.File(
             label=translator.t("ui.tracking.load_config"),
             file_types=[".json"],
@@ -234,6 +401,29 @@ def build_tracking_config_from_gui(
     export_frame_assignments,
     export_tracklet_detections,
     export_mot_bboxes,
+    # Background filtering
+    bg_filter_enabled,
+    bg_min_bbox_height_px,
+    bg_min_bbox_area_px2,
+    bg_depth_max_z,
+    bg_keep_nearest_z_quantile,
+    bg_size_auto_method,
+    bg_size_feature,
+    bg_size_percentile,
+    bg_tracklet_score_enabled,
+    bg_tracklet_score_threshold,
+    bg_min_tracklet_frames_for_scoring,
+    bg_w_length,
+    bg_w_size,
+    bg_w_size_stability,
+    bg_w_centering,
+    bg_auto_roi_enabled,
+    bg_auto_roi_window_frames,
+    bg_auto_roi_point,
+    bg_auto_roi_mad_k,
+    bg_auto_roi_min_radius_px,
+    bg_auto_roi_smoothing_alpha,
+    bg_refine_second_pass,
 ) -> TrackingConfig:
     return TrackingConfig(
         enabled=bool(tracking_enabled),
@@ -261,6 +451,28 @@ def build_tracking_config_from_gui(
         export_frame_assignments=bool(export_frame_assignments),
         export_tracklet_detections=bool(export_tracklet_detections),
         export_mot_bboxes=bool(export_mot_bboxes),
+        bg_filter_enabled=bool(bg_filter_enabled),
+        bg_min_bbox_height_px=float(bg_min_bbox_height_px),
+        bg_min_bbox_area_px2=float(bg_min_bbox_area_px2),
+        bg_depth_max_z=float(bg_depth_max_z),
+        bg_keep_nearest_z_quantile=float(bg_keep_nearest_z_quantile),
+        bg_size_auto_method=str(bg_size_auto_method),
+        bg_size_feature=str(bg_size_feature),
+        bg_size_percentile=float(bg_size_percentile),
+        bg_tracklet_score_enabled=bool(bg_tracklet_score_enabled),
+        bg_tracklet_score_threshold=float(bg_tracklet_score_threshold),
+        bg_min_tracklet_frames_for_scoring=int(bg_min_tracklet_frames_for_scoring),
+        bg_w_length=float(bg_w_length),
+        bg_w_size=float(bg_w_size),
+        bg_w_size_stability=float(bg_w_size_stability),
+        bg_w_centering=float(bg_w_centering),
+        bg_auto_roi_enabled=bool(bg_auto_roi_enabled),
+        bg_auto_roi_window_frames=int(bg_auto_roi_window_frames),
+        bg_auto_roi_point=str(bg_auto_roi_point),
+        bg_auto_roi_mad_k=float(bg_auto_roi_mad_k),
+        bg_auto_roi_min_radius_px=float(bg_auto_roi_min_radius_px),
+        bg_auto_roi_smoothing_alpha=float(bg_auto_roi_smoothing_alpha),
+        bg_refine_second_pass=bool(bg_refine_second_pass),
     )
 
 
@@ -291,6 +503,28 @@ def _updates_from_config(config: TrackingConfig) -> List[gr.update]:
         gr.update(value=config.export_frame_assignments),
         gr.update(value=config.export_tracklet_detections),
         gr.update(value=config.export_mot_bboxes),
+        gr.update(value=getattr(config, "bg_filter_enabled", False)),
+        gr.update(value=getattr(config, "bg_min_bbox_height_px", 0.0)),
+        gr.update(value=getattr(config, "bg_min_bbox_area_px2", 0.0)),
+        gr.update(value=getattr(config, "bg_depth_max_z", 0.0)),
+        gr.update(value=getattr(config, "bg_keep_nearest_z_quantile", 0.0)),
+        gr.update(value=getattr(config, "bg_size_auto_method", "none")),
+        gr.update(value=getattr(config, "bg_size_feature", "bbox_height")),
+        gr.update(value=getattr(config, "bg_size_percentile", 0.0)),
+        gr.update(value=getattr(config, "bg_tracklet_score_enabled", True)),
+        gr.update(value=getattr(config, "bg_tracklet_score_threshold", 0.0)),
+        gr.update(value=getattr(config, "bg_min_tracklet_frames_for_scoring", 10)),
+        gr.update(value=getattr(config, "bg_w_length", 0.45)),
+        gr.update(value=getattr(config, "bg_w_size", 0.25)),
+        gr.update(value=getattr(config, "bg_w_size_stability", 0.15)),
+        gr.update(value=getattr(config, "bg_w_centering", 0.15)),
+        gr.update(value=getattr(config, "bg_auto_roi_enabled", False)),
+        gr.update(value=getattr(config, "bg_auto_roi_window_frames", 30)),
+        gr.update(value=getattr(config, "bg_auto_roi_point", "bottom_center")),
+        gr.update(value=getattr(config, "bg_auto_roi_mad_k", 3.0)),
+        gr.update(value=getattr(config, "bg_auto_roi_min_radius_px", 60.0)),
+        gr.update(value=getattr(config, "bg_auto_roi_smoothing_alpha", 0.2)),
+        gr.update(value=getattr(config, "bg_refine_second_pass", False)),
     ]
 
 
@@ -329,6 +563,29 @@ def save_tracking_configuration(
     export_frame_assignments,
     export_tracklet_detections,
     export_mot_bboxes,
+    # Background filtering
+    bg_filter_enabled,
+    bg_min_bbox_height_px,
+    bg_min_bbox_area_px2,
+    bg_depth_max_z,
+    bg_keep_nearest_z_quantile,
+    bg_size_auto_method,
+    bg_size_feature,
+    bg_size_percentile,
+    bg_tracklet_score_enabled,
+    bg_tracklet_score_threshold,
+    bg_min_tracklet_frames_for_scoring,
+    bg_w_length,
+    bg_w_size,
+    bg_w_size_stability,
+    bg_w_centering,
+    bg_auto_roi_enabled,
+    bg_auto_roi_window_frames,
+    bg_auto_roi_point,
+    bg_auto_roi_mad_k,
+    bg_auto_roi_min_radius_px,
+    bg_auto_roi_smoothing_alpha,
+    bg_refine_second_pass,
 ):
     config = build_tracking_config_from_gui(
         tracking_enabled,
@@ -356,6 +613,28 @@ def save_tracking_configuration(
         export_frame_assignments,
         export_tracklet_detections,
         export_mot_bboxes,
+        bg_filter_enabled,
+        bg_min_bbox_height_px,
+        bg_min_bbox_area_px2,
+        bg_depth_max_z,
+        bg_keep_nearest_z_quantile,
+        bg_size_auto_method,
+        bg_size_feature,
+        bg_size_percentile,
+        bg_tracklet_score_enabled,
+        bg_tracklet_score_threshold,
+        bg_min_tracklet_frames_for_scoring,
+        bg_w_length,
+        bg_w_size,
+        bg_w_size_stability,
+        bg_w_centering,
+        bg_auto_roi_enabled,
+        bg_auto_roi_window_frames,
+        bg_auto_roi_point,
+        bg_auto_roi_mad_k,
+        bg_auto_roi_min_radius_px,
+        bg_auto_roi_smoothing_alpha,
+        bg_refine_second_pass,
     )
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".json")
     tmp.close()
@@ -392,6 +671,28 @@ def update_tracking_language(lang: str, translator: Translator) -> Tuple[Any, ..
         gr.update(label=t.t("ui.tracking.export_frame_assignments")),  # export_frame_assignments
         gr.update(label=t.t("ui.tracking.export_tracklet_detections")),  # export_tracklet_detections
         gr.update(label=t.t("ui.tracking.export_mot_bboxes")),  # export_mot_bboxes
+        gr.update(label=t.t("ui.tracking.bg_enabled"), info=t.t("ui.tracking.bg_enabled_info")),  # bg_filter_enabled
+        gr.update(label=t.t("ui.tracking.bg_min_bbox_height_px"), info=t.t("ui.tracking.bg_min_bbox_height_px_info")),  # bg_min_bbox_height_px
+        gr.update(label=t.t("ui.tracking.bg_min_bbox_area_px2"), info=t.t("ui.tracking.bg_min_bbox_area_px2_info")),  # bg_min_bbox_area_px2
+        gr.update(label=t.t("ui.tracking.bg_depth_max_z"), info=t.t("ui.tracking.bg_depth_max_z_info")),  # bg_depth_max_z
+        gr.update(label=t.t("ui.tracking.bg_keep_nearest_z_quantile"), info=t.t("ui.tracking.bg_keep_nearest_z_quantile_info")),  # bg_keep_nearest_z_quantile
+        gr.update(label=t.t("ui.tracking.bg_size_auto_method"), info=t.t("ui.tracking.bg_size_auto_method_info")),  # bg_size_auto_method
+        gr.update(label=t.t("ui.tracking.bg_size_feature"), info=t.t("ui.tracking.bg_size_feature_info")),  # bg_size_feature
+        gr.update(label=t.t("ui.tracking.bg_size_percentile"), info=t.t("ui.tracking.bg_size_percentile_info")),  # bg_size_percentile
+        gr.update(label=t.t("ui.tracking.bg_tracklet_score_enabled"), info=t.t("ui.tracking.bg_tracklet_score_enabled_info")),  # bg_tracklet_score_enabled
+        gr.update(label=t.t("ui.tracking.bg_tracklet_score_threshold"), info=t.t("ui.tracking.bg_tracklet_score_threshold_info")),  # bg_tracklet_score_threshold
+        gr.update(label=t.t("ui.tracking.bg_min_tracklet_frames_for_scoring"), info=t.t("ui.tracking.bg_min_tracklet_frames_for_scoring_info")),  # bg_min_tracklet_frames_for_scoring
+        gr.update(label=t.t("ui.tracking.bg_w_length"), info=t.t("ui.tracking.bg_w_length_info")),  # bg_w_length
+        gr.update(label=t.t("ui.tracking.bg_w_size"), info=t.t("ui.tracking.bg_w_size_info")),  # bg_w_size
+        gr.update(label=t.t("ui.tracking.bg_w_size_stability"), info=t.t("ui.tracking.bg_w_size_stability_info")),  # bg_w_size_stability
+        gr.update(label=t.t("ui.tracking.bg_w_centering"), info=t.t("ui.tracking.bg_w_centering_info")),  # bg_w_centering
+        gr.update(label=t.t("ui.tracking.bg_auto_roi_enabled"), info=t.t("ui.tracking.bg_auto_roi_enabled_info")),  # bg_auto_roi_enabled
+        gr.update(label=t.t("ui.tracking.bg_auto_roi_window_frames"), info=t.t("ui.tracking.bg_auto_roi_window_frames_info")),  # bg_auto_roi_window_frames
+        gr.update(label=t.t("ui.tracking.bg_auto_roi_point"), info=t.t("ui.tracking.bg_auto_roi_point_info")),  # bg_auto_roi_point
+        gr.update(label=t.t("ui.tracking.bg_auto_roi_mad_k"), info=t.t("ui.tracking.bg_auto_roi_mad_k_info")),  # bg_auto_roi_mad_k
+        gr.update(label=t.t("ui.tracking.bg_auto_roi_min_radius_px"), info=t.t("ui.tracking.bg_auto_roi_min_radius_px_info")),  # bg_auto_roi_min_radius_px
+        gr.update(label=t.t("ui.tracking.bg_auto_roi_smoothing_alpha"), info=t.t("ui.tracking.bg_auto_roi_smoothing_alpha_info")),  # bg_auto_roi_smoothing_alpha
+        gr.update(label=t.t("ui.tracking.bg_refine_second_pass"), info=t.t("ui.tracking.bg_refine_second_pass_info")),  # bg_refine_second_pass
         gr.update(label=t.t("ui.tracking.load_config")),  # tracking_config_upload
         gr.update(value=t.t("ui.tracking.save_config_btn")),  # tracking_save_config_btn
         gr.update(label=t.t("ui.tracking.save_config")),  # tracking_config_download

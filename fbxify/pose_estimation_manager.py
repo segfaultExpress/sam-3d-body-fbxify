@@ -1020,8 +1020,6 @@ class PoseEstimationManager:
             print(f"  Source: {metadata['source']}")
             print(f"  Created: {metadata['creation_date']}")
             print(f"  Version: {file_version}")
-            if metadata.get("num_people") is not None:
-                print(f"  Number of people: {metadata['num_people']}")
             return frames, metadata
         else:
             # Old format (direct frames dict) - wrap in metadata

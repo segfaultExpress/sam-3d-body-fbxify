@@ -1,14 +1,27 @@
-from typing import Dict, Any, List, Tuple, Optional
+from typing import Dict, Any, List, Tuple, Optional, TextIO
+import os
 import numpy as np
+from datetime import datetime
 from fbxify.tracking.tracker import TrackletTracker
 from fbxify.tracking.tracking_config import TrackingConfig
 from fbxify.tracking.tracklet import Detection, Tracklet
+from tqdm import tqdm
 from fbxify.tracking.metrics import (
     mean_abs_diff,
     l2_distance,
     bbox_iou_xywh,
     similarity_from_distance,
 )
+
+from fbxify.tracking.background_filter import (
+    BackgroundFilterStats,
+    filter_frames,
+    filter_tracklets_by_score,
+    compute_auto_roi_by_frame,
+    score_tracklets,
+)
+
+LOGS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "logs")
 
 
 class MHRTracker(TrackletTracker):
@@ -22,6 +35,24 @@ class MHRTracker(TrackletTracker):
     same is often a different person).
     """
 
+    _log_file: Optional[TextIO] = None
+    _log_path: Optional[str] = None
+
+    def _open_log(self) -> None:
+        os.makedirs(LOGS_DIR, exist_ok=True)
+        stamp = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        self._log_path = os.path.join(LOGS_DIR, f"tracking_{stamp}.log")
+        self._log_file = open(self._log_path, "w", encoding="utf-8")
+
+    def _close_log(self) -> None:
+        if self._log_file is not None:
+            self._log_file.close()
+            self._log_file = None
+
+    def _log(self, msg: str = "") -> None:
+        if self._log_file is not None:
+            self._log_file.write(msg + "\n")
+
     def build_tracklets(
         self,
         estimation_results: Dict[str, Dict[str, Any]],
@@ -30,17 +61,136 @@ class MHRTracker(TrackletTracker):
         step_through: bool = False,
         debug_start_frame: int = 0,
     ) -> List[Tracklet]:
-        frames = self._build_detections(estimation_results)
+        self._open_log()
+        try:
+            return self._build_tracklets_inner(
+                estimation_results, config,
+                debug_per_frame=debug_per_frame,
+                step_through=step_through,
+                debug_start_frame=debug_start_frame,
+            )
+        finally:
+            self._close_log()
+            if self._log_path:
+                print(f"Tracking log saved to {self._log_path}")
+
+    def _build_tracklets_inner(
+        self,
+        estimation_results: Dict[str, Dict[str, Any]],
+        config: TrackingConfig,
+        debug_per_frame: bool = False,
+        step_through: bool = False,
+        debug_start_frame: int = 0,
+    ) -> List[Tracklet]:
+        frames_raw = self._build_detections(estimation_results)
+        self.last_background_filtering: Optional[Dict[str, Any]] = None
+
+        def _postprocess(tracklets: List[Tracklet]) -> List[Tracklet]:
+            out = [t for t in tracklets if len(t.detections) >= config.min_tracklet_length]
+            if config.merge_max_gap_frames > 0:
+                out = self._merge_tracklets(out, config)
+            return out
+
+        # Background filtering (optional)
+        if getattr(config, "bg_filter_enabled", False):
+            bg_meta: Dict[str, Any] = {"enabled": True}
+
+            stats1 = BackgroundFilterStats()
+            frames1, dismissed1 = filter_frames(frames_raw, config, stats=stats1, auto_roi_by_frame=None)
+            tracklets1 = self._build_tracklets_from_frames(
+                frames1,
+                config,
+                debug_per_frame=debug_per_frame,
+                step_through=step_through,
+                debug_start_frame=debug_start_frame,
+                dismissed_by_frame=dismissed1,
+                auto_roi_by_frame=None,
+            )
+            tracklets1 = _postprocess(tracklets1)
+            kept1, score_rows1 = filter_tracklets_by_score(tracklets1, config, stats=stats1)
+            bg_meta["pass1_stats"] = stats1.to_dict()
+            bg_meta["tracklet_scores"] = score_rows1
+
+            # Optional second pass: compute auto ROI from stable subjects, then rerun association.
+            if getattr(config, "bg_auto_roi_enabled", False) and getattr(config, "bg_refine_second_pass", False):
+                # Choose tracklets to build ROI from:
+                # - If score threshold is enabled, use the ones that passed.
+                # - Else pick the top-scoring tracklet (stable subject seed).
+                thr = float(getattr(config, "bg_tracklet_score_threshold", 0.0) or 0.0)
+                roi_tracklets = kept1
+                if thr <= 0.0:
+                    scored = score_tracklets(tracklets1, config)
+                    roi_tracklets = [scored[0][0]] if scored else (tracklets1[:1] if tracklets1 else [])
+
+                auto_roi_by_frame = compute_auto_roi_by_frame(roi_tracklets, config)
+                bg_meta["auto_roi_frames"] = len(auto_roi_by_frame)
+
+                stats2 = BackgroundFilterStats()
+                frames2, dismissed2 = filter_frames(frames_raw, config, stats=stats2, auto_roi_by_frame=auto_roi_by_frame)
+                tracklets2 = self._build_tracklets_from_frames(
+                    frames2,
+                    config,
+                    debug_per_frame=debug_per_frame,
+                    step_through=step_through,
+                    debug_start_frame=debug_start_frame,
+                    dismissed_by_frame=dismissed2,
+                    auto_roi_by_frame=auto_roi_by_frame,
+                )
+                tracklets2 = _postprocess(tracklets2)
+                kept2, score_rows2 = filter_tracklets_by_score(tracklets2, config, stats=stats2)
+                bg_meta["pass2_stats"] = stats2.to_dict()
+                bg_meta["tracklet_scores_pass2"] = score_rows2
+                self.last_background_filtering = bg_meta
+                return kept2
+
+            self.last_background_filtering = bg_meta
+            return kept1
+
+        frames = frames_raw
+        tracklets = self._build_tracklets_from_frames(
+            frames,
+            config,
+            debug_per_frame=debug_per_frame,
+            step_through=step_through,
+            debug_start_frame=debug_start_frame,
+        )
+        tracklets = _postprocess(tracklets)
+        return tracklets
+
+    def _build_tracklets_from_frames(
+        self,
+        frames: Dict[int, List[Detection]],
+        config: TrackingConfig,
+        debug_per_frame: bool = False,
+        step_through: bool = False,
+        debug_start_frame: int = 0,
+        dismissed_by_frame: Optional[Dict[int, List[Tuple[Detection, str]]]] = None,
+        auto_roi_by_frame: Optional[Dict[int, Tuple[float, float, float]]] = None,
+    ) -> List[Tracklet]:
+        """Core association loop operating on a {frame_index: detections} mapping."""
         active: List[Tracklet] = []
         finished: List[Tracklet] = []
         next_track_id = 0
+        if dismissed_by_frame is None:
+            dismissed_by_frame = {}
+        if auto_roi_by_frame is None:
+            auto_roi_by_frame = {}
+        roi_point_kind = str(getattr(config, "bg_auto_roi_point", "bottom_center") or "bottom_center")
         print("Running Tracking Inference...")
+        self._log("Running Tracking Inference...")
+        total_frames = len(frames)
+
+        pbar = tqdm(total=total_frames, desc="Tracking Inference")
 
         for frame_index in sorted(frames.keys()):
+            pbar.update(1)
+
             # Intense debug (matrix, assignments, Enter pause) only from this frame onward
             do_intense = (debug_per_frame or step_through) and (frame_index >= debug_start_frame)
 
             detections = frames[frame_index]
+            dismissed_this_frame = dismissed_by_frame.get(frame_index, [])
+            roi_this_frame = auto_roi_by_frame.get(frame_index)
 
             # Finalize inactive tracklets
             still_active = []
@@ -55,17 +205,29 @@ class MHRTracker(TrackletTracker):
 
             if not detections:
                 if do_intense and debug_per_frame:
-                    self._debug_frame_header(frame_index, active, detections, expired_count, 0, 0)
+                    self._debug_frame_header(
+                        frame_index,
+                        active,
+                        detections,
+                        expired_count,
+                        0,
+                        0,
+                        auto_roi=roi_this_frame,
+                        roi_point_kind=roi_point_kind,
+                    )
+                    self._debug_dismissed(frame_index, dismissed_this_frame)
                 elif not do_intense:
                     if frame_index == debug_start_frame - 1 and (debug_per_frame or step_through):
-                        print(f"  ... frame {frame_index} (debug starts at frame {debug_start_frame})")
+                        self._log(f"  ... frame {frame_index} (debug starts at frame {debug_start_frame})")
                     elif not (debug_per_frame or step_through) or debug_start_frame <= 0:
-                        print("--------------------------------")
-                        print("Frame Index: ", frame_index)
-                        print(f"  [{frame_index}] People actively being tracked {len(active)}")
-                        print(f"  [{frame_index}] Distinct people found this frame {len(detections)}")
-                        print(f"  [{frame_index}] Re-IDs - 0 already exist, [0] new ids assigned")
-                        print(f"  [{frame_index}] Tracklets expired this frame {expired_count}")
+                        self._log("--------------------------------")
+                        self._log(f"Frame Index: {frame_index}")
+                        self._log(f"  [{frame_index}] People actively being tracked {len(active)}")
+                        self._log(f"  [{frame_index}] Distinct people found this frame {len(detections)}")
+                        self._log(f"  [{frame_index}] Re-IDs - 0 already exist, [0] new ids assigned")
+                        self._log(f"  [{frame_index}] Tracklets expired this frame {expired_count}")
+                        if dismissed_this_frame:
+                            self._log(f"  [{frame_index}] Detections dismissed {len(dismissed_this_frame)}: {[d.person_id for d, _ in dismissed_this_frame]}")
                 if do_intense and step_through:
                     input("Press Enter for next frame...")
                 continue
@@ -73,7 +235,17 @@ class MHRTracker(TrackletTracker):
             # Build (track_idx, det_idx, score) and optionally (score, breakdown) for debug
             matches = self._match_detections(active, detections, config)
             if do_intense and debug_per_frame:
-                self._debug_frame_header(frame_index, active, detections, expired_count, None, None)
+                self._debug_frame_header(
+                    frame_index,
+                    active,
+                    detections,
+                    expired_count,
+                    None,
+                    None,
+                    auto_roi=roi_this_frame,
+                    roi_point_kind=roi_point_kind,
+                )
+                self._debug_dismissed(frame_index, dismissed_this_frame)
                 self._debug_similarity_matrix(active, detections, config, matches)
             matched_detections = set()
             matched_tracklets = set()
@@ -105,23 +277,21 @@ class MHRTracker(TrackletTracker):
                 self._debug_assignments(active, detections, accepted_pairs, matched_detections, reid_count, new_id_count)
             elif not do_intense:
                 if frame_index == debug_start_frame - 1 and (debug_per_frame or step_through):
-                    print(f"  ... frame {frame_index} (debug starts at frame {debug_start_frame})")
+                    self._log(f"  ... frame {frame_index} (debug starts at frame {debug_start_frame})")
                 elif not (debug_per_frame or step_through) or debug_start_frame <= 0:
-                    print("--------------------------------")
-                    print("Frame Index: ", frame_index)
-                    print(f"  [{frame_index}] People actively being tracked {len(active)}")
-                    print(f"  [{frame_index}] Distinct people found this frame {len(detections)}")
-                    print(f"  [{frame_index}] Re-IDs - {reid_count} already exist, [{new_id_count}] new ids assigned")
-                    print(f"  [{frame_index}] Tracklets expired this frame {expired_count}")
+                    self._log("--------------------------------")
+                    self._log(f"Frame Index: {frame_index}")
+                    self._log(f"  [{frame_index}] People actively being tracked {len(active)}")
+                    self._log(f"  [{frame_index}] Distinct people found this frame {len(detections)}")
+                    self._log(f"  [{frame_index}] Re-IDs - {reid_count} already exist, [{new_id_count}] new ids assigned")
+                    self._log(f"  [{frame_index}] Tracklets expired this frame {expired_count}")
+                    if dismissed_this_frame:
+                        self._log(f"  [{frame_index}] Detections dismissed {len(dismissed_this_frame)}: {[d.person_id for d, _ in dismissed_this_frame]}")
             if do_intense and step_through:
                 input("Press Enter for next frame...")
 
+        pbar.close()
         finished.extend(active)
-        finished = [t for t in finished if len(t.detections) >= config.min_tracklet_length]
-
-        if config.merge_max_gap_frames > 0:
-            finished = self._merge_tracklets(finished, config)
-
         return finished
 
     def _debug_frame_header(
@@ -132,24 +302,43 @@ class MHRTracker(TrackletTracker):
         expired_count: int,
         reid_count: Optional[int],
         new_id_count: Optional[int],
+        auto_roi: Optional[Tuple[float, float, float]] = None,
+        roi_point_kind: str = "bottom_center",
     ) -> None:
         reid_s = str(reid_count) if reid_count is not None else "0"
         new_s = str(new_id_count) if new_id_count is not None else "0"
-        print("--------------------------------")
-        print(f"[DEBUG] Frame Index: {frame_index}")
-        print(f"  Active tracklets: {len(active)}")
+        self._log("--------------------------------")
+        self._log(f"[DEBUG] Frame Index: {frame_index}")
+        if auto_roi is not None:
+            cx, cy, r = auto_roi
+            self._log(f"  Auto ROI ({roi_point_kind}): center=({cx:.1f}, {cy:.1f}) r={r:.1f}")
+        self._log(f"  Active tracklets: {len(active)}")
         for t_idx, t in enumerate(active):
             last = t.last_detection
             bbox = last.bbox_xywh if last else None
             bbox_s = f" bbox={bbox}" if bbox else ""
-            print(f"    track_idx={t_idx} track_id={t.track_id} last_frame={t.end_frame} last_person_id={last.person_id if last else None}{bbox_s}")
-        print(f"  Detections this frame: {len(detections)}")
+            self._log(f"    track_idx={t_idx} track_id={t.track_id} last_frame={t.end_frame} last_person_id={last.person_id if last else None}{bbox_s}")
+        self._log(f"  Detections this frame: {len(detections)}")
         for d_idx, d in enumerate(detections):
             bbox_s = f" bbox={d.bbox_xywh}" if d.bbox_xywh else ""
-            print(f"    det_idx={d_idx} person_id={d.person_id}{bbox_s}")
-        print(f"  Tracklets expired this frame: {expired_count}")
+            self._log(f"    det_idx={d_idx} person_id={d.person_id}{bbox_s}")
+        self._log(f"  Tracklets expired this frame: {expired_count}")
         if reid_count is not None and new_id_count is not None:
-            print(f"  Re-IDs - {reid_s} matched to existing, {new_s} new track(s) assigned")
+            self._log(f"  Re-IDs - {reid_s} matched to existing, {new_s} new track(s) assigned")
+
+    def _debug_dismissed(
+        self,
+        frame_index: int,
+        dismissed: List[Tuple[Detection, str]],
+    ) -> None:
+        """Print per-detection dismissal reasons for the intense debug path."""
+        if not dismissed:
+            return
+        self._log(f"  Detections dismissed by background filter: {len(dismissed)}")
+        for det, reason in dismissed:
+            bbox = det.bbox_xywh
+            bbox_s = f" bbox={bbox}" if bbox else ""
+            self._log(f"    person_id={det.person_id} - {reason}{bbox_s}")
 
     def _debug_similarity_matrix(
         self,
@@ -160,7 +349,7 @@ class MHRTracker(TrackletTracker):
     ) -> None:
         min_cam = getattr(config, "min_cam_similarity", 0.0)
         min_pose = getattr(config, "min_pose_similarity", 0.0)
-        print("  Similarity (track_idx, det_idx) -> total [breakdown]:")
+        self._log("  Similarity (track_idx, det_idx) -> total [breakdown]:")
         for (t_idx, d_idx, score) in matches:
             last = active[t_idx].last_detection
             det = detections[d_idx]
@@ -180,7 +369,7 @@ class MHRTracker(TrackletTracker):
                     reason.append("pose < min")
                 if reason:
                     above = " REJECT (" + ", ".join(reason) + ")"
-            print(f"    (idx={t_idx} track_id={track_id}, det_idx={d_idx}) -> {score:.4f} {breakdown}{above}")
+            self._log(f"    (idx={t_idx} track_id={track_id}, det_idx={d_idx}) -> {score:.4f} {breakdown}{above}")
 
     def _debug_assignments(
         self,
@@ -191,15 +380,15 @@ class MHRTracker(TrackletTracker):
         reid_count: int,
         new_id_count: int,
     ) -> None:
-        print("  Accepted (track continued): det_idx person_id -> track_id")
+        self._log("  Accepted (track continued): det_idx person_id -> track_id")
         for (t_idx, d_idx) in accepted_pairs:
             if t_idx < len(active) and d_idx < len(detections):
-                print(f"    det_idx={d_idx} person_id={detections[d_idx].person_id} -> track_id={active[t_idx].track_id}")
-        print(f"  New track(s) assigned: {new_id_count} detection(s)")
+                self._log(f"    det_idx={d_idx} person_id={detections[d_idx].person_id} -> track_id={active[t_idx].track_id}")
+        self._log(f"  New track(s) assigned: {new_id_count} detection(s)")
         for d_idx, det in enumerate(detections):
             if d_idx in matched_detections:
                 continue
-            print(f"    det_idx={d_idx} person_id={det.person_id} -> new track (added to active)")
+            self._log(f"    det_idx={d_idx} person_id={det.person_id} -> new track (added to active)")
 
     def _build_detections(self, estimation_results: Dict[str, Dict[str, Any]]) -> Dict[int, List[Detection]]:
         frames: Dict[int, List[Detection]] = {}

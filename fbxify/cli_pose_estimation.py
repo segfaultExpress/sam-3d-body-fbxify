@@ -13,6 +13,7 @@ from fbxify.cli_common import get_checkpoint_paths
 from fbxify.pose_estimation_manager import PoseEstimationManager
 from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.fbxify_manager import FbxifyManager
+from fbxify.tracking.tracking_config import TrackingConfig
 
 
 def parse_args():
@@ -210,6 +211,14 @@ def main():
             print("Info: bbox file provided, switching tracking_mode to bbox")
             tracking_mode = "bbox"
 
+        # Resolve tracking config: from file when provided, else default for inference mode
+        tracking_config = None
+        if args.tracking_config:
+            tracking_config = TrackingConfig.load_json(args.tracking_config)
+            print(f"Loaded tracking config from: {args.tracking_config}")
+        elif tracking_mode in ("inference", "inference_bbox"):
+            tracking_config = TrackingConfig()
+
         bbox_dict = None
         num_people = args.num_people
         if tracking_mode == "bbox":
@@ -249,6 +258,8 @@ def main():
             missing_bbox_behavior=args.missing_bbox_behavior,
             frame_batch_size=args.frame_batch_size,
             detection_batch_size=args.detection_batch_size,
+            tracking_mode=tracking_mode,
+            tracking_config=tracking_config,
         )
         print(f"Estimation results saved to: {args.estimation_json}")
     except Exception as e:

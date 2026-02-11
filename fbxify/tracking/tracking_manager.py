@@ -66,6 +66,9 @@ class TrackingManager:
             "config": config.to_dict(),
             "tracklets": self._tracklets_to_dict(tracklets, config),
         }
+        bg = getattr(self.tracker, "last_background_filtering", None)
+        if bg is not None:
+            tracking_metadata["background_filtering"] = bg
 
         if config.export_frame_assignments:
             tracking_metadata["frame_assignments"] = self._build_frame_assignments(tracklets)

@@ -62,6 +62,54 @@ class TrackingConfig:
     export_tracklet_detections: bool = True
     export_mot_bboxes: bool = False
 
+    # -----------------------------
+    # Background Filtering (optional)
+    # -----------------------------
+    # Master toggle (default off)
+    bg_filter_enabled: bool = False
+
+    # Detection-level gates (applied per frame before association)
+    # 0 disables a gate.
+    bg_min_bbox_height_px: float = 0.0
+    bg_min_bbox_area_px2: float = 0.0
+    # Keep detections with pred_cam_t[2] <= this (0 disables). Only applies when pred_cam_t exists.
+    bg_depth_max_z: float = 0.0
+    # Keep nearest z-quantile per frame (0 disables). Example: 0.7 keeps nearest 70% by z.
+    bg_keep_nearest_z_quantile: float = 0.0
+
+    # Automatic size cutoffs (applied per frame; uses bbox height/area)
+    # - none: disabled
+    # - percentile: drop smallest X fraction (bg_size_percentile)
+    # - otsu: Otsu threshold on log(size)
+    # - gmm2: 2-component 1D GMM on log(size)
+    bg_size_auto_method: str = "none"
+    # For percentile method: fraction to drop from the small end (0 disables).
+    bg_size_percentile: float = 0.0
+    bg_size_feature: str = "bbox_height"  # "bbox_height" | "bbox_area"
+
+    # Tracklet-level scoring (stable-subject filter)
+    bg_tracklet_score_enabled: bool = True
+    # Keep tracklets with foreground_score >= threshold. 0 disables.
+    bg_tracklet_score_threshold: float = 0.0
+    bg_min_tracklet_frames_for_scoring: int = 10
+
+    # Foreground score weights (sum not required; normalized internally)
+    bg_w_length: float = 0.45
+    bg_w_size: float = 0.25
+    bg_w_size_stability: float = 0.15
+    bg_w_centering: float = 0.15
+
+    # Auto ROI (computed, not user-provided)
+    bg_auto_roi_enabled: bool = False
+    bg_auto_roi_window_frames: int = 30
+    bg_auto_roi_point: str = "bottom_center"  # "bottom_center" | "center"
+    bg_auto_roi_mad_k: float = 3.0
+    bg_auto_roi_min_radius_px: float = 60.0
+    bg_auto_roi_smoothing_alpha: float = 0.2
+
+    # Optional second-pass refinement (rerun association with auto ROI gate)
+    bg_refine_second_pass: bool = False
+
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
 

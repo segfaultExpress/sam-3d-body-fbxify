@@ -17,6 +17,8 @@ from fbxify.utils import export_to_fbx, export_camera_scene, to_serializable, _e
 from fbxify.refinement.refinement_manager import RefinementManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 from fbxify.metadata import JOINT_NAMES_TO_INDEX
+from fbxify.tracking.tracking_manager import TrackingManager, apply_frame_assignments
+from fbxify.tracking.tracking_config import TrackingConfig
 
 
 @dataclass
@@ -327,11 +329,15 @@ class FbxifyManager:
         missing_bbox_behavior: str = "Run Detection",
         frame_batch_size: Optional[int] = None,
         detection_batch_size: Optional[int] = 1,
+        tracking_mode: Optional[str] = None,
+        tracking_config: Optional[TrackingConfig] = None,
     ) -> None:
         """
         Run pose estimation on frames and save results to JSON only.
         Does not run process_from_estimation_json or export FBX.
         Used by the pose-only CLI.
+        When tracking_mode is inference/inference_bbox and tracking_config is set,
+        runs inference tracking, remaps person IDs to track IDs, and saves with tracking metadata.
         """
         estimation_results = self.estimation_manager.estimate_all_frames(
             frame_paths,
@@ -342,12 +348,35 @@ class FbxifyManager:
             frame_batch_size=frame_batch_size,
             detection_batch_size=detection_batch_size,
         )
-        self.estimation_manager.save_estimation_results(
-            estimation_results,
-            save_estimation_json,
-            num_people=num_people,
-            fps=fps,
-        )
+        if tracking_mode in ("inference", "inference_bbox") and tracking_config is not None:
+            mode_label = "Inference Tracking + BBOX File" if tracking_mode == "inference_bbox" else "Inference Tracking"
+            tracking_manager = TrackingManager()
+            tracking_metadata = tracking_manager.run(
+                estimation_results, tracking_config, mode=mode_label
+            )
+            frame_assignments = tracking_metadata.get("frame_assignments") or {}
+            remapped_results = apply_frame_assignments(estimation_results, frame_assignments)
+            # Avoid 2x file size: drop full detections from tracklets (duplicate of frames data)
+            save_tracking = dict(tracking_metadata)
+            if "tracklets" in save_tracking:
+                save_tracking["tracklets"] = [
+                    {k: v for k, v in t.items() if k != "detections"}
+                    for t in save_tracking["tracklets"]
+                ]
+            self.estimation_manager.save_estimation_results(
+                remapped_results,
+                save_estimation_json,
+                num_people=num_people,
+                tracking_metadata=save_tracking,
+                fps=fps,
+            )
+        else:
+            self.estimation_manager.save_estimation_results(
+                estimation_results,
+                save_estimation_json,
+                num_people=num_people,
+                fps=fps,
+            )
 
     def process_from_estimation_json(self, estimation_json_path: str, profile_name: str,
                                     use_root_motion: bool = True, fps: Optional[float] = None,
