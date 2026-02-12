@@ -1,0 +1,54 @@
+# Run UI + worker locally for testing.
+# Usage (from repo root): docker compose -f fbxify/docker/docker-compose.yml up --build
+# Or: run_ui_worker.bat  (sets CHECKPOINTS_DIR to repo-root/checkpoints)
+#
+# Requirements:
+# - GPU (worker)
+# - Checkpoints at CHECKPOINTS_DIR/sam-3d-body-vith (default: repo-root/checkpoints)
+#
+# Open http://localhost:7444 for the Gradio UI (or UI_PORT if set, e.g. when 7444 is in use).
+
+services:
+  worker:
+    image: fbxify-worker
+    build:
+      context: ../..
+      dockerfile: fbxify/docker/Dockerfile.worker
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    shm_size: 8g
+    volumes:
+      # SAM 3D Body checkpoints (required)
+      - ${CHECKPOINTS_DIR:-./checkpoints}:/workspace/checkpoints:ro
+      # Optional: persistent caches (faster restarts, avoid re-downloads)
+      - ${CACHE_DIR:-./cache}/videt_checkpoint:/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
+      - ${CACHE_DIR:-./cache}/hf_cache:/root/.cache/huggingface
+      - ${CACHE_DIR:-./cache}/mhr_assets:/opt/venv/lib/python3.12/site-packages/assets
+    environment:
+      - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+
+  ui:
+    image: fbxify-ui
+    build:
+      context: ../..
+      dockerfile: fbxify/docker/Dockerfile.ui
+    depends_on:
+      worker:
+        condition: service_healthy
+    environment:
+      - FBXIFY_REMOTE_WORKER_URL=http://worker:8000
+    ports:
+      - "${UI_PORT:-7444}:7444"

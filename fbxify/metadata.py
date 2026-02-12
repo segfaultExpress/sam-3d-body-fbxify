@@ -1,4 +1,28 @@
-from sam_3d_body.metadata.mhr70 import pose_info
+# Optional: use sam_3d_body for MHR keypoint index (worker has it; UI does not)
+try:
+    from sam_3d_body.metadata.mhr70 import pose_info
+    MHR_KEYPOINT_INDEX = {info["name"]: idx for idx, info in pose_info["keypoint_info"].items()}
+except ImportError:
+    # Fallback when sam_3d_body/torch not installed (e.g. UI-only container). Must match mhr70.
+    _MHR70_NAMES = [
+        "nose", "left_eye", "right_eye", "left_ear", "right_ear", "left_shoulder", "right_shoulder",
+        "left_elbow", "right_elbow", "left_hip", "right_hip", "left_knee", "right_knee",
+        "left_ankle", "right_ankle", "left_big_toe_tip", "left_small_toe_tip", "left_heel",
+        "right_big_toe_tip", "right_small_toe_tip", "right_heel", "right_thumb_tip",
+        "right_thumb_first_joint", "right_thumb_second_joint", "right_thumb_third_joint",
+        "right_index_tip", "right_index_first_joint", "right_index_second_joint", "right_index_third_joint",
+        "right_middle_tip", "right_middle_first_joint", "right_middle_second_joint", "right_middle_third_joint",
+        "right_ring_tip", "right_ring_first_joint", "right_ring_second_joint", "right_ring_third_joint",
+        "right_pinky_tip", "right_pinky_first_joint", "right_pinky_second_joint", "right_pinky_third_joint",
+        "right_wrist", "left_thumb_tip", "left_thumb_first_joint", "left_thumb_second_joint", "left_thumb_third_joint",
+        "left_index_tip", "left_index_first_joint", "left_index_second_joint", "left_index_third_joint",
+        "left_middle_tip", "left_middle_first_joint", "left_middle_second_joint", "left_middle_third_joint",
+        "left_ring_tip", "left_ring_first_joint", "left_ring_second_joint", "left_ring_third_joint",
+        "left_pinky_tip", "left_pinky_first_joint", "left_pinky_second_joint", "left_pinky_third_joint",
+        "left_wrist", "left_olecranon", "right_olecranon", "left_cubital_fossa", "right_cubital_fossa",
+        "left_acromion", "right_acromion", "neck",
+    ]
+    MHR_KEYPOINT_INDEX = {name: idx for idx, name in enumerate(_MHR70_NAMES)}
 
 PROFILES = {
     "mhr": {
@@ -44,5 +68,3 @@ JOINT_NAMES = [
 ]
 
 JOINT_NAMES_TO_INDEX = {name: index for index, name in enumerate(JOINT_NAMES)}
-
-MHR_KEYPOINT_INDEX = {info["name"]: idx for idx, info in pose_info["keypoint_info"].items()}

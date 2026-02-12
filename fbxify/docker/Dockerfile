@@ -59,7 +59,7 @@ RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
 
 # ---- Clone repo ----
 WORKDIR /workspace
-RUN git clone https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
+RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 # ---- SAM-3D-Body Python deps ----
 RUN python -m pip install \

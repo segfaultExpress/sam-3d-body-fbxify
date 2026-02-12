@@ -9,6 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # ---- System deps ----
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3.12 python3.12-dev python3.12-venv python3-pip \
+    curl \
     git \
     ffmpeg \
     build-essential \
@@ -49,7 +50,7 @@ RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
 
 # ---- Clone repo ----
 WORKDIR /workspace
-RUN git clone https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
+RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 # ---- SAM-3D-Body Python deps ----
 RUN python -m pip install \

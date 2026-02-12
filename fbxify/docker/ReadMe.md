@@ -53,24 +53,38 @@
 
 ## Run UI + worker locally
 
-**1. Build both images** (if not already built):
-```
-build_docker_ui.bat
-build_docker_worker.bat
-```
+**1. Ensure checkpoints exist** at `F:\sam-3d-body-fbxify\checkpoints\sam-3d-body-vith\` (or set `CHECKPOINTS_DIR`). `run_ui_worker.bat` defaults `CHECKPOINTS_DIR` to repo-root `checkpoints`.
 
-**2. Ensure checkpoints exist** at `checkpoints/sam-3d-body-vith/` (or set `CHECKPOINTS_DIR` to your path).
-
-**3. Start both:**
+**2. Start both:**
 ```
 run_ui_worker.bat
 ```
 
-Or with docker compose directly (from repo root):
+Or from repo root with explicit paths:
 ```
-docker compose -f fbxify/docker/docker-compose.yml up
+set CHECKPOINTS_DIR=F:\sam-3d-body-fbxify\checkpoints
+set CACHE_DIR=F:\sam-3d-body-fbxify\cache
+docker compose -f fbxify/docker/docker-compose.yml up --build
 ```
 
-**4. Open** http://localhost:7444
+**3. Open** http://localhost:7444
 
-The worker starts first and loads models (~30s). The UI waits for the worker to be healthy before starting.
+The worker starts first and loads models (~30s). The UI waits for the worker to be healthy before starting. Optional: set `CACHE_DIR` to repo `cache` so ViTDet, Hugging Face, and MHR assets are reused across runs.
+
+---
+
+## Hosting (elastic workers)
+
+**Checkpoints:** The worker needs SAM 3D Body checkpoints at `/workspace/checkpoints/sam-3d-body-vith/` (and/or `sam-3d-body-dinov3`). Most services support this in one of these ways:
+
+- **Persistent volume** — Create a disk/NFS, upload checkpoints once, attach the same volume to every worker instance (GCP persistent disk, AWS EBS, Azure Disk, etc.).
+- **Bake into image** — Add a Dockerfile stage that copies checkpoints into the image. Easiest but large images and no reuse across versions.
+- **Download on startup** — Worker entrypoint downloads from GCS/S3/blob if not present; use a shared cache volume so only the first start pays the cost.
+
+**Cache (ViTDet, Hugging Face, MHR assets):** To avoid re-downloading on each worker start, mount a persistent volume for:
+
+- Detectron2 ViTDet: `.../f328730692`
+- Hugging Face: `/root/.cache/huggingface`
+- MHR assets: `/opt/venv/lib/python3.12/site-packages/assets`
+
+Pre-warm the volume once (run one worker, let it download), then attach that volume to new workers so startup stays fast.
