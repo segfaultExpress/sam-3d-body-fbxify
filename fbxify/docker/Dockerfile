@@ -57,9 +57,9 @@ RUN python -m pip install "numpy<2"
 RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
-# ---- Copy repo ----
+# ---- Clone repo ----
 WORKDIR /workspace
-COPY . .
+RUN git clone https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 # ---- SAM-3D-Body Python deps ----
 RUN python -m pip install \

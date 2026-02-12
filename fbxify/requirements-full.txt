@@ -1,0 +1,53 @@
+# FBXify all-in-one: UI + GPU processing
+# Install PyTorch FIRST (see fbxify/Install.md):
+#   pip install "numpy<2"
+#   pip install --index-url https://download.pytorch.org/whl/cu128 torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
+#
+# Install these SEPARATELY after this file:
+#   pip install --no-build-isolation xtcocotools
+#   pip install "git+https://github.com/facebookresearch/detectron2.git@a1ce2f9" --no-build-isolation --no-deps
+#   pip install flash-attn
+
+pytorch-lightning
+roma
+pyrender
+opencv-python
+pymomentum-gpu==0.1.94.post0
+yacs
+scikit-image
+einops
+timm
+dill
+pandas
+mhr
+rich
+hydra-core
+hydra-submitit-launcher
+hydra-colorlog
+pyrootutils
+webdataset
+chump
+networkx==3.2.1
+joblib
+seaborn
+wandb
+appdirs
+ffmpeg-python
+cython
+jsonlines
+pytest
+loguru
+optree
+fvcore
+black
+pycocotools
+tensorboard
+huggingface_hub
+pyopengl
+pyopengl-accelerate
+mathutils
+gradio>=4.0
+requests
+tqdm
+Pillow
+git+https://github.com/microsoft/MoGe.git
