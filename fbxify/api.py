@@ -15,9 +15,25 @@ import threading
 from typing import Any, Dict, Optional
 from pathlib import Path
 
-from fastapi import FastAPI, File, Form, UploadFile, HTTPException
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile, HTTPException
 from fastapi.responses import FileResponse
 from starlette.background import BackgroundTasks
+
+
+def _verify_auth(request: Request) -> None:
+    """Require FBXIFY_SHARED_SECRET when set. Accepts Authorization: Bearer or X-API-Key."""
+    secret = os.environ.get("FBXIFY_SHARED_SECRET", "").strip()
+    if not secret:
+        return
+    auth = request.headers.get("Authorization")
+    api_key = request.headers.get("X-API-Key")
+    token = None
+    if auth and auth.startswith("Bearer "):
+        token = auth[7:]
+    elif api_key:
+        token = api_key
+    if token != secret:
+        raise HTTPException(status_code=401, detail="Invalid or missing API key")
 
 # Lazy init of heavy modules (done at startup)
 _manager: Optional[Any] = None
@@ -268,9 +284,21 @@ def _run_fbx_job(job_id: str, pose_json_path: str, extras: Dict[str, str], param
             except Exception:
                 pass
 
+        # Copy into job output_dir so /jobs/{id}/files/{filename} can serve them (export writes to /tmp)
+        output_dir = _jobs[job_id]["output_dir"]
+        names_in_dir = []
+        for p in output_files:
+            if p and os.path.isfile(p):
+                name = os.path.basename(p)
+                dest = os.path.join(output_dir, name)
+                if os.path.realpath(p) != os.path.realpath(dest):
+                    shutil.copy2(p, dest)
+                names_in_dir.append(name)
+        output_files = names_in_dir
+
         with _jobs_lock:
             _jobs[job_id]["status"] = "completed"
-            _jobs[job_id]["output_files"] = [os.path.basename(p) for p in output_files]
+            _jobs[job_id]["output_files"] = output_files
             _jobs[job_id]["progress"] = 100
             _jobs[job_id]["message"] = "Done"
     except Exception as e:
@@ -381,6 +409,7 @@ async def startup():
 @app.post("/jobs/pose")
 async def create_pose_job(
     background_tasks: BackgroundTasks,
+    _auth: None = Depends(_verify_auth),
     input_file: UploadFile = File(...),
     bbox_file: Optional[UploadFile] = File(None),
     fov_file: Optional[UploadFile] = File(None),
@@ -444,6 +473,7 @@ async def create_pose_job(
 @app.post("/jobs/fbx")
 async def create_fbx_job(
     background_tasks: BackgroundTasks,
+    _auth: None = Depends(_verify_auth),
     pose_json_file: UploadFile = File(...),
     profile_name: str = Form("mhr"),
     use_root_motion: bool = Form(True),
@@ -525,6 +555,7 @@ async def create_fbx_job(
 @app.post("/jobs/detection")
 async def create_detection_job(
     background_tasks: BackgroundTasks,
+    _auth: None = Depends(_verify_auth),
     input_file: UploadFile = File(...),
     detection_batch_size: int = Form(1),
 ):
@@ -550,6 +581,7 @@ async def create_detection_job(
 @app.post("/jobs/rerun_tracking")
 async def create_rerun_tracking_job(
     background_tasks: BackgroundTasks,
+    _auth: None = Depends(_verify_auth),
     estimation_file: UploadFile = File(...),
     step_through: bool = Form(False),
     debug_start_frame: int = Form(0),
@@ -673,7 +705,7 @@ async def create_rerun_tracking_job(
 
 
 @app.get("/jobs/{job_id}")
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str, _auth: None = Depends(_verify_auth)):
     with _jobs_lock:
         if job_id not in _jobs:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -690,7 +722,7 @@ async def get_job_status(job_id: str):
 
 
 @app.get("/jobs/{job_id}/files/{filename}")
-async def download_job_file(job_id: str, filename: str):
+async def download_job_file(job_id: str, filename: str, _auth: None = Depends(_verify_auth)):
     with _jobs_lock:
         if job_id not in _jobs:
             raise HTTPException(status_code=404, detail="Job not found")
@@ -704,7 +736,7 @@ async def download_job_file(job_id: str, filename: str):
 
 
 @app.post("/jobs/cancel")
-async def cancel_jobs():
+async def cancel_jobs(_auth: None = Depends(_verify_auth)):
     """Signal cancel - worker will check cancel flag in running jobs."""
     manager = _get_manager()
     manager.estimation_manager.cancel_current_job()

@@ -73,6 +73,20 @@ The worker starts first and loads models (~30s). The UI waits for the worker to 
 
 ---
 
+## Auth
+
+**Worker API:** When `FBXIFY_SHARED_SECRET` is set, the worker only accepts requests with that token. Omit for local dev. Generate with `openssl rand -hex 32`.
+
+**Gradio UI login:** When `REQUIRE_AUTH=1` (or `true`/`yes`/`on`) and `FBXIFY_AUTH_CREDENTIALS` is set, users must log in before using the app. Format: `user1:pass1,user2:pass2` (comma-separated user:password pairs). Example `.env`:
+
+```
+FBXIFY_SHARED_SECRET=your-worker-secret
+REQUIRE_AUTH=1
+FBXIFY_AUTH_CREDENTIALS=alice:secret1,bob:secret2
+```
+
+---
+
 ## Hosting (elastic workers)
 
 **Checkpoints:** The worker needs SAM 3D Body checkpoints at `/workspace/checkpoints/sam-3d-body-vith/` (and/or `sam-3d-body-dinov3`). Most services support this in one of these ways:

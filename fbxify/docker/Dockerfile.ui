@@ -17,11 +17,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /workspace
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
-# Override with local fbxify so you don't need to push every change to test
-COPY fbxify /workspace/fbxify
-
-# Copy requirements from build context in case not in repo
-COPY fbxify/docker/requirements-ui.txt /workspace/requirements-ui.txt
+RUN pip install --no-cache-dir -r fbxify/docker/requirements-ui.txt
 RUN pip install --no-cache-dir -r requirements-ui.txt
 
 ENV PYTHONPATH=/workspace

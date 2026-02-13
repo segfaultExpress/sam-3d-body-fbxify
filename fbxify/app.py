@@ -1401,8 +1401,27 @@ if __name__ == "__main__":
         backend = LocalBackend(manager, tracking_manager)
 
     app = create_app(backend)
+
+    # Optional Gradio login: REQUIRE_AUTH=1 + FBXIFY_AUTH_CREDENTIALS=user1:pass1,user2:pass2
+    auth_fn = None
+    if os.environ.get("REQUIRE_AUTH", "").strip().lower() in ("1", "true", "yes", "on"):
+        raw = os.environ.get("FBXIFY_AUTH_CREDENTIALS", "").strip()
+        if raw:
+            allowed = {}
+            for entry in raw.split(","):
+                entry = entry.strip()
+                if ":" in entry:
+                    user, _, passwd = entry.partition(":")
+                    if user and passwd:
+                        allowed[user.strip()] = passwd.strip()
+            if allowed:
+                def _authenticate(username: str, password: str) -> bool:
+                    return allowed.get(username) == password
+                auth_fn = _authenticate
+
     app.launch(
         server_name="0.0.0.0",
         server_port=7444,
         share=True,
+        auth=auth_fn,
     )

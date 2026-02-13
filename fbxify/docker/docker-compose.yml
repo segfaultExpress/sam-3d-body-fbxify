@@ -6,6 +6,8 @@
 # - GPU (worker)
 # - Checkpoints at CHECKPOINTS_DIR/sam-3d-body-vith (default: repo-root/checkpoints)
 #
+# Optional auth: FBXIFY_SHARED_SECRET for worker API. REQUIRE_AUTH=1 + FBXIFY_AUTH_CREDENTIALS=user:pass,... for Gradio login.
+#
 # Open http://localhost:7444 for the Gradio UI (or UI_PORT if set, e.g. when 7444 is in use).
 
 services:
@@ -31,6 +33,7 @@ services:
       - ${CACHE_DIR:-./cache}/mhr_assets:/opt/venv/lib/python3.12/site-packages/assets
     environment:
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
+      - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
     ports:
       - "8000:8000"
     healthcheck:
@@ -50,5 +53,8 @@ services:
         condition: service_healthy
     environment:
       - FBXIFY_REMOTE_WORKER_URL=http://worker:8000
+      - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
+      - REQUIRE_AUTH=${REQUIRE_AUTH}
+      - FBXIFY_AUTH_CREDENTIALS=${FBXIFY_AUTH_CREDENTIALS}
     ports:
       - "${UI_PORT:-7444}:7444"

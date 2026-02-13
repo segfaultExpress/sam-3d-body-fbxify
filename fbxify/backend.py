@@ -487,8 +487,15 @@ class LocalBackend:
 class RemoteBackend:
     """Backend that calls worker API via HTTP."""
 
-    def __init__(self, base_url: str):
+    def __init__(self, base_url: str, api_key: Optional[str] = None):
         self.base_url = base_url.rstrip("/")
+        self.api_key = (api_key or os.environ.get("FBXIFY_SHARED_SECRET", "") or "").strip()
+
+    def _headers(self) -> Dict[str, str]:
+        """Headers for worker requests. Includes auth when FBXIFY_SHARED_SECRET is set."""
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     def run_pose_estimation(
         self,
@@ -538,7 +545,7 @@ class RemoteBackend:
                 tc = tracking_config.to_dict() if hasattr(tracking_config, "to_dict") else tracking_config
                 payload["tracking_config"] = json.dumps(tc) if not isinstance(tc, str) else tc
 
-            r = requests.post(f"{self.base_url}/jobs/pose", data=payload, files=files or None, timeout=300)
+            r = requests.post(f"{self.base_url}/jobs/pose", data=payload, files=files or None, headers=self._headers(), timeout=300)
             r.raise_for_status()
             job_id = r.json().get("job_id")
             if not job_id:
@@ -552,7 +559,7 @@ class RemoteBackend:
             selected_json = None
             while True:
                 time.sleep(1)
-                status_r = requests.get(f"{self.base_url}/jobs/{job_id}", timeout=30)
+                status_r = requests.get(f"{self.base_url}/jobs/{job_id}", headers=self._headers(), timeout=30)
                 status_r.raise_for_status()
                 data = status_r.json()
                 status = data.get("status", "")
@@ -560,7 +567,7 @@ class RemoteBackend:
                     for filename in data.get("output_files", []):
                         fn = os.path.basename(filename) if isinstance(filename, str) else filename
                         url = f"{self.base_url}/jobs/{job_id}/files/{fn}"
-                        dl = requests.get(url, timeout=120)
+                        dl = requests.get(url, headers=self._headers(), timeout=120)
                         dl.raise_for_status()
                         local_path = os.path.join(tempfile.gettempdir(), fn)
                         with open(local_path, "wb") as out:
@@ -665,7 +672,7 @@ class RemoteBackend:
                 except Exception:
                     pass
 
-            r = requests.post(f"{self.base_url}/jobs/fbx", data=payload, files=files, timeout=300)
+            r = requests.post(f"{self.base_url}/jobs/fbx", data=payload, files=files, headers=self._headers(), timeout=300)
             r.raise_for_status()
             job_id = r.json().get("job_id")
             if not job_id:
@@ -680,13 +687,13 @@ class RemoteBackend:
             output_files = []
             while True:
                 time.sleep(1)
-                status_r = requests.get(f"{self.base_url}/jobs/{job_id}", timeout=30)
+                status_r = requests.get(f"{self.base_url}/jobs/{job_id}", headers=self._headers(), timeout=30)
                 status_r.raise_for_status()
                 data = status_r.json()
                 if data.get("status") == "completed":
                     for fn in data.get("output_files", []):
                         url = f"{self.base_url}/jobs/{job_id}/files/{fn}"
-                        dl = requests.get(url, timeout=120)
+                        dl = requests.get(url, headers=self._headers(), timeout=120)
                         dl.raise_for_status()
                         local_path = os.path.join(tempfile.gettempdir(), fn)
                         with open(local_path, "wb") as out:
@@ -723,13 +730,14 @@ class RemoteBackend:
                 f"{self.base_url}/jobs/detection",
                 data={"detection_batch_size": int(detection_batch_size or 1)},
                 files=files,
+                headers=self._headers(),
                 timeout=300,
             )
         r.raise_for_status()
         job_id = r.json().get("job_id")
         while True:
             time.sleep(1)
-            s = requests.get(f"{self.base_url}/jobs/{job_id}", timeout=30)
+            s = requests.get(f"{self.base_url}/jobs/{job_id}", headers=self._headers(), timeout=30)
             s.raise_for_status()
             d = s.json()
             if d.get("status") == "completed":
@@ -737,7 +745,7 @@ class RemoteBackend:
                 if not mot_fn:
                     return None
                 url = f"{self.base_url}/jobs/{job_id}/files/{mot_fn}"
-                dl = requests.get(url, timeout=60)
+                dl = requests.get(url, headers=self._headers(), timeout=60)
                 dl.raise_for_status()
                 local_path = os.path.join(tempfile.gettempdir(), mot_fn)
                 with open(local_path, "wb") as out:
@@ -772,13 +780,14 @@ class RemoteBackend:
                         **tracking_config_params,
                     },
                     files=files,
+                    headers=self._headers(),
                     timeout=300,
                 )
             r.raise_for_status()
             job_id = r.json().get("job_id")
             while True:
                 time.sleep(1)
-                s = requests.get(f"{self.base_url}/jobs/{job_id}", timeout=30)
+                s = requests.get(f"{self.base_url}/jobs/{job_id}", headers=self._headers(), timeout=30)
                 s.raise_for_status()
                 d = s.json()
                 if d.get("status") == "completed":
@@ -787,7 +796,7 @@ class RemoteBackend:
                         raise RuntimeError("No output from rerun tracking")
                     fn = fns[0]
                     url = f"{self.base_url}/jobs/{job_id}/files/{fn}"
-                    dl = requests.get(url, timeout=60)
+                    dl = requests.get(url, headers=self._headers(), timeout=60)
                     dl.raise_for_status()
                     new_path = os.path.join(tempfile.gettempdir(), fn)
                     with open(new_path, "wb") as out:
@@ -806,6 +815,6 @@ class RemoteBackend:
     def cancel_current_job(self) -> None:
         import requests
         try:
-            requests.post(f"{self.base_url}/jobs/cancel", timeout=5)
+            requests.post(f"{self.base_url}/jobs/cancel", headers=self._headers(), timeout=5)
         except Exception:
             pass

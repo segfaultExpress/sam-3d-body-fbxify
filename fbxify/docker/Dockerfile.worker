@@ -40,8 +40,9 @@ RUN /opt/blender/5.0/python/bin/python3.11 -m ensurepip && \
 RUN python3.12 -m venv /opt/venv
 ENV PATH="/opt/venv/bin:${PATH}"
 
-# ---- Core Python tooling ----
-RUN python -m pip install --upgrade pip setuptools wheel
+# ---- Core Python tooling (setuptools pinned: detectron2/ViTDet need pkg_resources) ----
+RUN python -m pip install --upgrade pip wheel && \
+    python -m pip install "setuptools<81"
 
 # ---- NumPy + modern cu128 PyTorch ----
 RUN python -m pip install "numpy<2"
@@ -99,8 +100,8 @@ RUN python -m pip install mathutils
 # ---- FastAPI + uvicorn for worker API ----
 RUN python -m pip install fastapi uvicorn
 
-# ---- flash-attn ----
-RUN python -m pip install -U pip setuptools wheel packaging ninja psutil \
+# ---- flash-attn (keep setuptools<81 for pkg_resources) ----
+RUN python -m pip install -U pip wheel packaging ninja psutil "setuptools<81" \
  && mkdir -p /wheelhouse \
  && ( python -m pip wheel --only-binary=:all: --no-deps -w /wheelhouse flash-attn \
       || python -m pip wheel --no-deps --no-build-isolation -w /wheelhouse flash-attn ) \
@@ -119,7 +120,7 @@ ENV PYOPENGL_PLATFORM=egl
 ENV MOMENTUM_ENABLED=True
 ENV MPLBACKEND=Agg
 ENV WANDB_MODE=offline
-ENV PYTHONPATH=/workspace:${PYTHONPATH}
+ENV PYTHONPATH=/workspace
 
 EXPOSE 8000
 
