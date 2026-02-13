@@ -1360,11 +1360,8 @@ def create_app(backend):
 
 
 if __name__ == "__main__":
-    remote_url = os.environ.get("FBXIFY_REMOTE_WORKER_URL")
-    if remote_url:
-        from fbxify.backend import RemoteBackend
-        backend = RemoteBackend(remote_url)
-    else:
+    use_local = os.environ.get("FBXIFY_LOCAL", "").strip().lower() in ("1", "true", "yes", "on")
+    if use_local:
         from fbxify.pose_estimation_manager import PoseEstimationManager
         from fbxify.fbxify_manager import FbxifyManager
         from fbxify.fbxify_manager import FbxDataPrepManager
@@ -1399,6 +1396,15 @@ if __name__ == "__main__":
         tracking_manager = TrackingManager()
         from fbxify.backend import LocalBackend
         backend = LocalBackend(manager, tracking_manager)
+    else:
+        remote_url = os.environ.get("FBXIFY_REMOTE_WORKER_URL", "").strip()
+        if not remote_url:
+            raise SystemExit(
+                "FBXIFY_REMOTE_WORKER_URL is not set. Set it to your worker URL (e.g. https://your-worker.run.app) "
+                "or run with FBXIFY_LOCAL=1 to use the in-process backend."
+            )
+        from fbxify.backend import RemoteBackend
+        backend = RemoteBackend(remote_url)
 
     app = create_app(backend)
 
@@ -1419,9 +1425,10 @@ if __name__ == "__main__":
                     return allowed.get(username) == password
                 auth_fn = _authenticate
 
+    server_port = int(os.environ.get("FBXIFY_UI_PORT", "7444"))
     app.launch(
         server_name="0.0.0.0",
-        server_port=7444,
+        server_port=server_port,
         share=True,
         auth=auth_fn,
     )

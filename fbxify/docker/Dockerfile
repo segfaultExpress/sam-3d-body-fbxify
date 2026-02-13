@@ -128,4 +128,9 @@ ENV MPLBACKEND=Agg
 ENV WANDB_MODE=offline
 ENV PYTHONPATH=/workspace:${PYTHONPATH}
 
-CMD ["python", "demo.py", "--help"]
+# When running Gradio app (e.g. python fbxify/app.py)
+ENV FBXIFY_UI_PORT=7444
+ENV FBXIFY_LOCAL=1
+EXPOSE 7444
+
+CMD ["python", "fbxify/app.py"]

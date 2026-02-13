@@ -18,11 +18,10 @@ WORKDIR /workspace
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 RUN pip install --no-cache-dir -r fbxify/docker/requirements-ui.txt
-RUN pip install --no-cache-dir -r requirements-ui.txt
 
 ENV PYTHONPATH=/workspace
-ENV FBXIFY_REMOTE_WORKER_URL=http://worker:8000
+ENV FBXIFY_UI_PORT=7860
 
-EXPOSE 7444
+EXPOSE 7860
 
 CMD ["python", "fbxify/app.py"]
