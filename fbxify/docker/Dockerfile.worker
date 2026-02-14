@@ -49,8 +49,8 @@ RUN python -m pip install "numpy<2"
 RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
-# ---- Clone repo ----
-WORKDIR /workspace
+# ---- Clone repo (in /app so /workspace can be reserved for volume mount) ----
+WORKDIR /app
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 # ---- SAM-3D-Body Python deps ----
@@ -120,8 +120,15 @@ ENV PYOPENGL_PLATFORM=egl
 ENV MOMENTUM_ENABLED=True
 ENV MPLBACKEND=Agg
 ENV WANDB_MODE=offline
-ENV PYTHONPATH=/workspace
+ENV PYTHONPATH=/app
+
+# Entrypoint: with one volume at /workspace, creates /workspace/checkpoints and
+# /workspace/cache/{videt_checkpoint,hf_cache,mhr_assets} and symlinks app cache
+# paths there (same layout as run.bat), so checkpoints + first-run downloads persist.
+COPY fbxify/docker/worker-entrypoint.sh /worker-entrypoint.sh
+RUN chmod +x /worker-entrypoint.sh
 
 EXPOSE 8000
+ENV PORT=8000
 
-CMD ["uvicorn", "fbxify.api:app", "--host", "0.0.0.0", "--port", "8000"]
+ENTRYPOINT ["/worker-entrypoint.sh"]

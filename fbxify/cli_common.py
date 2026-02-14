@@ -3,8 +3,9 @@ Shared CLI constants and helpers for pose estimation and FBX generation CLIs.
 """
 import os
 
-VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
-DINOV3_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-dinov3"
+_CHECKPOINTS_BASE = os.environ.get("CHECKPOINTS_DIR", "/workspace/checkpoints").rstrip("/")
+VITH_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-vith")
+DINOV3_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-dinov3")
 
 
 def get_checkpoint_paths(model: str) -> tuple:
