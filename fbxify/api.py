@@ -399,11 +399,15 @@ app = FastAPI(title="FBXify Worker API", version="1.0.0")
 
 @app.on_event("startup")
 async def startup():
-    """Load models on startup."""
-    print("Loading SAM 3D Body (GPU)...")
-    _get_manager()
-    _get_tracking_manager()
-    print("Worker ready.")
+    """Load models on startup. If checkpoints are missing, stay up anyway so you can upload them."""
+    try:
+        print("Loading SAM 3D Body (GPU)...")
+        _get_manager()
+        _get_tracking_manager()
+        print("Worker ready.")
+    except FileNotFoundError as e:
+        print(f"Checkpoints not loaded: {e}")
+        print("Server will stay up. Upload checkpoints to CHECKPOINTS_DIR, then send a request to trigger reload.")
 
 
 @app.post("/jobs/pose")
