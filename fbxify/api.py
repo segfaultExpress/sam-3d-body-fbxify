@@ -414,7 +414,7 @@ async def startup():
 
     model = os.environ.get("FBXIFY_MODEL", "vith")
     available = checkpoints_available(model)
-    print(f"checkpoints_available(model={model!r}) = {available}")
+    print(f"checkpoints_available(model={model!r}) = {available}", flush=True)
     if available:
         try:
             print("Loading SAM 3D Body (GPU)...")

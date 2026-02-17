@@ -12,7 +12,7 @@
 
 services:
   worker:
-    image: fbxify-worker
+    image: mordommin94/fbxify-worker:0.1.0
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.worker
@@ -25,6 +25,8 @@ services:
               capabilities: [gpu]
     shm_size: 8g
     volumes:
+      # For local dev: mount source so edits apply without rebuild (omit in prod)
+      - ../../fbxify:/workspace/fbxify:ro
       # SAM 3D Body checkpoints (required)
       - ${CHECKPOINTS_DIR:-./checkpoints}:/workspace/checkpoints:ro
       # Optional: persistent caches (faster restarts, avoid re-downloads)
@@ -44,7 +46,7 @@ services:
       start_period: 60s
 
   ui:
-    image: fbxify-ui
+    image: mordommin94/fbxify-ui:0.1.0
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.ui
