@@ -50,6 +50,8 @@ RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
 # ---- Clone repo ----
+# Pass --build-arg CACHEBUST=$(git rev-parse HEAD) to force fresh clone (bypass cache)
+ARG CACHEBUST
 WORKDIR /workspace
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 

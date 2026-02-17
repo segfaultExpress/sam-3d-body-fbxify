@@ -26,7 +26,7 @@ try:
         from mhr.mhr import MHR
 
         MOMENTUM_ENABLED = True
-        warnings.warn("Momentum is enabled")
+        warnings.warn("Momentum is enabled - is vast.ai caching this? wtf?")
     else:
         warnings.warn("Momentum is not enabled")
         raise ImportError

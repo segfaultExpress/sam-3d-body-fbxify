@@ -14,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
+# Pass --build-arg CACHEBUST=$(git rev-parse HEAD) to force fresh clone (bypass cache)
+ARG CACHEBUST
 WORKDIR /workspace
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 

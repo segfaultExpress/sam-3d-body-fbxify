@@ -16,6 +16,8 @@ services:
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.worker
+      args:
+        CACHEBUST: ${CACHEBUST:-none}
     deploy:
       resources:
         reservations:
@@ -48,6 +50,8 @@ services:
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.ui
+      args:
+        CACHEBUST: ${CACHEBUST:-none}
     depends_on:
       worker:
         condition: service_healthy

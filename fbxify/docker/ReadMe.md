@@ -67,9 +67,9 @@ set CACHE_DIR=F:\sam-3d-body-fbxify\cache
 docker compose -f fbxify/docker/docker-compose.yml up --build
 ```
 
-If worker fails with "No module named 'torch'", rebuild:
+If worker fails with "No module named 'torch'" or checkpoint errors, force a fresh clone (run_ui_worker.bat sets CACHEBUST=HEAD automatically):
 ```
-docker compose -f fbxify/docker/docker-compose.yml build --no-cache worker
+docker compose -f fbxify/docker/docker-compose.yml build --no-cache
 run_ui_worker.bat
 ```
 
