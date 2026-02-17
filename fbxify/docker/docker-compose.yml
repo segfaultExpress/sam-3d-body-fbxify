@@ -8,6 +8,7 @@
 #
 # CHECKPOINTS_DIR = host path to mount from. CHECKPOINTS_DIR_CONTAINER = container path
 # (where the app looks). Default: /fbxify/checkpoints. Set CHECKPOINTS_DIR_CONTAINER to use a custom path.
+# For HF_TOKEN auto-download of missing checkpoints, remove :ro from the checkpoints volume and set HF_TOKEN.
 #
 # Optional auth: FBXIFY_SHARED_SECRET for worker API. REQUIRE_AUTH=1 + FBXIFY_AUTH_CREDENTIALS=user:pass,... for Gradio login.
 #
@@ -40,6 +41,7 @@ services:
       - CHECKPOINTS_DIR=${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
       - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
+      - HF_TOKEN=${HF_TOKEN}
     ports:
       - "8000:8000"
     healthcheck:

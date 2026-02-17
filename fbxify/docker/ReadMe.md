@@ -108,9 +108,19 @@ docker run --gpus all --shm-size=8g -p 8000:8000 \
 
 Mount your host directory (wherever your checkpoints live) to any container path you want, then set `CHECKPOINTS_DIR` to that same path. The host path can be anywhere—`/data/checkpoints`, `/workspace/checkpoints`, `/mnt/vol/checkpoints`, etc.
 
+For HuggingFace auto-download (when checkpoints are missing), pass `HF_TOKEN` and use a writable mount (omit `:ro`):
+
+```bash
+docker run --gpus all --shm-size=8g -p 8000:8000 \
+  -v "/path/on/host/to/checkpoints:/checkpoints" \
+  -e CHECKPOINTS_DIR=/checkpoints \
+  -e HF_TOKEN=your_hf_token \
+  mordommin94/fbxify-worker:0.1.1
+```
+
 - **Persistent volume** — Create a disk/NFS, upload checkpoints once, attach the same volume to every worker instance (GCP persistent disk, AWS EBS, Azure Disk, etc.).
 - **Bake into image** — Add a Dockerfile stage that copies checkpoints into the image. Easiest but large images and no reuse across versions.
-- **Download on startup** — Worker entrypoint downloads from GCS/S3/blob if not present; use a shared cache volume so only the first start pays the cost.
+- **HuggingFace auto-download** — If checkpoints are missing and `HF_TOKEN` is set, the worker will attempt to download from [facebook/sam-3d-body-vith](https://huggingface.co/facebook/sam-3d-body-vith) or [facebook/sam-3d-body-dinov3](https://huggingface.co/facebook/sam-3d-body-dinov3) into `CHECKPOINTS_DIR`. Request access on the HuggingFace repos first. **The checkpoints volume must be writable** (do not use `:ro` on the mount) for auto-download to succeed.
 
 **Cache (ViTDet, Hugging Face, MHR assets):** To avoid re-downloading on each worker start, mount a persistent volume for:
 

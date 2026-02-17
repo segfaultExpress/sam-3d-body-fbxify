@@ -5,6 +5,14 @@ set -e
 CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-/fbxify/checkpoints}"
 CACHE_DIR="${CACHE_DIR:-/fbxify/cache}"
 export CHECKPOINTS_DIR
+export CACHE_DIR
+
+export HF_HOME="$CACHE_DIR/hf_cache"
+export HUGGINGFACE_HUB_CACHE="$CACHE_DIR/hf_cache/hub"
+export TRANSFORMERS_CACHE="$CACHE_DIR/hf_cache/hub"
+
+export TORCH_HOME="$CACHE_DIR/torch"
+mkdir -p "$TORCH_HOME"
 
 mkdir -p "$CHECKPOINTS_DIR"
 mkdir -p "$CACHE_DIR/videt_checkpoint" \

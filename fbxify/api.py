@@ -409,11 +409,17 @@ async def file_not_found_handler(request: Request, exc: FileNotFoundError):
 
 @app.on_event("startup")
 async def startup():
-    """Load models on startup. If checkpoints are missing, stay up in waiting mode for SSH upload."""
+    """Load models on startup. If checkpoints are missing, try HF download (when HF_TOKEN set), else stay in waiting mode."""
     from fbxify.cli_common import checkpoints_available
+    from fbxify.checkpoint_download import download_checkpoints_if_missing
 
     model = os.environ.get("FBXIFY_MODEL", "vith")
+    checkpoints_dir = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
     available = checkpoints_available(model)
+    if not available and os.environ.get("HF_TOKEN"):
+        print("Checkpoints missing; attempting download from HuggingFace (HF_TOKEN set)...", flush=True)
+        download_checkpoints_if_missing(model, checkpoints_dir)
+        available = checkpoints_available(model)
     print(f"checkpoints_available(model={model!r}) = {available}", flush=True)
     if available:
         try:

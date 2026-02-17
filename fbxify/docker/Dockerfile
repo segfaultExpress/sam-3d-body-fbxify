@@ -1,15 +1,12 @@
 # Build from sam-3d-body repo root:
 #   docker build -t sam-3d-body .
 #
-# Example run:
+# Example run (mount checkpoints to any path, set CHECKPOINTS_DIR to match):
 #   docker run --gpus all --shm-size=8g -it \
-#     -v $PWD:/fbxify/sam-3d-body \
-#     sam-3d-body \
-#     python demo.py \
-#       --image_folder /fbxify/sam-3d-body/example_images \
-#       --output_folder /fbxify/sam-3d-body/output \
-#       --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt \
-#       --mhr_path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt
+#     -v /path/on/host/to/checkpoints:/checkpoints:ro \
+#     -e CHECKPOINTS_DIR=/checkpoints \
+#     -p 7444:7444 \
+#     sam-3d-body
 
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
@@ -122,6 +119,8 @@ RUN python -m pip install \
       --no-build-isolation --no-deps
 
 # ---- Headless rendering + paths ----
+# CHECKPOINTS_DIR: where to find sam-3d-body-vith/ etc. Override with -e at runtime.
+ENV CHECKPOINTS_DIR=/fbxify/checkpoints
 ENV PYOPENGL_PLATFORM=egl
 ENV MOMENTUM_ENABLED=True
 ENV MPLBACKEND=Agg
