@@ -19,4 +19,4 @@ if not exist "%CHECKPOINTS_DIR%\sam-3d-body-vith" (
 )
 
 if defined UI_PORT (echo UI will be at http://localhost:%UI_PORT%) else (echo UI will be at http://localhost:7444)
-docker compose -f "%SCRIPT_DIR%docker-compose.yml" up
+docker compose -f "%SCRIPT_DIR%docker-compose.yml" up --build

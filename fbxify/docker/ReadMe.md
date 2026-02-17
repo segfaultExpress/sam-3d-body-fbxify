@@ -55,16 +55,22 @@
 
 **1. Ensure checkpoints exist** at `F:\sam-3d-body-fbxify\checkpoints\sam-3d-body-vith\` (or set `CHECKPOINTS_DIR`). `run_ui_worker.bat` defaults `CHECKPOINTS_DIR` to repo-root `checkpoints`.
 
-**2. Start both:**
+**2. Start both** (from repo root):
 ```
 run_ui_worker.bat
 ```
 
-Or from repo root with explicit paths:
+Or with explicit paths:
 ```
 set CHECKPOINTS_DIR=F:\sam-3d-body-fbxify\checkpoints
 set CACHE_DIR=F:\sam-3d-body-fbxify\cache
 docker compose -f fbxify/docker/docker-compose.yml up --build
+```
+
+If worker fails with "No module named 'torch'", rebuild:
+```
+docker compose -f fbxify/docker/docker-compose.yml build --no-cache worker
+run_ui_worker.bat
 ```
 
 **3. Open** http://localhost:7444
