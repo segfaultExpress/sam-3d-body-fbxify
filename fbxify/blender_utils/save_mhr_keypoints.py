@@ -5,10 +5,10 @@ that can be loaded by the Blender visualizer
 
 example usage:
 python fbxify/blender_utils/save_mhr_keypoints.py \ 
-  --image /workspace/images/test.png \
-  --output /workspace/output/keypoints.json \
-  --mhr_path /workspace/checkpoints/sam-3d-body-vith/assets/mhr_model.pt \
-  --checkpoint /workspace/checkpoints/sam-3d-body-vith/model.ckpt
+  --image /fbxify/images/test.png \
+  --output /fbxify/output/keypoints.json \
+  --mhr_path /fbxify/checkpoints/sam-3d-body-vith/assets/mhr_model.pt \
+  --checkpoint /fbxify/checkpoints/sam-3d-body-vith/model.ckpt
 """
 
 import argparse

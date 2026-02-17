@@ -6,13 +6,16 @@
 # - GPU (worker)
 # - Checkpoints at CHECKPOINTS_DIR/sam-3d-body-vith (default: repo-root/checkpoints)
 #
+# CHECKPOINTS_DIR = host path to mount from. CHECKPOINTS_DIR_CONTAINER = container path
+# (where the app looks). Default: /fbxify/checkpoints. Set CHECKPOINTS_DIR_CONTAINER to use a custom path.
+#
 # Optional auth: FBXIFY_SHARED_SECRET for worker API. REQUIRE_AUTH=1 + FBXIFY_AUTH_CREDENTIALS=user:pass,... for Gradio login.
 #
 # Open http://localhost:7444 for the Gradio UI (or UI_PORT if set, e.g. when 7444 is in use).
 
 services:
   worker:
-    image: mordommin94/fbxify-worker:0.1.0
+    image: mordommin94/fbxify-worker:0.1.1
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.worker
@@ -27,13 +30,14 @@ services:
               capabilities: [gpu]
     shm_size: 8g
     volumes:
-      # SAM 3D Body checkpoints (required)
-      - ${CHECKPOINTS_DIR:-./checkpoints}:/workspace/checkpoints:ro
+      # SAM 3D Body checkpoints (required). Mount target = CHECKPOINTS_DIR_CONTAINER.
+      - ${CHECKPOINTS_DIR:-./checkpoints}:${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}:ro
       # Optional: persistent caches (faster restarts, avoid re-downloads)
       - ${CACHE_DIR:-./cache}/videt_checkpoint:/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
       - ${CACHE_DIR:-./cache}/hf_cache:/root/.cache/huggingface
       - ${CACHE_DIR:-./cache}/mhr_assets:/opt/venv/lib/python3.12/site-packages/assets
     environment:
+      - CHECKPOINTS_DIR=${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
       - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
     ports:
@@ -46,7 +50,7 @@ services:
       start_period: 60s
 
   ui:
-    image: mordommin94/fbxify-ui:0.1.0
+    image: mordommin94/fbxify-ui:0.1.1
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.ui

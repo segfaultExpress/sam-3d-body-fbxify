@@ -95,7 +95,18 @@ FBXIFY_AUTH_CREDENTIALS=alice:secret1,bob:secret2
 
 ## Hosting (elastic workers)
 
-**Checkpoints:** The worker needs SAM 3D Body checkpoints at `/workspace/checkpoints/sam-3d-body-vith/` (and/or `sam-3d-body-dinov3`). Most services support this in one of these ways:
+**Checkpoints:** The worker reads `CHECKPOINTS_DIR` from the environment—that's the *container* path where it looks for `sam-3d-body-vith/` (and/or `sam-3d-body-dinov3`). Mount your host volume to that path. You choose the path; nothing is hardcoded.
+
+**Mount your checkpoints** (vast.ai, bare metal, etc.):
+
+```bash
+docker run --gpus all --shm-size=8g -p 8000:8000 \
+  -v "/path/on/host/to/checkpoints:/sandwiches:ro" \
+  -e CHECKPOINTS_DIR=/sandwiches \
+  mordommin94/fbxify-worker:0.1.1
+```
+
+Mount your host directory (wherever your checkpoints live) to any container path you want, then set `CHECKPOINTS_DIR` to that same path. The host path can be anywhere—`/data/checkpoints`, `/workspace/checkpoints`, `/mnt/vol/checkpoints`, etc.
 
 - **Persistent volume** — Create a disk/NFS, upload checkpoints once, attach the same volume to every worker instance (GCP persistent disk, AWS EBS, Azure Disk, etc.).
 - **Bake into image** — Add a Dockerfile stage that copies checkpoints into the image. Easiest but large images and no reuse across versions.

@@ -3,7 +3,7 @@ Shared CLI constants and helpers for pose estimation and FBX generation CLIs.
 """
 import os
 
-_CHECKPOINTS_BASE = os.environ.get("CHECKPOINTS_DIR", "/workspace/checkpoints").rstrip("/")
+_CHECKPOINTS_BASE = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
 VITH_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-vith")
 DINOV3_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-dinov3")
 

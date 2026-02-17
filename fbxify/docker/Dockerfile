@@ -3,11 +3,11 @@
 #
 # Example run:
 #   docker run --gpus all --shm-size=8g -it \
-#     -v $PWD:/workspace/sam-3d-body \
+#     -v $PWD:/fbxify/sam-3d-body \
 #     sam-3d-body \
 #     python demo.py \
-#       --image_folder /workspace/sam-3d-body/example_images \
-#       --output_folder /workspace/sam-3d-body/output \
+#       --image_folder /fbxify/sam-3d-body/example_images \
+#       --output_folder /fbxify/sam-3d-body/output \
 #       --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt \
 #       --mhr_path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt
 
@@ -58,7 +58,7 @@ RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
 # ---- Clone repo ----
-WORKDIR /workspace
+WORKDIR /fbxify
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 # ---- SAM-3D-Body Python deps ----
@@ -126,7 +126,7 @@ ENV PYOPENGL_PLATFORM=egl
 ENV MOMENTUM_ENABLED=True
 ENV MPLBACKEND=Agg
 ENV WANDB_MODE=offline
-ENV PYTHONPATH=/workspace:${PYTHONPATH}
+ENV PYTHONPATH=/fbxify:${PYTHONPATH}
 
 # When running Gradio app (e.g. python fbxify/app.py)
 ENV FBXIFY_UI_PORT=7444

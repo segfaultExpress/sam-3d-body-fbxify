@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# CHECKPOINTS_DIR and CACHE_DIR are configurable (default /workspace/checkpoints, /workspace/cache).
+# CHECKPOINTS_DIR and CACHE_DIR are configurable. Set them to wherever you mount your volumes.
 # PORT is configurable (default 8000). One volume mount can back both dirs.
 set -e
-CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-/workspace/checkpoints}"
-CACHE_DIR="${CACHE_DIR:-/workspace/cache}"
+CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-/fbxify/checkpoints}"
+CACHE_DIR="${CACHE_DIR:-/fbxify/cache}"
 export CHECKPOINTS_DIR
 
 mkdir -p "$CHECKPOINTS_DIR"

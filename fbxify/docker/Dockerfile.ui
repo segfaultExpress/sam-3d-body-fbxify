@@ -16,12 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Pass --build-arg CACHEBUST=$(git rev-parse HEAD) to force fresh clone (bypass cache)
 ARG CACHEBUST
-WORKDIR /workspace
+WORKDIR /fbxify
 RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
 
 RUN pip install --no-cache-dir -r fbxify/docker/requirements-ui.txt
 
-ENV PYTHONPATH=/workspace
+ENV PYTHONPATH=/fbxify
 ENV FBXIFY_UI_PORT=7860
 
 EXPOSE 7860
