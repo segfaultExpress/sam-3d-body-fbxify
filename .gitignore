@@ -128,4 +128,3 @@ debug/
 # Project-specific: Testing
 **/.dist_test
 sandbox*
-*.sh
