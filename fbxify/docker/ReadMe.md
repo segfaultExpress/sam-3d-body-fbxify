@@ -128,4 +128,11 @@ docker run --gpus all --shm-size=8g -p 8000:8000 \
 - Hugging Face: `/root/.cache/huggingface`
 - MHR assets: `/opt/venv/lib/python3.12/site-packages/assets`
 
+**MHR assets (required for FBX LOD meshes):** The worker needs `lod0.fbx`, `lod1.fbx`, etc. from [MHR v1.0.0](https://github.com/facebookresearch/MHR/releases/tag/v1.0.0). Download `assets.zip`, extract the contents of the `assets` folder into `CACHE_DIR/mhr_assets`. Or run:
+
+```bash
+./fbxify/docker/mhr_assets_download.sh   # Linux/macOS
+fbxify\docker\mhr_assets_download.bat    # Windows
+```
+
 Pre-warm the volume once (run one worker, let it download), then attach that volume to new workers so startup stays fast.

@@ -411,10 +411,20 @@ async def file_not_found_handler(request: Request, exc: FileNotFoundError):
 async def startup():
     """Load models on startup. If checkpoints are missing, try HF download (when HF_TOKEN set), else stay in waiting mode."""
     from fbxify.cli_common import checkpoints_available
-    from fbxify.checkpoint_download import download_checkpoints_if_missing
+    from fbxify.checkpoint_download import download_checkpoints_if_missing, download_mhr_assets_if_missing
 
     model = os.environ.get("FBXIFY_MODEL", "vith")
     checkpoints_dir = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
+    cache_dir = os.environ.get("CACHE_DIR", "/fbxify/cache").rstrip("/")
+    # Assets path: mount target (docker-compose) or symlink target (entrypoint)
+    mhr_assets_dir = os.environ.get(
+        "MHR_ASSETS_PATH",
+        os.path.join(cache_dir, "mhr_assets"),
+    )
+    print(f"mhr_assets: MHR_ASSETS_PATH={mhr_assets_dir!r} (from env or CACHE_DIR/mhr_assets)", flush=True)
+
+    download_mhr_assets_if_missing(mhr_assets_dir)
+
     available = checkpoints_available(model)
     if not available and os.environ.get("HF_TOKEN"):
         print("Checkpoints missing; attempting download from HuggingFace (HF_TOKEN set)...", flush=True)
