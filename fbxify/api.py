@@ -397,17 +397,30 @@ def _run_rerun_tracking_job(job_id: str, estimation_path: str, params: Dict[str,
 app = FastAPI(title="FBXify Worker API", version="1.0.0")
 
 
+@app.exception_handler(FileNotFoundError)
+async def file_not_found_handler(request: Request, exc: FileNotFoundError):
+    """Return 503 when checkpoints are missing (worker in waiting mode)."""
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=503,
+        content={"detail": str(exc) + ". Upload checkpoints to CHECKPOINTS_DIR, then POST /reload."},
+    )
+
+
 @app.on_event("startup")
 async def startup():
-    """Load models on startup. If checkpoints are missing, stay up anyway so you can upload them."""
-    try:
+    """Load models on startup. If checkpoints are missing, stay up in waiting mode for SSH upload."""
+    from fbxify.cli_common import checkpoints_available
+
+    model = os.environ.get("FBXIFY_MODEL", "vith")
+    if checkpoints_available(model):
         print("Loading SAM 3D Body (GPU)...")
         _get_manager()
         _get_tracking_manager()
         print("Worker ready.")
-    except FileNotFoundError as e:
-        print(f"Checkpoints not loaded: {e}")
-        print("Server will stay up. Upload checkpoints to CHECKPOINTS_DIR, then send a request to trigger reload.")
+    else:
+        print("Checkpoints not found. Running in waiting mode.")
+        print("Upload checkpoints to CHECKPOINTS_DIR, then POST /reload to load models.")
 
 
 @app.post("/jobs/pose")
@@ -745,6 +758,23 @@ async def cancel_jobs(_auth: None = Depends(_verify_auth)):
     manager = _get_manager()
     manager.estimation_manager.cancel_current_job()
     return {"status": "ok"}
+
+
+@app.post("/reload")
+async def reload_models(_auth: None = Depends(_verify_auth)):
+    """Reload models (e.g. after uploading checkpoints via SSH). Clears cached managers and reinitializes."""
+    global _manager, _tracking_manager
+    _manager = None
+    _tracking_manager = None
+    try:
+        _get_manager()
+        _get_tracking_manager()
+        return {"status": "ok", "message": "Models loaded"}
+    except FileNotFoundError as e:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Checkpoints not found: {e}. Upload to CHECKPOINTS_DIR and retry.",
+        )
 
 
 @app.get("/health")
