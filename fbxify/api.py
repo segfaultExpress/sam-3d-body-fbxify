@@ -413,11 +413,18 @@ async def startup():
     from fbxify.cli_common import checkpoints_available
 
     model = os.environ.get("FBXIFY_MODEL", "vith")
-    if checkpoints_available(model):
-        print("Loading SAM 3D Body (GPU)...")
-        _get_manager()
-        _get_tracking_manager()
-        print("Worker ready.")
+    available = checkpoints_available(model)
+    print(f"checkpoints_available(model={model!r}) = {available}")
+    if available:
+        try:
+            print("Loading SAM 3D Body (GPU)...")
+            _get_manager()
+            _get_tracking_manager()
+            print("Worker ready.")
+        except FileNotFoundError as e:
+            print(f"Checkpoints not found: {e}")
+            print("Running in waiting mode.")
+            print("Upload checkpoints to CHECKPOINTS_DIR, then POST /reload to load models.")
     else:
         print("Checkpoints not found. Running in waiting mode.")
         print("Upload checkpoints to CHECKPOINTS_DIR, then POST /reload to load models.")
