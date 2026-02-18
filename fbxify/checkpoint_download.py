@@ -57,51 +57,74 @@ def download_checkpoints_if_missing(model: str, checkpoints_dir: str) -> bool:
 
 
 MHR_ASSETS_URL = "https://github.com/facebookresearch/MHR/releases/download/v1.0.0/assets.zip"
+MHR_LOD1_MIN_BYTES = 1000  # lod1.fbx should be at least 1KB; catch corrupted/incomplete
 
 
 def download_mhr_assets_if_missing(mhr_assets_dir: str) -> bool:
     """
-    If MHR assets (lod0.fbx, lod1.fbx, etc.) are missing, download from GitHub.
+    If MHR assets (lod0.fbx, lod1.fbx, etc.) are missing or corrupted, download from GitHub.
     Returns True if assets are now available (either existed or downloaded).
     """
     mhr_assets_dir = os.path.normpath(mhr_assets_dir.rstrip("/"))
     lod1_path = os.path.join(mhr_assets_dir, "lod1.fbx")
 
+    def _lod1_valid():
+        return os.path.exists(lod1_path) and os.path.getsize(lod1_path) >= MHR_LOD1_MIN_BYTES
+
     print(f"mhr_assets: checking lod1.fbx at {lod1_path!r} exists={os.path.exists(lod1_path)}", flush=True)
-    if os.path.exists(lod1_path):
+    if _lod1_valid():
         print("mhr_assets: lod1.fbx found, skipping download.", flush=True)
         return True
 
-    try:
-        print(f"mhr_assets: lod1.fbx missing, downloading from {MHR_ASSETS_URL}...", flush=True)
-        os.makedirs(mhr_assets_dir, exist_ok=True)
-        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
-            tmp_path = tmp.name
+    # Stale/corrupt cache: remove partial dir so we get a clean download
+    if os.path.exists(mhr_assets_dir) and not _lod1_valid():
+        print("mhr_assets: lod1.fbx missing or too small, clearing partial cache.", flush=True)
         try:
-            urlretrieve(MHR_ASSETS_URL, tmp_path)
-            with zipfile.ZipFile(tmp_path, "r") as zf:
-                for name in zf.namelist():
-                    if name.startswith("assets/") and not name.endswith("/"):
-                        rel = name[len("assets/"):]
-                        if not rel:
-                            continue
-                        # Skip large corrective blendshapes (not needed for FBX export)
-                        if "corrective_blendshapes_lod" in rel and rel.endswith(".npz"):
-                            continue
-                        dest = os.path.join(mhr_assets_dir, rel)
-                        os.makedirs(os.path.dirname(dest), exist_ok=True)
-                        with zf.open(name) as src, open(dest, "wb") as out:
-                            shutil.copyfileobj(src, out)
-            if os.path.exists(lod1_path):
-                print("mhr_assets: successfully downloaded.", flush=True)
-                return True
-            print(f"mhr_assets: download completed but lod1.fbx still missing in {mhr_assets_dir}", flush=True)
-            return False
-        finally:
+            shutil.rmtree(mhr_assets_dir)
+        except OSError as e:
+            print(f"mhr_assets: could not clear cache: {e}", flush=True)
+
+    for attempt in range(2):
+        try:
+            print(f"mhr_assets: downloading from {MHR_ASSETS_URL} (attempt {attempt + 1}/2)...", flush=True)
+            os.makedirs(mhr_assets_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+                tmp_path = tmp.name
             try:
-                os.unlink(tmp_path)
+                urlretrieve(MHR_ASSETS_URL, tmp_path)
+                if os.path.getsize(tmp_path) < 10000:
+                    raise OSError(f"Downloaded zip too small ({os.path.getsize(tmp_path)} bytes), likely failed")
+                with zipfile.ZipFile(tmp_path, "r") as zf:
+                    for name in zf.namelist():
+                        if name.startswith("assets/") and not name.endswith("/"):
+                            rel = name[len("assets/"):]
+                            if not rel:
+                                continue
+                            if "corrective_blendshapes_lod" in rel and rel.endswith(".npz"):
+                                continue
+                            dest = os.path.join(mhr_assets_dir, rel)
+                            os.makedirs(os.path.dirname(dest), exist_ok=True)
+                            with zf.open(name) as src, open(dest, "wb") as out:
+                                shutil.copyfileobj(src, out)
+                if _lod1_valid():
+                    print("mhr_assets: successfully downloaded.", flush=True)
+                    return True
+                if attempt == 0:
+                    print("mhr_assets: lod1.fbx missing after extract, retrying...", flush=True)
+                    shutil.rmtree(mhr_assets_dir, ignore_errors=True)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+        except Exception as e:
+            print(f"mhr_assets: attempt {attempt + 1} failed: {e}", flush=True)
+            try:
+                shutil.rmtree(mhr_assets_dir, ignore_errors=True)
             except OSError:
                 pass
-    except Exception as e:
-        print(f"mhr_assets: failed to download: {e}", flush=True)
-        return False
+            if attempt == 1:
+                print(f"mhr_assets: failed after 2 attempts.", flush=True)
+                return False
+
+    return False

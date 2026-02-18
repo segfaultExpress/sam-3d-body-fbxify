@@ -132,4 +132,9 @@ ENV FBXIFY_UI_PORT=7444
 ENV FBXIFY_LOCAL=1
 EXPOSE 7444
 
+# Entrypoint: creates CACHE_DIR/mhr_assets and symlinks assets -> it so mhr finds lod1.fbx.
+# Same layout as worker; run.bat mount -v cache/mhr_assets:assets works as override.
+COPY fbxify/docker/standalone-entrypoint.sh /standalone-entrypoint.sh
+RUN chmod +x /standalone-entrypoint.sh
+ENTRYPOINT ["/standalone-entrypoint.sh"]
 CMD ["python", "fbxify/app.py"]

@@ -348,14 +348,9 @@ class LocalBackend:
                     progress_callback(0.3 + progress_value * 0.6, description)
 
             lod_fbx_path = None
-            if include_mesh and lod_int >= 0 and process_result.profile_name == "mhr":
-                from fbxify.metadata import PROFILES
-                profile = PROFILES.get(process_result.profile_name)
-                if profile:
-                    lod_key = f"lod{lod_int}_path"
-                    if lod_key in profile:
-                        lod_rel_path = profile[lod_key]
-                        lod_fbx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fbxify", lod_rel_path)
+            if include_mesh and lod_int >= 0:
+                from fbxify.cli_common import resolve_lod_fbx_path
+                lod_fbx_path = resolve_lod_fbx_path(process_result.profile_name, lod_int)
 
             fbx_paths = self.manager.export_fbx_files(
                 process_result.profile_name,

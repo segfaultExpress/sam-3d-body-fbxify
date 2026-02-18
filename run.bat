@@ -14,11 +14,13 @@ if %errorlevel% neq 0 (
   exit /b 1
 )
 
+set "IMAGE_NAME=mordommin94/fbxify-standalone:0.1.5"
+
 REM Check if sam-3d-3.12 image exists
-docker image inspect sam-3d-3.12 >nul 2>&1
+docker image inspect %IMAGE_NAME% >nul 2>&1
 if %errorlevel% neq 0 (
-  echo Error: Docker image 'sam-3d-3.12' does not exist.
-  echo You must run build_docker.bat or build_docker.sh first to build the image.
+  echo Error: Docker image '%IMAGE_NAME%' does not exist.
+  echo You must run build_docker_standalone.bat or build_docker_standalone.sh first to build the image.
   exit /b 1
 )
 
@@ -42,4 +44,4 @@ docker run --rm -it --gpus all --shm-size=8g ^
   -v "%REPO_DIR%\cache\videt_checkpoint":/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692 ^
   -v "%REPO_DIR%\cache\hf_cache":/root/.cache/huggingface ^
   -v "%REPO_DIR%\cache\mhr_assets":/opt/venv/lib/python3.12/site-packages/assets ^
-  sam-3d-3.12 ./start_server.sh
+  %IMAGE_NAME% ./start_server.sh

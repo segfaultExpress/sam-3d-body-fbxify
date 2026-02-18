@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# CHECKPOINTS_DIR and CACHE_DIR are configurable. Set them to wherever you mount your volumes.
-# PORT is configurable (default 8000). One volume mount can back both dirs.
+# Same cache/symlink setup as worker-entrypoint.sh so mhr finds lod1.fbx etc.
+# CHECKPOINTS_DIR and CACHE_DIR configurable. Runs CMD (default: python fbxify/app.py).
 set -e
 CHECKPOINTS_DIR="${CHECKPOINTS_DIR:-/fbxify/checkpoints}"
 CACHE_DIR="${CACHE_DIR:-/fbxify/cache}"
@@ -25,10 +25,10 @@ ln -snf "$CACHE_DIR/videt_checkpoint" /root/.torch/iopath_cache/detectron2/ViTDe
 ln -snf "$CACHE_DIR/hf_cache" /root/.cache/huggingface
 
 # mhr_assets: symlink assets -> CACHE_DIR/mhr_assets so downloads and app use the same path.
-# Skip when assets is already a mount point (e.g. docker-compose -v cache/mhr_assets:assets).
+# Skip when assets is already a mount point (e.g. run.bat -v cache/mhr_assets:assets).
 ASSETS_PATH="/opt/venv/lib/python3.12/site-packages/assets"
 if (mountpoint -q "$ASSETS_PATH" 2>/dev/null) || grep -q " $ASSETS_PATH " /proc/mounts 2>/dev/null; then
-  : # Already mounted (e.g. by docker-compose), nothing to do
+  : # Already mounted, nothing to do
 elif [ -L "$ASSETS_PATH" ]; then
   : # Already a symlink, nothing to do
 else
@@ -37,4 +37,4 @@ else
   ln -snf "$CACHE_DIR/mhr_assets" "$ASSETS_PATH"
 fi
 
-exec uvicorn fbxify.api:app --host 0.0.0.0 --port "${PORT:-8000}"
+exec "$@"

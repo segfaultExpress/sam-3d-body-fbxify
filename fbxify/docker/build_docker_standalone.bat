@@ -1,7 +1,7 @@
 @echo off
-REM Build fbxify UI image (slim, no GPU). Context = repo root.
+REM Build fbxify standalone image (full GPU). Context = repo root.
 REM Reads USERNAME and VERSION from docker-build.config (same dir as this script).
-REM Command-line args override: build_docker_ui.bat [USERNAME] [VERSION]
+REM Command-line args override: build_docker_standalone.bat [USERNAME] [VERSION]
 
 cd /d "%~dp0"
 for /f "usebackq eol=# tokens=1,* delims==" %%a in ("docker-build.config") do set "%%a=%%b"
@@ -11,4 +11,4 @@ if "%USERNAME%"=="" set USERNAME=mordommin94
 if "%VERSION%"=="" set VERSION=0.1.4
 
 cd /d "%~dp0..\.."
-docker build -f fbxify/docker/Dockerfile.ui -t %USERNAME%/fbxify-ui:%VERSION% .
+docker build -f fbxify/docker/Dockerfile -t %USERNAME%/sam-3d-body:%VERSION% .
