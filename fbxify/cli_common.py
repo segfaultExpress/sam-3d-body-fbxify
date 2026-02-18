@@ -13,8 +13,6 @@ def checkpoints_available(model: str) -> bool:
     Return True if checkpoint files exist for the given model.
     Never raises; use for conditional loading (e.g. worker waiting mode).
     """
-    print(f"checkpoints_available: CHECKPOINTS_DIR env={os.environ.get('CHECKPOINTS_DIR', '<unset>')!r}", flush=True)
-    print(f"checkpoints_available: _CHECKPOINTS_BASE={_CHECKPOINTS_BASE!r}", flush=True)
     if model == "vith":
         base = VITH_CHECKPOINT_PATH
     elif model == "dinov3":
@@ -27,11 +25,8 @@ def checkpoints_available(model: str) -> bool:
     ckpt_exists = os.path.exists(checkpoint_path)
     mhr_exists = os.path.exists(mhr_path)
     result = ckpt_exists and mhr_exists
-    print(f"checkpoints_available: checkpoint_path={checkpoint_path!r} exists={ckpt_exists}", flush=True)
-    print(f"checkpoints_available: mhr_path={mhr_path!r} exists={mhr_exists}", flush=True)
-    print(f"checkpoints_available: -> {result}", flush=True)
+    print(f"checkpoints_available: {model!r} -> {result}", flush=True)
     return result
-
 
 def get_checkpoint_paths(model: str) -> tuple:
     """
