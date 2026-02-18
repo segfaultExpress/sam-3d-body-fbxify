@@ -36,11 +36,10 @@ services:
       # Optional: persistent caches (faster restarts, avoid re-downloads)
       - ${CACHE_DIR:-./cache}/videt_checkpoint:/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
       - ${CACHE_DIR:-./cache}/hf_cache:/root/.cache/huggingface
-      - ${CACHE_DIR:-./cache}/mhr_assets:/opt/venv/lib/python3.12/site-packages/assets
+      - ${CACHE_DIR:-./cache}/mhr_assets:/fbxify/cache/mhr_assets
     environment:
       - CHECKPOINTS_DIR=${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}
       - CACHE_DIR=${CACHE_DIR:-/fbxify/cache}
-      - MHR_ASSETS_PATH=/opt/venv/lib/python3.12/site-packages/assets
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
       - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
       - HF_TOKEN=${HF_TOKEN}

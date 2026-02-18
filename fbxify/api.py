@@ -416,12 +416,10 @@ async def startup():
     model = os.environ.get("FBXIFY_MODEL", "vith")
     checkpoints_dir = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
     cache_dir = os.environ.get("CACHE_DIR", "/fbxify/cache").rstrip("/")
-    # Assets path: mount target (docker-compose) or symlink target (entrypoint)
-    mhr_assets_dir = os.environ.get(
-        "MHR_ASSETS_PATH",
-        os.path.join(cache_dir, "mhr_assets"),
-    )
-    print(f"mhr_assets: MHR_ASSETS_PATH={mhr_assets_dir!r} (from env or CACHE_DIR/mhr_assets)", flush=True)
+    # Download to CACHE_DIR/mhr_assets so host mounts (e.g. -v host/cache:/workspace/cache) receive the files.
+    # Entrypoint symlinks /opt/venv/.../assets -> CACHE_DIR/mhr_assets so the app finds them.
+    mhr_assets_dir = os.path.join(cache_dir, "mhr_assets")
+    print(f"mhr_assets: CACHE_DIR={cache_dir!r} -> downloading to {mhr_assets_dir!r}", flush=True)
 
     download_mhr_assets_if_missing(mhr_assets_dir)
 

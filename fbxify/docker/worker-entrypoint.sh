@@ -24,10 +24,9 @@ mkdir -p /root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitd
 ln -snf "$CACHE_DIR/videt_checkpoint" /root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
 ln -snf "$CACHE_DIR/hf_cache" /root/.cache/huggingface
 
-# mhr_assets: if image has default content, copy into cache then replace with symlink.
-# Skip when assets is already a mount point (e.g. docker-compose volume).
+# mhr_assets: symlink assets -> CACHE_DIR/mhr_assets so downloads and app use the same path.
+# Skip when assets is already a mount point (e.g. docker-compose -v cache/mhr_assets:assets).
 ASSETS_PATH="/opt/venv/lib/python3.12/site-packages/assets"
-export MHR_ASSETS_PATH="$ASSETS_PATH"
 if (mountpoint -q "$ASSETS_PATH" 2>/dev/null) || grep -q " $ASSETS_PATH " /proc/mounts 2>/dev/null; then
   : # Already mounted (e.g. by docker-compose), nothing to do
 elif [ -L "$ASSETS_PATH" ]; then
