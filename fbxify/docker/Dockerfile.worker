@@ -128,7 +128,7 @@ ENV PYTHONPATH=/fbxify
 # /fbxify/cache/{videt_checkpoint,hf_cache,mhr_assets} and symlinks app cache
 # paths there (same layout as run.bat), so checkpoints + first-run downloads persist.
 COPY fbxify/docker/worker-entrypoint.sh /worker-entrypoint.sh
-RUN chmod +x /worker-entrypoint.sh
+RUN sed -i 's/\r$//' /worker-entrypoint.sh && chmod +x /worker-entrypoint.sh
 
 EXPOSE 8000
 ENV PORT=8000

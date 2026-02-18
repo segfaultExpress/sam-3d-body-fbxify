@@ -100,8 +100,6 @@ def download_mhr_assets_if_missing(mhr_assets_dir: str) -> bool:
                             rel = name[len("assets/"):]
                             if not rel:
                                 continue
-                            if "corrective_blendshapes_lod" in rel and rel.endswith(".npz"):
-                                continue
                             dest = os.path.join(mhr_assets_dir, rel)
                             os.makedirs(os.path.dirname(dest), exist_ok=True)
                             with zf.open(name) as src, open(dest, "wb") as out:
