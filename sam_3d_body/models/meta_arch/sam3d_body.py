@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from sam_3d_body.data.utils.prepare_batch import prepare_batch
+from sam_3d_body.data.utils.prepare_batch import prepare_batch, prepare_multiframe_batch
 from sam_3d_body.models.decoders.prompt_encoder import PositionEmbeddingRandom
 from sam_3d_body.models.modules.mhr_utils import (
     fix_wrist_euler,
@@ -1233,28 +1233,6 @@ class SAM3DBody(BaseModel):
 
         # Step 1. For full-body inference, we first inference with the body decoder.
         pose_output = self.forward_step(batch, decoder_type="body")
-        """ BATCHING SUPPORT FOR FBXIFY """
-        return self.run_hand_refinement(
-            img, batch, pose_output, transform_hand, thresh_wrist_angle
-        )
-        """ BATCHING SUPPORT FOR FBXIFY """
-    def run_hand_refinement(
-        self,
-        img,
-        batch: Dict,
-        pose_output: Dict,
-        transform_hand: Any,
-        thresh_wrist_angle: float = 1.4,
-    ):
-        """ BATCHING SUPPORT FOR FBXIFY """
-        """
-        Run hand refinement and fusion given body pose_output.
-        Used by run_inference(full) and by process_batch_of_frames (per-frame).
-        Expects batch with shape (1, N) and pose_output["mhr"] with (N, ...).
-        Modifies pose_output in place and returns (pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output).
-        """
-        height, width = img.shape[:2]
-        cam_int = batch["cam_int"].clone()
         left_xyxy, right_xyxy = self._get_hand_box(pose_output, batch)
         ori_local_wrist_rotmat = roma.euler_to_rotmat(
             "XZY",
@@ -1262,7 +1240,6 @@ class SAM3DBody(BaseModel):
                 1, (2, 3)
             ),
         )
-        """ BATCHING SUPPORT FOR FBXIFY """
         # Step 2. Re-run with each hand
         ## Left... Flip image & box
         flipped_img = img[:, ::-1]
@@ -1274,7 +1251,7 @@ class SAM3DBody(BaseModel):
             flipped_img, transform_hand, left_xyxy, cam_int=cam_int.clone()
         )
         batch_lhand = recursive_to(batch_lhand, "cuda")
-        self._initialize_batch(batch_lhand) # BATCHING SUPPORT FOR FBXIFY
+        self._initialize_batch(batch_lhand)
         lhand_output = self.forward_step(batch_lhand, decoder_type="hand")
 
         # Unflip output
@@ -1311,7 +1288,7 @@ class SAM3DBody(BaseModel):
             img, transform_hand, right_xyxy, cam_int=cam_int.clone()
         )
         batch_rhand = recursive_to(batch_rhand, "cuda")
-        self._initialize_batch(batch_rhand) # BATCHING SUPPORT FOR FBXIFY
+        self._initialize_batch(batch_rhand)
         rhand_output = self.forward_step(batch_rhand, decoder_type="hand")
 
         # Step 3. replace hand pose estimation from the body decoder.
@@ -1678,6 +1655,493 @@ class SAM3DBody(BaseModel):
 
         return pose_output, batch_lhand, batch_rhand, lhand_output, rhand_output
 
+    """ BATCHING SUPPORT FOR FBXIFY - START """
+    def run_inference_batched(
+        self,
+        images: list,
+        batch: Dict,
+        transform_hand: Any,
+        n_per_frame: list,
+        thresh_wrist_angle: float = 1.4,
+    ) -> Tuple[Dict, list, list]:
+        """
+        Batched full-body inference: body forward + batched hand refinement.
+        Use this instead of run_inference when processing multiple frames at once.
+        """
+        pose_output = self.forward_step(batch, decoder_type="body")
+        return self.run_hand_refinement_batched(
+            images=images,
+            batch=batch,
+            pose_output=pose_output,
+            transform_hand=transform_hand,
+            n_per_frame=n_per_frame,
+            thresh_wrist_angle=thresh_wrist_angle,
+        )
+
+    def run_hand_refinement_batched(
+        self,
+        images: list,
+        batch: Dict,
+        pose_output: Dict,
+        transform_hand: Any,
+        n_per_frame: list,
+        thresh_wrist_angle: float = 1.4,
+    ) -> Tuple[Dict, list, list]:
+        """
+        Batched hand refinement across all frames. Replaces K sequential
+        run_hand_refinement calls with 2 batched hand forwards + 1 batched
+        keypoint prompt.
+
+        Args:
+            images: List of K images (numpy HxWx3 RGB).
+            batch: Full body batch (K, N_max, ...).
+            pose_output: Full pose output from body forward.
+            transform_hand: Hand transform.
+            n_per_frame: List of K ints, persons per frame.
+            thresh_wrist_angle: Wrist angle threshold for fusion.
+
+        Returns:
+            (pose_output, hand_batches_l, hand_batches_r) where hand_batches_*
+            are lists of K batch dicts for result assembly.
+        """
+        K = len(images)
+        N_max = max(n_per_frame)
+        device = batch["img"].device
+        dtype = batch["img"].dtype
+
+        left_xyxy, right_xyxy = self._get_hand_box_tensor(pose_output, batch)
+        left_xyxy = left_xyxy.cpu().numpy()
+        right_xyxy = right_xyxy.cpu().numpy()
+
+        ori_local_wrist_rotmat = roma.euler_to_rotmat(
+            "XZY",
+            pose_output["mhr"]["body_pose"][:, [41, 43, 42, 31, 33, 32]].unflatten(
+                1, (2, 3)
+            ),
+        )
+
+        left_frame_list = []
+        right_frame_list = []
+        cam_int_list = []
+        for k in range(K):
+            img_k = images[k]
+            h, w = img_k.shape[:2]
+            cam_int = batch["cam_int"][k]
+            if cam_int.dim() > 2:
+                cam_int = cam_int.squeeze(0)
+            cam_int_list.append(cam_int)
+
+            start = k * N_max
+            end = start + n_per_frame[k]
+            left_boxes = left_xyxy[start:end]
+            right_boxes = right_xyxy[start:end]
+
+            flipped_img = img_k[:, ::-1]
+            left_boxes_flipped = left_boxes.copy()
+            left_boxes_flipped[:, 0] = w - left_boxes[:, 2] - 1
+            left_boxes_flipped[:, 2] = w - left_boxes[:, 0] - 1
+
+            left_frame_list.append((flipped_img, left_boxes_flipped, None, None))
+            right_frame_list.append((img_k, right_boxes, None, None))
+
+        batch_lhand = prepare_multiframe_batch(
+            left_frame_list, transform_hand, cam_int_list
+        )
+        batch_rhand = prepare_multiframe_batch(
+            right_frame_list, transform_hand, cam_int_list
+        )
+        batch_lhand = recursive_to(batch_lhand, "cuda")
+        batch_rhand = recursive_to(batch_rhand, "cuda")
+        self._initialize_batch(batch_lhand)
+        lhand_output = self.forward_step(batch_lhand, decoder_type="hand")
+        self._initialize_batch(batch_rhand)
+        rhand_output = self.forward_step(batch_rhand, decoder_type="hand")
+
+        scale_r_mean = self.head_pose.scale_mean[8].item()
+        scale_l_mean = self.head_pose.scale_mean[9].item()
+        scale_r_std = self.head_pose.scale_comps[8, 8].item()
+        scale_l_std = self.head_pose.scale_comps[9, 9].item()
+
+        for k in range(K):
+            w = images[k].shape[1]
+            start = k * N_max
+            end = start + n_per_frame[k]
+            lhand_output["mhr_hand"]["scale"][start:end, 9] = (
+                (scale_r_mean + scale_r_std * lhand_output["mhr_hand"]["scale"][start:end, 8])
+                - scale_l_mean
+            ) / scale_l_std
+            lhand_output["mhr_hand"]["joint_global_rots"][start:end, 78] = (
+                lhand_output["mhr_hand"]["joint_global_rots"][start:end, 42].clone()
+            )
+            lhand_output["mhr_hand"]["joint_global_rots"][start:end, 78, [1, 2], :] *= -1
+            lhand_output["mhr_hand"]["hand"][start:end, :54] = (
+                lhand_output["mhr_hand"]["hand"][start:end, 54:].clone()
+            )
+            batch_lhand["bbox_center"][k, :, 0] = (
+                w - batch_lhand["bbox_center"][k, :, 0] - 1
+            )
+
+        joint_rotations = pose_output["mhr"]["joint_global_rots"]
+        lowarm_joint_idxs = torch.LongTensor([76, 40]).to(device)
+        wrist_twist_joint_idxs = torch.LongTensor([77, 41]).to(device)
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs]
+        wrist_zero_rot_pose = (
+            lowarm_joint_rotations
+            @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        )
+        left_joint_global_rots = lhand_output["mhr_hand"]["joint_global_rots"]
+        right_joint_global_rots = rhand_output["mhr_hand"]["joint_global_rots"]
+        pred_global_wrist_rotmat = torch.stack(
+            [
+                left_joint_global_rots[:, 78],
+                right_joint_global_rots[:, 42],
+            ],
+            dim=1,
+        )
+        fused_local_wrist_rotmat = torch.einsum(
+            "kabc,kabd->kadc", pred_global_wrist_rotmat, wrist_zero_rot_pose
+        )
+        angle_difference = rotation_angle_difference(
+            ori_local_wrist_rotmat, fused_local_wrist_rotmat
+        )
+        angle_difference_valid_mask = angle_difference < thresh_wrist_angle
+
+        hand_box_size_thresh = 64
+        hand_box_size_valid_mask = torch.stack(
+            [
+                (batch_lhand["bbox_scale"].flatten(0, 1) > hand_box_size_thresh).all(
+                    dim=1
+                ),
+                (batch_rhand["bbox_scale"].flatten(0, 1) > hand_box_size_thresh).all(
+                    dim=1
+                ),
+            ],
+            dim=1,
+        )
+
+        hand_kps2d_thresh = 0.5
+        hand_kps2d_valid_mask = torch.stack(
+            [
+                lhand_output["mhr_hand"]["pred_keypoints_2d_cropped"]
+                .abs()
+                .amax(dim=(1, 2))
+                < hand_kps2d_thresh,
+                rhand_output["mhr_hand"]["pred_keypoints_2d_cropped"]
+                .abs()
+                .amax(dim=(1, 2))
+                < hand_kps2d_thresh,
+            ],
+            dim=1,
+        )
+
+        hand_wrist_kps2d_thresh = 0.25
+        kps_right_wrist_idx = 41
+        kps_left_wrist_idx = 62
+        right_kps_full = rhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full = lhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        widths = torch.tensor(
+            [images[k].shape[1] for k in range(K)],
+            device=device,
+            dtype=dtype,
+        )
+        width_per_person = widths.repeat_interleave(
+            torch.tensor(n_per_frame, device=device)
+        )
+        pad_len = K * N_max - width_per_person.shape[0]
+        if pad_len > 0:
+            width_per_person = torch.cat(
+                [width_per_person, width_per_person[-1:].expand(pad_len)]
+            )
+        left_kps_full[:, :, 0] = width_per_person.unsqueeze(1) - left_kps_full[:, :, 0] - 1
+        body_right_kps_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        body_left_kps_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_left_wrist_idx]
+        ].clone()
+        right_kps_dist = (
+            (right_kps_full - body_right_kps_full).flatten(0, 1).norm(dim=-1)
+            / batch_lhand["bbox_scale"].flatten(0, 1)[:, 0]
+        )
+        left_kps_dist = (
+            (left_kps_full - body_left_kps_full).flatten(0, 1).norm(dim=-1)
+            / batch_rhand["bbox_scale"].flatten(0, 1)[:, 0]
+        )
+        hand_wrist_kps2d_valid_mask = torch.stack(
+            [
+                left_kps_dist < hand_wrist_kps2d_thresh,
+                right_kps_dist < hand_wrist_kps2d_thresh,
+            ],
+            dim=1,
+        )
+        hand_valid_mask = (
+            angle_difference_valid_mask
+            & hand_box_size_valid_mask
+            & hand_kps2d_valid_mask
+            & hand_wrist_kps2d_valid_mask
+        )
+
+        self.hand_batch_idx = []
+        self.body_batch_idx = list(range(K * N_max))
+
+        right_kps_full = rhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full = lhand_output["mhr_hand"]["pred_keypoints_2d"][
+            :, [kps_right_wrist_idx]
+        ].clone()
+        left_kps_full[:, :, 0] = width_per_person.unsqueeze(1) - left_kps_full[:, :, 0] - 1
+
+        right_kps_crop = self._full_to_crop(batch, right_kps_full)
+        left_kps_crop = self._full_to_crop(batch, left_kps_full)
+
+        kps_right_elbow_idx = 8
+        kps_left_elbow_idx = 7
+        right_kps_elbow_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_right_elbow_idx]
+        ].clone()
+        left_kps_elbow_full = pose_output["mhr"]["pred_keypoints_2d"][
+            :, [kps_left_elbow_idx]
+        ].clone()
+        right_kps_elbow_crop = self._full_to_crop(batch, right_kps_elbow_full)
+        left_kps_elbow_crop = self._full_to_crop(batch, left_kps_elbow_full)
+
+        keypoint_prompt = torch.cat(
+            [right_kps_crop, left_kps_crop, right_kps_elbow_crop, left_kps_elbow_crop],
+            dim=1,
+        )
+        keypoint_prompt = torch.cat(
+            [keypoint_prompt, keypoint_prompt[..., [-1]]], dim=-1
+        )
+        keypoint_prompt[:, 0, -1] = kps_right_wrist_idx
+        keypoint_prompt[:, 1, -1] = kps_left_wrist_idx
+        keypoint_prompt[:, 2, -1] = kps_right_elbow_idx
+        keypoint_prompt[:, 3, -1] = kps_left_elbow_idx
+
+        invalid_prompt = (
+            (keypoint_prompt[..., 0] < -0.5)
+            | (keypoint_prompt[..., 0] > 0.5)
+            | (keypoint_prompt[..., 1] < -0.5)
+            | (keypoint_prompt[..., 1] > 0.5)
+            | (~hand_valid_mask[..., [1, 0, 1, 0]])
+        ).unsqueeze(-1)
+        dummy_prompt = torch.zeros((1, 1, 3), device=device, dtype=dtype)
+        dummy_prompt[:, :, -1] = -2
+        keypoint_prompt[:, :, :2] = torch.clamp(
+            keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
+        )
+        keypoint_prompt = torch.where(invalid_prompt, dummy_prompt, keypoint_prompt)
+
+        output_for_kpt = {
+            "mhr": pose_output["mhr"],
+            "image_embeddings": pose_output["image_embeddings"],
+            "condition_info": pose_output["condition_info"],
+        }
+        if keypoint_prompt.numel() != 0:
+            self.run_keypoint_prompt(batch, output_for_kpt, keypoint_prompt)
+            pose_output["mhr"] = output_for_kpt["mhr"]
+
+        left_hand_pose_params = lhand_output["mhr_hand"]["hand"][:, :54]
+        right_hand_pose_params = rhand_output["mhr_hand"]["hand"][:, 54:]
+        updated_hand_pose = torch.cat(
+            [left_hand_pose_params, right_hand_pose_params], dim=1
+        )
+
+        updated_scale = pose_output["mhr"]["scale"].clone()
+        updated_scale[:, 9] = lhand_output["mhr_hand"]["scale"][:, 9]
+        updated_scale[:, 8] = rhand_output["mhr_hand"]["scale"][:, 8]
+        updated_scale[:, 18:] = (
+            lhand_output["mhr_hand"]["scale"][:, 18:]
+            + rhand_output["mhr_hand"]["scale"][:, 18:]
+        ) / 2
+
+        updated_shape = pose_output["mhr"]["shape"].clone()
+        updated_shape[:, 40:] = (
+            lhand_output["mhr_hand"]["shape"][:, 40:]
+            + rhand_output["mhr_hand"]["shape"][:, 40:]
+        ) / 2
+
+        joint_rotations = self.head_pose.mhr_forward(
+            global_trans=pose_output["mhr"]["global_rot"] * 0,
+            global_rot=pose_output["mhr"]["global_rot"],
+            body_pose_params=pose_output["mhr"]["body_pose"],
+            hand_pose_params=updated_hand_pose,
+            scale_params=updated_scale,
+            shape_params=updated_shape,
+            expr_params=pose_output["mhr"]["face"],
+            return_joint_rotations=True,
+        )[1]
+
+        lowarm_joint_rotations = joint_rotations[:, lowarm_joint_idxs]
+        wrist_zero_rot_pose = (
+            lowarm_joint_rotations
+            @ self.head_pose.joint_rotation[wrist_twist_joint_idxs]
+        )
+        pred_global_wrist_rotmat = torch.stack(
+            [
+                left_joint_global_rots[:, 78],
+                right_joint_global_rots[:, 42],
+            ],
+            dim=1,
+        )
+        fused_local_wrist_rotmat = torch.einsum(
+            "kabc,kabd->kadc", pred_global_wrist_rotmat, wrist_zero_rot_pose
+        )
+        angle_difference = rotation_angle_difference(
+            ori_local_wrist_rotmat, fused_local_wrist_rotmat
+        )
+        valid_angle = angle_difference < thresh_wrist_angle
+        valid_angle = valid_angle & hand_valid_mask
+        valid_angle = valid_angle.unsqueeze(-1)
+
+        body_pose = pose_output["mhr"]["body_pose"][
+            :, [41, 43, 42, 31, 33, 32]
+        ].unflatten(1, (2, 3))
+        wrist_xzy = fix_wrist_euler(
+            roma.rotmat_to_euler("XZY", fused_local_wrist_rotmat)
+        )
+        updated_body_pose = torch.where(valid_angle, wrist_xzy, body_pose)
+        pose_output["mhr"]["body_pose"][:, [41, 43, 42, 31, 33, 32]] = (
+            updated_body_pose.flatten(1, 2)
+        )
+
+        hand_pose = pose_output["mhr"]["hand"].unflatten(1, (2, 54))
+        pose_output["mhr"]["hand"] = torch.where(
+            valid_angle, updated_hand_pose.unflatten(1, (2, 54)), hand_pose
+        ).flatten(1, 2)
+
+        hand_scale = torch.stack(
+            [pose_output["mhr"]["scale"][:, 9], pose_output["mhr"]["scale"][:, 8]],
+            dim=1,
+        )
+        updated_hand_scale = torch.stack(
+            [updated_scale[:, 9], updated_scale[:, 8]], dim=1
+        )
+        masked_hand_scale = torch.where(
+            valid_angle.squeeze(-1), updated_hand_scale, hand_scale
+        )
+        pose_output["mhr"]["scale"][:, 9] = masked_hand_scale[:, 0]
+        pose_output["mhr"]["scale"][:, 8] = masked_hand_scale[:, 1]
+
+        pose_output["mhr"]["scale"][:, 18:] = torch.where(
+            valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0,
+            (
+                lhand_output["mhr_hand"]["scale"][:, 18:]
+                * valid_angle.squeeze(-1)[:, [0]]
+                + rhand_output["mhr_hand"]["scale"][:, 18:]
+                * valid_angle.squeeze(-1)[:, [1]]
+            )
+            / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8),
+            pose_output["mhr"]["scale"][:, 18:],
+        )
+        pose_output["mhr"]["shape"][:, 40:] = torch.where(
+            valid_angle.squeeze(-1).sum(dim=1, keepdim=True) > 0,
+            (
+                lhand_output["mhr_hand"]["shape"][:, 40:]
+                * valid_angle.squeeze(-1)[:, [0]]
+                + rhand_output["mhr_hand"]["shape"][:, 40:]
+                * valid_angle.squeeze(-1)[:, [1]]
+            )
+            / (valid_angle.squeeze(-1).sum(dim=1, keepdim=True) + 1e-8),
+            pose_output["mhr"]["shape"][:, 40:],
+        )
+
+        with torch.no_grad():
+            verts, j3d, jcoords, mhr_model_params, joint_global_rots = (
+                self.head_pose.mhr_forward(
+                    global_trans=pose_output["mhr"]["global_rot"] * 0,
+                    global_rot=pose_output["mhr"]["global_rot"],
+                    body_pose_params=pose_output["mhr"]["body_pose"],
+                    hand_pose_params=pose_output["mhr"]["hand"],
+                    scale_params=pose_output["mhr"]["scale"],
+                    shape_params=pose_output["mhr"]["shape"],
+                    expr_params=pose_output["mhr"]["face"],
+                    return_keypoints=True,
+                    return_joint_coords=True,
+                    return_model_params=True,
+                    return_joint_rotations=True,
+                )
+            )
+            j3d = j3d[:, :70]
+            verts[..., [1, 2]] *= -1
+            j3d[..., [1, 2]] *= -1
+            jcoords[..., [1, 2]] *= -1
+            pose_output["mhr"]["pred_keypoints_3d"] = j3d
+            pose_output["mhr"]["pred_vertices"] = verts
+            pose_output["mhr"]["pred_joint_coords"] = jcoords
+            pose_output["mhr"]["pred_pose_raw"][...] = 0
+            pose_output["mhr"]["mhr_model_params"] = mhr_model_params
+
+        heights = torch.tensor(
+            [images[k].shape[0] for k in range(K)],
+            device=device,
+            dtype=dtype,
+        )
+        widths = torch.tensor(
+            [images[k].shape[1] for k in range(K)],
+            device=device,
+            dtype=dtype,
+        )
+        center_y = heights.repeat_interleave(
+            torch.tensor(n_per_frame, device=device)
+        )
+        center_x = widths.repeat_interleave(
+            torch.tensor(n_per_frame, device=device)
+        )
+        pad_len = K * N_max - center_x.shape[0]
+        if pad_len > 0:
+            center_x = torch.cat([center_x, center_x[-1:].expand(pad_len)])
+            center_y = torch.cat([center_y, center_y[-1:].expand(pad_len)])
+        center = torch.stack([center_x / 2, center_y / 2], dim=1)
+        pred_keypoints_3d_proj = (
+            pose_output["mhr"]["pred_keypoints_3d"]
+            + pose_output["mhr"]["pred_cam_t"][:, None, :]
+        )
+        pred_keypoints_3d_proj[:, :, [0, 1]] *= pose_output["mhr"]["focal_length"][
+            :, None, None
+        ]
+        pred_keypoints_3d_proj[:, :, [0, 1]] = (
+            pred_keypoints_3d_proj[:, :, [0, 1]]
+            + center[:, None, :].to(pred_keypoints_3d_proj)
+            * pred_keypoints_3d_proj[:, :, [2]]
+        )
+        pred_keypoints_3d_proj[:, :, :2] = (
+            pred_keypoints_3d_proj[:, :, :2] / pred_keypoints_3d_proj[:, :, [2]]
+        )
+        pose_output["mhr"]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :, :2]
+
+        hand_batches_l = []
+        hand_batches_r = []
+        for ki in range(K):
+            n_k = n_per_frame[ki]
+            dl = {}
+            dr = {}
+            for key, val in batch_lhand.items():
+                if isinstance(val, torch.Tensor) and val.dim() >= 2 and val.shape[0] == K:
+                    dl[key] = val[ki : ki + 1, :n_k].clone()
+                elif isinstance(val, torch.Tensor):
+                    dl[key] = val.clone()
+                else:
+                    dl[key] = val
+            for key, val in batch_rhand.items():
+                if isinstance(val, torch.Tensor) and val.dim() >= 2 and val.shape[0] == K:
+                    dr[key] = val[ki : ki + 1, :n_k].clone()
+                elif isinstance(val, torch.Tensor):
+                    dr[key] = val.clone()
+                else:
+                    dr[key] = val
+            dl["img_ori"] = [batch_lhand["img_ori"][ki]]
+            dr["img_ori"] = [batch_rhand["img_ori"][ki]]
+            hand_batches_l.append(dl)
+            hand_batches_r.append(dr)
+
+        return pose_output, hand_batches_l, hand_batches_r
+    """ BATCHING SUPPORT FOR FBXIFY - END """
+
     def run_keypoint_prompt(self, batch, output, keypoint_prompt):
         image_embeddings = output["image_embeddings"]
         condition_info = output["condition_info"]
@@ -1787,6 +2251,44 @@ class SAM3DBody(BaseModel):
         )
 
         return left_xyxy, right_xyxy
+
+    """ BATCHING SUPPORT FOR FBXIFY - START """
+    def _get_hand_box_tensor(self, pose_output, batch):
+        """Get hand bbox from the hand detector (tensor-only, no GPU sync)."""
+        img_size = self.cfg.MODEL.IMAGE_SIZE[0]
+        pred_left = pose_output["mhr"]["hand_box"][:, 0].detach() * img_size
+        pred_right = pose_output["mhr"]["hand_box"][:, 1].detach() * img_size
+
+        left_center = pred_left[:, :2]
+        left_scale = pred_left[:, 2:].max(dim=1, keepdim=True).values.repeat(1, 2)
+        right_center = pred_right[:, :2]
+        right_scale = pred_right[:, 2:].max(dim=1, keepdim=True).values.repeat(1, 2)
+
+        aff = self._flatten_person(batch["affine_trans"])
+        scale_factor = aff[:, 0, 0].unsqueeze(1)
+        trans_xy = aff[:, [0, 1], 2]
+
+        left_scale = left_scale / scale_factor
+        right_scale = right_scale / scale_factor
+        left_center = (left_center - trans_xy) / scale_factor
+        right_center = (right_center - trans_xy) / scale_factor
+
+        left_xyxy = torch.cat(
+            [
+                left_center - left_scale * 0.5,
+                left_center + left_scale * 0.5,
+            ],
+            dim=1,
+        )
+        right_xyxy = torch.cat(
+            [
+                right_center - right_scale * 0.5,
+                right_center + right_scale * 0.5,
+            ],
+            dim=1,
+        )
+        return left_xyxy, right_xyxy
+    """ BATCHING SUPPORT FOR FBXIFY - END """
 
     def keypoint_token_update_fn(
         self,
