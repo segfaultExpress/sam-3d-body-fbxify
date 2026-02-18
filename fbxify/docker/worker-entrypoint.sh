@@ -24,11 +24,11 @@ mkdir -p /root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitd
 ln -snf "$CACHE_DIR/videt_checkpoint" /root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
 ln -snf "$CACHE_DIR/hf_cache" /root/.cache/huggingface
 
-# mhr_assets: symlink assets -> CACHE_DIR/mhr_assets so downloads and app use the same path.
-# Skip when assets is already a mount point (e.g. docker-compose -v cache/mhr_assets:assets).
+# mhr_assets: symlink assets -> CACHE_DIR/mhr_assets so mhr finds lod1.fbx etc.
+# API startup downloads to CACHE_DIR/mhr_assets; symlink lets mhr find them.
 ASSETS_PATH="/opt/venv/lib/python3.12/site-packages/assets"
 if (mountpoint -q "$ASSETS_PATH" 2>/dev/null) || grep -q " $ASSETS_PATH " /proc/mounts 2>/dev/null; then
-  : # Already mounted (e.g. by docker-compose), nothing to do
+  : # Already mounted, nothing to do
 elif [ -L "$ASSETS_PATH" ]; then
   : # Already a symlink, nothing to do
 else

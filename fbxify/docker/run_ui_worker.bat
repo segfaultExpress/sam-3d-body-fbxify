@@ -21,4 +21,4 @@ if not exist "%CHECKPOINTS_DIR%\sam-3d-body-vith" (
 if defined UI_PORT (echo UI will be at http://localhost:%UI_PORT%) else (echo UI will be at http://localhost:7444)
 REM CACHEBUST=commit forces fresh clone; run_ui_worker sets it to HEAD automatically
 for /f "delims=" %%i in ('git rev-parse HEAD 2^>nul') do set "CACHEBUST=%%i"
-docker compose -f "%SCRIPT_DIR%docker-compose.yml" up --build
+docker compose -f "%SCRIPT_DIR%docker-compose.yml" up

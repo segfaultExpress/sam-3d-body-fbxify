@@ -43,5 +43,5 @@ docker run --rm -it --gpus all --shm-size=8g ^
   -v "%REPO_DIR%":/fbxify ^
   -v "%REPO_DIR%\cache\videt_checkpoint":/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692 ^
   -v "%REPO_DIR%\cache\hf_cache":/root/.cache/huggingface ^
-  -v "%REPO_DIR%\cache\mhr_assets":/opt/venv/lib/python3.12/site-packages/assets ^
+  -v "%REPO_DIR%\cache\mhr_assets":/fbxify/cache/mhr_assets ^
   %IMAGE_NAME% ./start_server.sh

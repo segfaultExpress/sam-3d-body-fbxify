@@ -423,7 +423,6 @@ async def startup():
         print("Checkpoints missing; attempting download from HuggingFace (HF_TOKEN set)...", flush=True)
         download_checkpoints_if_missing(model, checkpoints_dir)
         available = checkpoints_available(model)
-    print(f"checkpoints_available(model={model!r}) = {available}", flush=True)
     if available:
         try:
             print("Loading SAM 3D Body (GPU)...")

@@ -6,8 +6,8 @@
 # - GPU (worker)
 # - Checkpoints at CHECKPOINTS_DIR/sam-3d-body-vith (default: repo-root/checkpoints)
 #
-# CHECKPOINTS_DIR = host path to mount from. CHECKPOINTS_DIR_CONTAINER = container path
-# (where the app looks). Default: /fbxify/checkpoints. Set CHECKPOINTS_DIR_CONTAINER to use a custom path.
+# CHECKPOINTS_DIR = host path for volume. CHECKPOINTS_DIR_CONTAINER = container path (where app looks).
+# CACHE_DIR = host path for volume. CACHE_DIR_CONTAINER = container path (default /fbxify/cache).
 # For HF_TOKEN auto-download of missing checkpoints, remove :ro from the checkpoints volume and set HF_TOKEN.
 #
 # Optional auth: FBXIFY_SHARED_SECRET for worker API. REQUIRE_AUTH=1 + FBXIFY_AUTH_CREDENTIALS=user:pass,... for Gradio login.
@@ -16,7 +16,7 @@
 
 services:
   worker:
-    image: mordommin94/fbxify-worker:0.1.1
+    image: mordommin94/fbxify-worker:0.1.5
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.worker
@@ -39,7 +39,7 @@ services:
       - ${CACHE_DIR:-./cache}/mhr_assets:/fbxify/cache/mhr_assets
     environment:
       - CHECKPOINTS_DIR=${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}
-      - CACHE_DIR=${CACHE_DIR:-/fbxify/cache}
+      - CACHE_DIR=${CACHE_DIR_CONTAINER:-/fbxify/cache}
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
       - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
       - HF_TOKEN=${HF_TOKEN}
@@ -53,7 +53,7 @@ services:
       start_period: 60s
 
   ui:
-    image: mordommin94/fbxify-ui:0.1.1
+    image: mordommin94/fbxify-ui:0.1.5
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.ui
