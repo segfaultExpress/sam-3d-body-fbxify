@@ -8,16 +8,27 @@ This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export 
 
 ### Installation
 
-**Option A: All-in-one (no Docker)** — See [fbxify/Install.md](fbxify/Install.md) for step-by-step instructions and `fbxify/requirements-full.txt` for Python dependencies.
+**Quick start:** Run the build script from the repo root. It will try to build Docker first; if Docker is not available, it will offer to set up a conda environment or install Python dependencies.
 
-**Option B: Docker** — See [fbxify/docker/ReadMe.md](fbxify/docker/ReadMe.md) for UI, worker, and simple image variants.
+- Windows: `build.bat`
+- Linux/Mac: `./build.sh`
 
-**Start the server:**
+**Side Note - Checkpoints:** Once you have gained access to the HuggingFace checkpoint files ([facebook/sam-3d-body-dinov3](https://huggingface.co/facebook/sam-3d-body-dinov3) or [facebook/sam-3d-body-vith](https://huggingface.co/facebook/sam-3d-body-vith)), replace `your_hf_token_here` in `run.bat` / `run.sh` with your HuggingFace token to download the checkpoints automatically.
+
+**Option A: All-in-one (no Docker)** - See [fbxify/Install.md](fbxify/Install.md) for step-by-step instructions and `fbxify/requirements-full.txt` for Python dependencies.
+
+**Option B: Docker** - See [fbxify/docker/ReadMe.md](fbxify/docker/ReadMe.md) for UI, worker, and simple image variants.
+
+**Start the server** (Docker):
+- Linux/Mac: `./run.sh`
+- Windows: `./run.bat`
+
+**Start the server** (Manual, no Docker):
 - Linux/Mac: `./start_server.sh`
 - Windows: `./start_server.bat`
-- Or (all-in-one): `python fbxify/app.py`
+- Or use python: `python ./fbxify/app.py`
 
-**Access the web interface** — Open your browser to `http://localhost:7444`, then upload and process images or videos.
+**Access the web interface** - Open your browser to `http://localhost:7444`, then upload and process images or videos.
 
 ### Features
 
