@@ -1,5 +1,6 @@
 @echo off
 REM Build and push fbxify-worker and fbxify-ui to Docker Hub.
+REM Context = repo root (same as build_docker_worker/ui.bat).
 REM Reads USERNAME and VERSION from docker-build.config (same dir as this script).
 REM Command-line args override: build_docker_push.bat [USERNAME] [VERSION]
 
@@ -13,9 +14,11 @@ if "%VERSION%"=="" set VERSION=0.1.4
 echo Building and pushing %USERNAME%/fbxify-worker:%VERSION% and %USERNAME%/fbxify-ui:%VERSION%
 echo.
 
+cd /d "%~dp0..\.."
+
 REM Worker
 echo [1/4] Building fbxify-worker...
-docker build -f Dockerfile.worker -t %USERNAME%/fbxify-worker:%VERSION% .
+docker build -f fbxify/docker/Dockerfile.worker -t %USERNAME%/fbxify-worker:%VERSION% .
 if errorlevel 1 exit /b 1
 
 echo [2/4] Pushing fbxify-worker...
@@ -24,7 +27,7 @@ if errorlevel 1 exit /b 1
 
 REM UI
 echo [3/4] Building fbxify-ui...
-docker build -f Dockerfile.ui -t %USERNAME%/fbxify-ui:%VERSION% .
+docker build -f fbxify/docker/Dockerfile.ui -t %USERNAME%/fbxify-ui:%VERSION% .
 if errorlevel 1 exit /b 1
 
 echo [4/4] Pushing fbxify-ui...

@@ -4,6 +4,7 @@
 # Command-line args override: ./build_docker_ui.sh [USERNAME] [VERSION]
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$SCRIPT_DIR"
 
 # Load config (lines starting with # are skipped)
@@ -21,4 +22,5 @@ VERSION="${2:-$VERSION}"
 USERNAME="${USERNAME:-mordommin94}"
 VERSION="${VERSION:-0.1.4}"
 
-docker build -f Dockerfile.ui -t "${USERNAME}/fbxify-ui:${VERSION}" .
+cd "$REPO_ROOT"
+docker build -f fbxify/docker/Dockerfile.ui -t "${USERNAME}/fbxify-ui:${VERSION}" .

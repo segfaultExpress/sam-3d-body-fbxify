@@ -1663,10 +1663,11 @@ class SAM3DBody(BaseModel):
         transform_hand: Any,
         n_per_frame: list,
         thresh_wrist_angle: float = 1.4,
-    ) -> Tuple[Dict, list, list]:
+    ) -> Tuple[Dict, Dict, Dict]:
         """
         Batched full-body inference: body forward + batched hand refinement.
         Use this instead of run_inference when processing multiple frames at once.
+        Returns (pose_output, batch_lhand, batch_rhand) for estimator to extract bbox.
         """
         pose_output = self.forward_step(batch, decoder_type="body")
         return self.run_hand_refinement_batched(
@@ -1701,8 +1702,7 @@ class SAM3DBody(BaseModel):
             thresh_wrist_angle: Wrist angle threshold for fusion.
 
         Returns:
-            (pose_output, hand_batches_l, hand_batches_r) where hand_batches_*
-            are lists of K batch dicts for result assembly.
+            (pose_output, batch_lhand, batch_rhand) full batches for bbox extraction.
         """
         K = len(images)
         N_max = max(n_per_frame)
@@ -2114,32 +2114,8 @@ class SAM3DBody(BaseModel):
         )
         pose_output["mhr"]["pred_keypoints_2d"] = pred_keypoints_3d_proj[:, :, :2]
 
-        hand_batches_l = []
-        hand_batches_r = []
-        for ki in range(K):
-            n_k = n_per_frame[ki]
-            dl = {}
-            dr = {}
-            for key, val in batch_lhand.items():
-                if isinstance(val, torch.Tensor) and val.dim() >= 2 and val.shape[0] == K:
-                    dl[key] = val[ki : ki + 1, :n_k].clone()
-                elif isinstance(val, torch.Tensor):
-                    dl[key] = val.clone()
-                else:
-                    dl[key] = val
-            for key, val in batch_rhand.items():
-                if isinstance(val, torch.Tensor) and val.dim() >= 2 and val.shape[0] == K:
-                    dr[key] = val[ki : ki + 1, :n_k].clone()
-                elif isinstance(val, torch.Tensor):
-                    dr[key] = val.clone()
-                else:
-                    dr[key] = val
-            dl["img_ori"] = [batch_lhand["img_ori"][ki]]
-            dr["img_ori"] = [batch_rhand["img_ori"][ki]]
-            hand_batches_l.append(dl)
-            hand_batches_r.append(dr)
-
-        return pose_output, hand_batches_l, hand_batches_r
+        # Return full batches so estimator does 4 syncs total instead of 4*K
+        return pose_output, batch_lhand, batch_rhand
     """ BATCHING SUPPORT FOR FBXIFY - END """
 
     def run_keypoint_prompt(self, batch, output, keypoint_prompt):
