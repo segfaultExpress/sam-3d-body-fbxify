@@ -11,4 +11,4 @@ if "%USERNAME%"=="" set USERNAME=mordommin94
 if "%VERSION%"=="" set VERSION=0.1.4
 
 cd /d "%~dp0..\.."
-docker build -f fbxify/docker/Dockerfile -t %USERNAME%/sam-3d-body:%VERSION% .
+docker build -f fbxify/docker/Dockerfile -t %USERNAME%/fbxify-standalone:%VERSION% .
