@@ -14,7 +14,7 @@ if %errorlevel% neq 0 (
   exit /b 1
 )
 
-set "IMAGE_NAME=mordommin94/fbxify-standalone:0.1.5"
+set "IMAGE_NAME=mordommin94/fbxify-standalone:latest"
 
 REM Check if sam-3d-3.12 image exists
 docker image inspect %IMAGE_NAME% >nul 2>&1
