@@ -1,15 +1,12 @@
 # Build from sam-3d-body repo root:
 #   docker build -t sam-3d-body .
 #
-# Example run:
+# Example run (mount checkpoints to any path, set CHECKPOINTS_DIR to match):
 #   docker run --gpus all --shm-size=8g -it \
-#     -v $PWD:/workspace/sam-3d-body \
-#     sam-3d-body \
-#     python demo.py \
-#       --image_folder /workspace/sam-3d-body/example_images \
-#       --output_folder /workspace/sam-3d-body/output \
-#       --checkpoint_path ./checkpoints/sam-3d-body-dinov3/model.ckpt \
-#       --mhr_path ./checkpoints/sam-3d-body-dinov3/assets/mhr_model.pt
+#     -v /path/on/host/to/checkpoints:/checkpoints:ro \
+#     -e CHECKPOINTS_DIR=/checkpoints \
+#     -p 7444:7444 \
+#     sam-3d-body
 
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04
 
@@ -57,9 +54,15 @@ RUN python -m pip install "numpy<2"
 RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
-# ---- Copy repo ----
-WORKDIR /workspace
+# ---- Clone repo or copy from local ----
+# PULL_FROM_LOCAL=1: use build context. PULL_FROM_LOCAL=0: git clone (BRANCH from config).
+ARG PULL_FROM_LOCAL=0
+ARG BRANCH=main
+WORKDIR /fbxify
 COPY . .
+RUN if [ "${PULL_FROM_LOCAL}" != "1" ]; then \
+      rm -rf /fbxify && git clone -b ${BRANCH} https://github.com/segfaultExpress/sam-3d-body-fbxify.git /fbxify; \
+    fi
 
 # ---- SAM-3D-Body Python deps ----
 RUN python -m pip install \
@@ -122,10 +125,22 @@ RUN python -m pip install \
       --no-build-isolation --no-deps
 
 # ---- Headless rendering + paths ----
+# CHECKPOINTS_DIR: where to find sam-3d-body-vith/ etc. Override with -e at runtime.
+ENV CHECKPOINTS_DIR=/fbxify/checkpoints
 ENV PYOPENGL_PLATFORM=egl
 ENV MOMENTUM_ENABLED=True
 ENV MPLBACKEND=Agg
 ENV WANDB_MODE=offline
-ENV PYTHONPATH=/workspace:${PYTHONPATH}
+ENV PYTHONPATH=/fbxify:${PYTHONPATH:-}
 
-CMD ["python", "demo.py", "--help"]
+# When running Gradio app (e.g. python fbxify/app.py)
+ENV FBXIFY_UI_PORT=7444
+ENV FBXIFY_LOCAL=1
+EXPOSE 7444
+
+# Entrypoint: creates CACHE_DIR/mhr_assets and symlinks assets -> it so mhr finds lod1.fbx.
+# Same layout as worker; run.bat mount -v cache/mhr_assets:assets works as override.
+COPY fbxify/docker/standalone-entrypoint.sh /standalone-entrypoint.sh
+RUN sed -i 's/\r$//' /standalone-entrypoint.sh && chmod +x /standalone-entrypoint.sh
+ENTRYPOINT ["/standalone-entrypoint.sh"]
+CMD ["python", "fbxify/app.py"]

@@ -1,0 +1,138 @@
+# Docker Build Variants
+
+## Overview
+
+| Variant | Image | Use case |
+|---------|-------|----------|
+| **simple** | — | Standalone. Runs the entire thing locally (UI + GPU processing in one container). Use this unless you know what you're doing. |
+| **ui** | `fbxify-ui` | Gradio web interface only (no GPU). Connects to a remote worker. |
+| **worker** | `fbxify-worker` | GPU processing backend. Runs FastAPI API for pose estimation and FBX generation. |
+
+---
+
+## Simple
+
+- **Purpose:** Standalone deployment — UI and GPU processing in one container
+- **Use when:** You want everything running locally without the UI/worker split. Again, use this unless you know what you're doing.
+
+**Build:** `build_docker_simple.bat`
+
+---
+
+## UI (`Dockerfile.ui`)
+
+- **Base:** `python:3.12-slim` (lightweight, no CUDA)
+- **Contents:** Gradio app, no SAM 3D Body models, no Blender, no GPU deps
+- **Exposes:** Port 7444
+- **Requires:** `FBXIFY_REMOTE_WORKER_URL` pointing to a worker container (e.g. `http://worker:8000`)
+- **Use when:** You want a separate lightweight UI that delegates all processing to a remote worker (e.g. in docker-compose with ui + worker)
+
+**Build:** `build_docker_ui.bat` → `fbxify-ui`
+
+---
+
+## Worker (`Dockerfile.worker`)
+
+- **Base:** `nvidia/cuda:12.8.1-cudnn-devel-ubuntu24.04`
+- **Contents:** Full stack — SAM 3D Body, Blender, PyTorch, detectron2, flash-attn, FastAPI/uvicorn
+- **Exposes:** Port 8000 (pose/FBX job API)
+- **Requires:** GPU (`--gpus all`), `--shm-size=8g`
+- **Use when:** You need the GPU processing backend, either standalone or paired with the UI container
+
+**Build:** `build_docker_worker.bat` → `fbxify-worker`
+
+---
+
+## Typical setups
+
+- **Simple:** Run everything in one container — Gradio UI with local GPU backend.
+- **Split (ui + worker):** Run `fbxify-ui` and `fbxify-worker` together; UI calls the worker API.
+- **Worker only:** Run `fbxify-worker` and call its API directly (e.g. from another app or the host).
+
+---
+
+## Run UI + worker locally
+
+**1. Ensure checkpoints exist** at `F:\sam-3d-body-fbxify\checkpoints\sam-3d-body-vith\` (or set `CHECKPOINTS_DIR`). `run_ui_worker.bat` defaults `CHECKPOINTS_DIR` to repo-root `checkpoints`.
+
+**2. Start both** (from repo root):
+```
+run_ui_worker.bat
+```
+
+Or with explicit paths:
+```
+set CHECKPOINTS_DIR=F:\sam-3d-body-fbxify\checkpoints
+set CACHE_DIR=F:\sam-3d-body-fbxify\cache
+docker compose -f fbxify/docker/docker-compose.yml up --build
+```
+
+If worker fails with "No module named 'torch'" or checkpoint errors, force a fresh clone (run_ui_worker.bat sets CACHEBUST=HEAD automatically):
+```
+docker compose -f fbxify/docker/docker-compose.yml build --no-cache
+run_ui_worker.bat
+```
+
+**3. Open** http://localhost:7444
+
+The worker starts first and loads models (~30s). The UI waits for the worker to be healthy before starting. Optional: set `CACHE_DIR` to repo `cache` so ViTDet, Hugging Face, and MHR assets are reused across runs.
+
+---
+
+## Auth
+
+**Worker API:** When `FBXIFY_SHARED_SECRET` is set, the worker only accepts requests with that token. Omit for local dev. Generate with `openssl rand -hex 32`.
+
+**Gradio UI login:** When `REQUIRE_AUTH=1` (or `true`/`yes`/`on`) and `FBXIFY_AUTH_CREDENTIALS` is set, users must log in before using the app. Format: `user1:pass1,user2:pass2` (comma-separated user:password pairs). Example `.env`:
+
+```
+FBXIFY_SHARED_SECRET=your-worker-secret
+REQUIRE_AUTH=1
+FBXIFY_AUTH_CREDENTIALS=alice:secret1,bob:secret2
+```
+
+---
+
+## Hosting (elastic workers)
+
+**Checkpoints:** The worker reads `CHECKPOINTS_DIR` from the environment—that's the *container* path where it looks for `sam-3d-body-vith/` (and/or `sam-3d-body-dinov3`). Mount your host volume to that path. You choose the path; nothing is hardcoded.
+
+**Mount your checkpoints** (vast.ai, bare metal, etc.):
+
+```bash
+docker run --gpus all --shm-size=8g -p 8000:8000 \
+  -v "/path/on/host/to/checkpoints:/sandwiches:ro" \
+  -e CHECKPOINTS_DIR=/sandwiches \
+  mordommin94/fbxify-worker:0.1.1
+```
+
+Mount your host directory (wherever your checkpoints live) to any container path you want, then set `CHECKPOINTS_DIR` to that same path. The host path can be anywhere—`/data/checkpoints`, `/workspace/checkpoints`, `/mnt/vol/checkpoints`, etc.
+
+For HuggingFace auto-download (when checkpoints are missing), pass `HF_TOKEN` and use a writable mount (omit `:ro`):
+
+```bash
+docker run --gpus all --shm-size=8g -p 8000:8000 \
+  -v "/path/on/host/to/checkpoints:/checkpoints" \
+  -e CHECKPOINTS_DIR=/checkpoints \
+  -e HF_TOKEN=your_hf_token \
+  mordommin94/fbxify-worker:0.1.1
+```
+
+- **Persistent volume** — Create a disk/NFS, upload checkpoints once, attach the same volume to every worker instance (GCP persistent disk, AWS EBS, Azure Disk, etc.).
+- **Bake into image** — Add a Dockerfile stage that copies checkpoints into the image. Easiest but large images and no reuse across versions.
+- **HuggingFace auto-download** — If checkpoints are missing and `HF_TOKEN` is set, the worker will attempt to download from [facebook/sam-3d-body-vith](https://huggingface.co/facebook/sam-3d-body-vith) or [facebook/sam-3d-body-dinov3](https://huggingface.co/facebook/sam-3d-body-dinov3) into `CHECKPOINTS_DIR`. Request access on the HuggingFace repos first. **The checkpoints volume must be writable** (do not use `:ro` on the mount) for auto-download to succeed.
+
+**Cache (ViTDet, Hugging Face, MHR assets):** To avoid re-downloading on each worker start, mount a persistent volume for:
+
+- Detectron2 ViTDet: `.../f328730692`
+- Hugging Face: `/root/.cache/huggingface`
+- MHR assets: `/opt/venv/lib/python3.12/site-packages/assets`
+
+**MHR assets (required for FBX LOD meshes):** The worker needs `lod0.fbx`, `lod1.fbx`, etc. from [MHR v1.0.0](https://github.com/facebookresearch/MHR/releases/tag/v1.0.0). Download `assets.zip`, extract the contents of the `assets` folder into `CACHE_DIR/mhr_assets`. Or run:
+
+```bash
+./fbxify/docker/mhr_assets_download.sh   # Linux/macOS
+fbxify\docker\mhr_assets_download.bat    # Windows
+```
+
+Pre-warm the volume once (run one worker, let it download), then attach that volume to new workers so startup stays fast.

@@ -8,16 +8,27 @@ This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export 
 
 ### Installation
 
-1. **Install all requirements** required for standard sam-3d-body (see [INSTALL.md](INSTALL.md) for detailed instructions)
-2. **(Optional) Install using Dockerfile** - The repository includes a Dockerfile for containerized deployment
-2.a. There are multiple dockerfiles:
-   - Dockerfile3.11 - I may delete this soon, 3.12 has been working great so far. But if you just want something quick, use this one
-   - Dockerfile3.12-pymomentum - This also installs pymomentum-gpu and flash-attn
-3. **Start the server:**
-   - Linux/Mac: `./start_server.sh`
-   - Windows: `./start_server.bat`
-4. **Access the web interface** - Open your browser to `http://localhost:7444`
-5. **Upload and process** - Upload images or videos, then download the generated FBX files
+**Quick start:** Run the build script from the repo root. It will try to build Docker first; if Docker is not available, it will offer to set up a conda environment or install Python dependencies.
+
+- Windows: `build.bat`
+- Linux/Mac: `./build.sh`
+
+**Side Note - Checkpoints:** Once you have gained access to the HuggingFace checkpoint files ([facebook/sam-3d-body-dinov3](https://huggingface.co/facebook/sam-3d-body-dinov3) or [facebook/sam-3d-body-vith](https://huggingface.co/facebook/sam-3d-body-vith)), replace `your_hf_token_here` in `run.bat` / `run.sh` with your HuggingFace token to download the checkpoints automatically.
+
+**Option A: All-in-one (no Docker)** - See [fbxify/Install.md](fbxify/Install.md) for step-by-step instructions and `fbxify/requirements-full.txt` for Python dependencies.
+
+**Option B: Docker** - See [fbxify/docker/ReadMe.md](fbxify/docker/ReadMe.md) for UI, worker, and simple image variants.
+
+**Start the server** (Docker):
+- Linux/Mac: `./run.sh`
+- Windows: `./run.bat`
+
+**Start the server** (Manual, no Docker):
+- Linux/Mac: `./start_server.sh`
+- Windows: `./start_server.bat`
+- Or use python: `python ./fbxify/app.py`
+
+**Access the web interface** - Open your browser to `http://localhost:7444`, then upload and process images or videos.
 
 ### Features
 

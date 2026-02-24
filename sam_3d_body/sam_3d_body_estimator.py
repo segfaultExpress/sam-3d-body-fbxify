@@ -322,93 +322,64 @@ class SAM3DBodyEstimator:
         batch = recursive_to(batch, "cuda")
         self.model._initialize_batch(batch)
         if self.fov_estimator is not None and all(c is None for c in cam_int_list):
-            cam_ints = []
-            for k in range(K):
-                inp = batch["img_ori"][k].data
-                c = self.fov_estimator.get_cam_intrinsics(inp)
-                c = c.to(batch["img"]) if torch.is_tensor(c) else torch.tensor(c, device=batch["img"].device, dtype=batch["img"].dtype)
-                while c.dim() > 2 and c.shape[0] == 1:
-                    c = c.squeeze(0)
-                if c.dim() == 2 and c.shape == (3, 3):
-                    cam_ints.append(c)
-                else:
-                    cam_ints.append(c.reshape(3, 3))
-            batch["cam_int"] = torch.stack(cam_ints, dim=0)
+            # Run FOV once on first frame and broadcast - avoids K sequential FOV forwards
+            inp = batch["img_ori"][0].data
+            c = self.fov_estimator.get_cam_intrinsics(inp)
+            c = c.to(batch["img"]) if torch.is_tensor(c) else torch.tensor(c, device=batch["img"].device, dtype=batch["img"].dtype)
+            while c.dim() > 2 and c.shape[0] == 1:
+                c = c.squeeze(0)
+            if c.dim() != 2 or c.shape != (3, 3):
+                c = c.reshape(3, 3)
+            batch["cam_int"] = c.unsqueeze(0).expand(K, 3, 3).clone()
 
-        pose_output = self.model.forward_step(batch, decoder_type="body")
-        hand_batches_l = []
-        hand_batches_r = []
-
-        for k in range(K):
-            n_k = n_per_frame[k]
-            img_k = batch["img_ori"][k].data
-
-            # Single-frame batch slice (1, n_k)
-            batch_k = {}
-            for key in ["img", "img_size", "ori_img_size", "bbox_center", "bbox_scale", "bbox", "affine_trans", "mask", "mask_score", "person_valid"]:
-                if key not in batch:
-                    continue
-                t = batch[key]
-                if t.dim() >= 2 and t.shape[0] == K and t.shape[1] == N_max:
-                    batch_k[key] = t[k : k + 1, :n_k].clone()
-                elif t.dim() >= 1 and t.shape[0] == K:
-                    batch_k[key] = t[k : k + 1].clone()
-                else:
-                    batch_k[key] = t.clone()
-            batch_k["cam_int"] = batch["cam_int"][k : k + 1].clone()
-            batch_k["img_ori"] = [batch["img_ori"][k]]
-
-            start = k * N_max
-            end = start + n_k
-            if "ray_cond" in batch and batch["ray_cond"] is not None:
-                batch_k["ray_cond"] = batch["ray_cond"][start:end].clone()
-            if "ray_cond_hand" in batch and batch["ray_cond_hand"] is not None:
-                batch_k["ray_cond_hand"] = batch["ray_cond_hand"][start:end].clone()
-            pose_output_k = {"mhr": {}}
-            for key, val in pose_output["mhr"].items():
-                if torch.is_tensor(val) and val.shape[0] == K * N_max:
-                    pose_output_k["mhr"][key] = val[start:end].clone()
-                else:
-                    pose_output_k["mhr"][key] = val[start:end] if torch.is_tensor(val) else val
-
-            # run_hand_refinement expects full output (image_embeddings, condition_info, mhr) for run_keypoint_prompt
-            output_k = {
-                "mhr": pose_output_k["mhr"],
-                "image_embeddings": pose_output["image_embeddings"][start:end].clone(),
-                "condition_info": pose_output["condition_info"][start:end].clone(),
-            }
-            if pose_output.get("mhr_hand") is not None:
-                output_k["mhr_hand"] = pose_output["mhr_hand"][start:end].clone()
-
-            pose_output_updated, batch_lhand_k, batch_rhand_k, _, _ = self.model.run_hand_refinement(
-                img_k, batch_k, output_k, self.transform_hand, self.thresh_wrist_angle
-            )
-            for key in pose_output_updated["mhr"]:
-                if key not in pose_output["mhr"]:
-                    continue
-                val = pose_output["mhr"][key]
-                updated = pose_output_updated["mhr"][key]
-                if torch.is_tensor(val) and val.shape[0] == K * N_max and torch.is_tensor(updated):
-                    pose_output["mhr"][key][start:end] = updated
-            hand_batches_l.append(batch_lhand_k)
-            hand_batches_r.append(batch_rhand_k)
+        images = [batch["img_ori"][k].data for k in range(K)]
+        pose_output, batch_lhand, batch_rhand = self.model.run_inference_batched(
+            images=images,
+            batch=batch,
+            transform_hand=self.transform_hand,
+            n_per_frame=n_per_frame,
+            thresh_wrist_angle=self.thresh_wrist_angle,
+        )
 
         out = pose_output["mhr"]
         out = recursive_to(out, "cpu")
         out = recursive_to(out, "numpy")
 
+        # 4 syncs total (not 4*K) - move full batches once, then index
+        bbox_cpu = batch["bbox"].cpu().numpy()
+        bc_l = batch_lhand["bbox_center"].cpu().numpy()
+        bs_l = batch_lhand["bbox_scale"].cpu().numpy()
+        bc_r = batch_rhand["bbox_center"].cpu().numpy()
+        bs_r = batch_rhand["bbox_scale"].cpu().numpy()
+        lhand_bbox_cpu = []
+        rhand_bbox_cpu = []
+        for k in range(K):
+            n_k = n_per_frame[k]
+            for idx in range(n_k):
+                lhand_bbox_cpu.append(np.array([
+                    bc_l[k, idx, 0] - bs_l[k, idx, 0] / 2,
+                    bc_l[k, idx, 1] - bs_l[k, idx, 1] / 2,
+                    bc_l[k, idx, 0] + bs_l[k, idx, 0] / 2,
+                    bc_l[k, idx, 1] + bs_l[k, idx, 1] / 2,
+                ]))
+                rhand_bbox_cpu.append(np.array([
+                    bc_r[k, idx, 0] - bs_r[k, idx, 0] / 2,
+                    bc_r[k, idx, 1] - bs_r[k, idx, 1] / 2,
+                    bc_r[k, idx, 0] + bs_r[k, idx, 0] / 2,
+                    bc_r[k, idx, 1] + bs_r[k, idx, 1] / 2,
+                ]))
+
+        person_idx = 0
         result = []
         for k in range(K):
             n_k = n_per_frame[k]
             all_out_k = []
             start = k * N_max
-            batch_lhand_k = hand_batches_l[k]
-            batch_rhand_k = hand_batches_r[k]
             masks_k = frame_list[k][2] if frame_list[k][2] is not None else None
             for idx in range(n_k):
                 global_idx = start + idx
                 all_out_k.append({
-                    "bbox": batch["bbox"][k, idx].cpu().numpy(),
+                    "bbox": bbox_cpu[k, idx],
                     "focal_length": out["focal_length"][global_idx],
                     "pred_keypoints_3d": out["pred_keypoints_3d"][global_idx],
                     "pred_keypoints_2d": out["pred_keypoints_2d"][global_idx],
@@ -426,18 +397,9 @@ class SAM3DBodyEstimator:
                     "pred_global_rots": out["joint_global_rots"][global_idx],
                     "mhr_model_params": out["mhr_model_params"][global_idx],
                 })
-                all_out_k[-1]["lhand_bbox"] = np.array([
-                    (batch_lhand_k["bbox_center"].flatten(0, 1)[idx][0] - batch_lhand_k["bbox_scale"].flatten(0, 1)[idx][0] / 2).item(),
-                    (batch_lhand_k["bbox_center"].flatten(0, 1)[idx][1] - batch_lhand_k["bbox_scale"].flatten(0, 1)[idx][1] / 2).item(),
-                    (batch_lhand_k["bbox_center"].flatten(0, 1)[idx][0] + batch_lhand_k["bbox_scale"].flatten(0, 1)[idx][0] / 2).item(),
-                    (batch_lhand_k["bbox_center"].flatten(0, 1)[idx][1] + batch_lhand_k["bbox_scale"].flatten(0, 1)[idx][1] / 2).item(),
-                ])
-                all_out_k[-1]["rhand_bbox"] = np.array([
-                    (batch_rhand_k["bbox_center"].flatten(0, 1)[idx][0] - batch_rhand_k["bbox_scale"].flatten(0, 1)[idx][0] / 2).item(),
-                    (batch_rhand_k["bbox_center"].flatten(0, 1)[idx][1] - batch_rhand_k["bbox_scale"].flatten(0, 1)[idx][1] / 2).item(),
-                    (batch_rhand_k["bbox_center"].flatten(0, 1)[idx][0] + batch_rhand_k["bbox_scale"].flatten(0, 1)[idx][0] / 2).item(),
-                    (batch_rhand_k["bbox_center"].flatten(0, 1)[idx][1] + batch_rhand_k["bbox_scale"].flatten(0, 1)[idx][1] / 2).item(),
-                ])
+                all_out_k[-1]["lhand_bbox"] = lhand_bbox_cpu[person_idx]
+                all_out_k[-1]["rhand_bbox"] = rhand_bbox_cpu[person_idx]
+                person_idx += 1
             result.append(all_out_k)
         return result
 

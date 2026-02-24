@@ -2,20 +2,14 @@
 Gradio application for SAM 3D Body to FBX conversion.
 
 This module creates the Gradio UI using modular sections and delegates
-all business logic to FbxifyManager.
+all business logic to a Backend (LocalBackend or RemoteBackend).
 """
 import os
 import argparse
-import tempfile
-import shutil
 import json
-import uuid
 import gradio as gr
-from fbxify.pose_estimation_manager import PoseEstimationManager, CancelledError
-from fbxify.fbx_data_prep_manager import FbxDataPrepManager
-from fbxify.fbxify_manager import FbxifyManager
 from fbxify.i18n import Translator, DEFAULT_LANGUAGE
-from fbxify.utils import render_tracking_bbox_overlay, export_mot_bboxes as write_mot_bboxes, _is_video_path
+from fbxify.utils import _is_video_path
 from fbxify.gradio_ui.header_section import create_header_section, update_header_language
 from fbxify.gradio_ui.entry_section import (
     toggle_tracking_inputs,
@@ -32,7 +26,6 @@ from fbxify.gradio_ui.tracking_section import (
     save_tracking_configuration,
     update_tracking_language,
 )
-from fbxify.tracking.tracking_manager import TrackingManager, apply_frame_assignments
 from fbxify.gradio_ui.pose_results_section import update_pose_results_language
 from fbxify.gradio_ui.fbx_processing_section import update_fbx_processing_language, toggle_generate_fbx_button
 from fbxify.gradio_ui.fbx_results_section import update_fbx_results_language
@@ -48,8 +41,9 @@ from fbxify.gradio_ui.developer_section import (
 from fbxify.gradio_ui.pose_tab import create_pose_tab
 from fbxify.gradio_ui.fbx_tab import create_fbx_tab
 
-VITH_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-vith"
-DINOV3_CHECKPOINT_PATH = "/workspace/checkpoints/sam-3d-body-dinov3"
+_CHECKPOINTS_BASE = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
+VITH_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-vith")
+DINOV3_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-dinov3")
 
 
 def parse_args():
@@ -83,12 +77,11 @@ def parse_args():
     return parser.parse_args()
 
 
-def create_app(manager: FbxifyManager):
-    """Create Gradio app using modular sections and manager."""
+def create_app(backend):
+    """Create Gradio app using modular sections and backend (LocalBackend or RemoteBackend)."""
     
     # Initialize translator with default language
     translator = Translator(DEFAULT_LANGUAGE)
-    tracking_manager = TrackingManager()
     
     def estimate_pose(
         input_file,
@@ -154,231 +147,94 @@ def create_app(manager: FbxifyManager):
         progress=gr.Progress(),
     ):
         """Estimate pose from image or video file - Step 1."""
-        temp_dir = None
-        
+        def progress_callback(progress_value, description):
+            if progress is not None:
+                if "Detecting" in (description or ""):
+                    mapped = progress_value * 0.5
+                else:
+                    mapped = 0.5 + progress_value * 0.45
+                progress(mapped, desc=description)
+
+        tracking_config = None
+        if isinstance(tracking_mode, list):
+            tm = tracking_mode[0] if tracking_mode else TRACKING_MODE_COUNT
+        else:
+            tm = tracking_mode
+        if tm == TRACKING_MODE_INFERENCE or tm == TRACKING_MODE_INFERENCE_BBOX:
+            tracking_config = build_tracking_config_from_gui(
+                tracking_enabled,
+                max_gap_frames,
+                merge_max_gap_frames,
+                min_tracklet_length,
+                min_similarity,
+                shape_distance_threshold,
+                cam_distance_threshold,
+                min_cam_similarity,
+                pose_distance_threshold,
+                min_pose_similarity,
+                shape_maturity_frames,
+                high_shape_override_cam,
+                high_shape_threshold,
+                iou_distance_threshold,
+                shape_weight,
+                cam_weight,
+                pose_weight,
+                iou_weight,
+                use_shape_params,
+                use_pred_cam_t,
+                use_pose_aux,
+                use_bbox_iou,
+                export_frame_assignments,
+                export_tracklet_detections,
+                export_mot_bboxes,
+                bg_filter_enabled,
+                bg_min_bbox_height_px,
+                bg_min_bbox_area_px2,
+                bg_depth_max_z,
+                bg_keep_nearest_z_quantile,
+                bg_size_auto_method,
+                bg_size_feature,
+                bg_size_percentile,
+                bg_tracklet_score_enabled,
+                bg_tracklet_score_threshold,
+                bg_min_tracklet_frames_for_scoring,
+                bg_w_length,
+                bg_w_size,
+                bg_w_size_stability,
+                bg_w_centering,
+                bg_auto_roi_enabled,
+                bg_auto_roi_window_frames,
+                bg_auto_roi_point,
+                bg_auto_roi_mad_k,
+                bg_auto_roi_min_radius_px,
+                bg_auto_roi_smoothing_alpha,
+                bg_refine_second_pass,
+            )
+
         try:
-            manager.estimation_manager.clear_cancel()
-            if input_file is None:
-                return (
-                    gr.update(),  # pose_json_file (pose tab)
-                    gr.update(),  # pose_json_file (fbx tab)
-                    None,  # pose_json_state
-                    gr.update(interactive=False),  # generate_fbx_btn
-                    gr.update(interactive=False)   # estimate_pose_btn
-                )
-
-            if isinstance(tracking_mode, list):
-                tracking_mode = tracking_mode[0] if tracking_mode else TRACKING_MODE_COUNT
-
-            use_bbox = tracking_mode == TRACKING_MODE_BBOX or tracking_mode == TRACKING_MODE_INFERENCE_BBOX
-
-            # Validate inputs
-            if use_bbox and bbox_file is None:
-                raise ValueError(translator.t("errors.bbox_file_required"))
-
-            # Prepare bboxes / num_people behavior
-            bbox_dict = None
-            if use_bbox:
-                bbox_dict = manager.prepare_bboxes(bbox_file.name)
-                # Count unique person IDs across all frames (for metadata; pose uses bbox_dict per frame)
-                unique_person_ids = set()
-                for bboxes in bbox_dict.values():
-                    for bbox in bboxes:
-                        if len(bbox) > 0:
-                            unique_person_ids.add(bbox[0])
-                num_people = len(unique_person_ids) if unique_person_ids else 0
-            elif tracking_mode == TRACKING_MODE_COUNT:
-                if num_people <= 0:
-                    raise ValueError(translator.t("errors.num_people_required"))
-            else:
-                num_people = None
-
-            # Prepare video or image
-            file_path = input_file.name
-            file_ext = os.path.splitext(file_path)[1].lower()
-            is_video = file_ext in ['.mp4', '.avi', '.mov', '.mkv', '.webm']
-            
-            fps = 30.0  # Default FPS for images
-            if is_video:
-                frame_paths, temp_dir, fps = manager.prepare_video(file_path)
-            else:
-                frame_paths = [file_path]
-                temp_dir = None
-
-            # Set camera intrinsics
-            fov_file_path = fov_file.name if fov_file else None
-            manager.set_camera_intrinsics(fov_method, fov_file_path, frame_paths, sample_number)
-
-            # Apply inference options (precision + hand crop scale)
-            precision_value = "fp32"
-            if isinstance(precision, str):
-                if precision.lower().startswith("bf16"):
-                    precision_value = "bf16"
-                elif precision.lower().startswith("fp16"):
-                    precision_value = "fp16"
-            manager.estimation_manager.set_inference_options(
-                precision=precision_value
-            )
-
-            # Process frames - only estimation
-            # Use Gradio's progress tracker: detection 0→50%, estimation 50→95%
-            def progress_callback(progress_value, description):
-                if progress is not None:
-                    if "Detecting" in (description or ""):
-                        mapped = progress_value * 0.5
-                    else:
-                        mapped = 0.5 + progress_value * 0.45
-                    progress(mapped, desc=description)
-
-            # Save estimation JSON to temp file
-            output_id = uuid.uuid4().hex
-            output_dir = tempfile.gettempdir()
-            estimation_json_path = os.path.join(output_dir, f"pose_outputs_{output_id}.json")
-            
-            # Only estimate poses, don't generate FBX yet
-            estimation_results = manager.estimation_manager.estimate_all_frames(
-                frame_paths,
-                num_people=num_people,
-                bbox_dict=bbox_dict,
-                progress_callback=progress_callback,
-                missing_bbox_behavior=missing_bbox_behavior if use_bbox else "Run Detection",
-                lang=translator.lang,
-                frame_batch_size=int(frame_batch_size) if frame_batch_size is not None else None,
-                detection_batch_size=int(detection_batch_size) if detection_batch_size is not None else 1,
-            )
-
-            tracking_metadata = None
-            tracking_config = None
-            if tracking_mode == TRACKING_MODE_INFERENCE or tracking_mode == TRACKING_MODE_INFERENCE_BBOX:
-                tracking_config = build_tracking_config_from_gui(
-                    tracking_enabled,
-                    max_gap_frames,
-                    merge_max_gap_frames,
-                    min_tracklet_length,
-                    min_similarity,
-                    shape_distance_threshold,
-                    cam_distance_threshold,
-                    min_cam_similarity,
-                    pose_distance_threshold,
-                    min_pose_similarity,
-                    shape_maturity_frames,
-                    high_shape_override_cam,
-                    high_shape_threshold,
-                    iou_distance_threshold,
-                    shape_weight,
-                    cam_weight,
-                    pose_weight,
-                    iou_weight,
-                    use_shape_params,
-                    use_pred_cam_t,
-                    use_pose_aux,
-                    use_bbox_iou,
-                    export_frame_assignments,
-                    export_tracklet_detections,
-                    export_mot_bboxes,
-                    bg_filter_enabled,
-                    bg_min_bbox_height_px,
-                    bg_min_bbox_area_px2,
-                    bg_depth_max_z,
-                    bg_keep_nearest_z_quantile,
-                    bg_size_auto_method,
-                    bg_size_feature,
-                    bg_size_percentile,
-                    bg_tracklet_score_enabled,
-                    bg_tracklet_score_threshold,
-                    bg_min_tracklet_frames_for_scoring,
-                    bg_w_length,
-                    bg_w_size,
-                    bg_w_size_stability,
-                    bg_w_centering,
-                    bg_auto_roi_enabled,
-                    bg_auto_roi_window_frames,
-                    bg_auto_roi_point,
-                    bg_auto_roi_mad_k,
-                    bg_auto_roi_min_radius_px,
-                    bg_auto_roi_smoothing_alpha,
-                    bg_refine_second_pass,
-                )
-                mode_label = "Inference Tracking + BBOX File" if tracking_mode == TRACKING_MODE_INFERENCE_BBOX else "Inference Tracking"
-                tracking_metadata = tracking_manager.run(estimation_results, tracking_config, mode=mode_label)
-            
-            # Extract source name for metadata
-            source_name = os.path.basename(file_path)
-            
-            output_files = [estimation_json_path]
-            print(f"[PoseEstimation] Saved estimation JSON: {estimation_json_path}")
-
-            if output_tracking_bbox:
-                is_video_output = _is_video_path(file_path)
-                overlay_suffix = ".mp4" if is_video_output else ".png"
-                overlay_path = os.path.join(output_dir, f"pose_outputs_{output_id}_overlay{overlay_suffix}")
-                print(f"[PoseEstimation] Rendering tracking overlay to: {overlay_path}")
-                overlay_out = render_tracking_bbox_overlay(
-                    frame_paths,
-                    estimation_results,
-                    overlay_path,
-                    fps=fps,
-                )
-                if overlay_out:
-                    output_files.append(overlay_out)
-                    print(f"[PoseEstimation] Tracking overlay output added: {overlay_out}")
-                else:
-                    print("[PoseEstimation] Tracking overlay output not created")
-
-            if (tracking_mode == TRACKING_MODE_INFERENCE or tracking_mode == TRACKING_MODE_INFERENCE_BBOX) and tracking_config and tracking_config.export_mot_bboxes:
-                mot_path = os.path.join(output_dir, f"pose_outputs_{output_id}_mot.txt")
-                print(f"[PoseEstimation] Writing MOT bboxes to: {mot_path}")
-                mot_out = write_mot_bboxes(estimation_results, mot_path)
-                if mot_out:
-                    output_files.append(mot_out)
-                    print(f"[PoseEstimation] MOT bbox output added: {mot_out}")
-                else:
-                    print("[PoseEstimation] MOT bbox output not created")
-
-            # Save estimation results
-            manager.estimation_manager.save_estimation_results(
-                estimation_results,
-                estimation_json_path,
-                source_name=source_name,
-                num_people=num_people,
-                tracking_metadata=tracking_metadata,
-                output_files=output_files,
-                fps=fps,
-            )
-            print(f"[PoseEstimation] Outputs recorded in JSON: {output_files}")
-
-        except CancelledError:
-            # Cancelled by user; return to idle state without error
-            return (
-                gr.update(value=None),  # pose_json_file (pose tab)
-                gr.update(value=None),  # pose_json_file (fbx tab)
-                None,  # pose_json_state
-                gr.update(interactive=False),  # generate_fbx_btn
-                gr.update(interactive=(input_file is not None))  # estimate_pose_btn
+            return backend.run_pose_estimation(
+                input_file,
+                tracking_mode,
+                bbox_file,
+                num_people,
+                missing_bbox_behavior,
+                fov_method,
+                fov_file,
+                sample_number,
+                precision,
+                output_tracking_bbox,
+                tracking_config,
+                frame_batch_size,
+                detection_batch_size,
+                translator.lang,
+                progress_callback,
             )
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)
             if error_msg:
                 raise gr.Error(translator.t("errors.error_occurred", error_type=error_type, error_msg=error_msg))
-            else:
-                raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
-        finally:
-            # Clean up temp directory if created
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-        
-        # Return JSON file for the dropdown (update both value and enable button)
-        # Re-enable buttons now that estimation is complete
-        # Note: input_file.change handler will disable estimate_pose_btn if file is removed
-        selected_json = _extract_first_json_path(output_files)
-        return (
-            gr.update(value=output_files),  # pose_json_file (pose tab)
-            gr.update(value=selected_json),  # pose_json_file (fbx tab)
-            selected_json,  # pose_json_state
-            gr.update(interactive=(selected_json is not None)),  # generate_fbx_btn
-            gr.update(interactive=(input_file is not None))   # estimate_pose_btn (re-enable only if file still exists)
-        )
+            raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
     
     def generate_fbx(pose_json_file, profile_name, use_root_motion, auto_floor, include_mesh, include_extrinsics,
                     extrinsics_sample_rate, extrinsics_scale, extrinsics_invert_quaternion,
@@ -390,125 +246,42 @@ def create_app(manager: FbxifyManager):
                     refinement_config,  # Single refinement config object from state
                     progress=gr.Progress()):
         """Generate FBX from pose estimation JSON - Step 2."""
-        output_files = []
+        def processing_progress(progress_value, description):
+            if progress is not None:
+                progress(progress_value, desc=description)
 
-        
         try:
-            manager.estimation_manager.clear_cancel()
-            if pose_json_file is None:
-                raise ValueError(translator.t("errors.pose_json_file_required"))
-            
-            # Get file path
-            if pose_json_file is None:
-                raise ValueError(translator.t("errors.pose_json_file_required"))
-            json_path = pose_json_file.name if hasattr(pose_json_file, 'name') else pose_json_file
-            
-            # Load from estimation JSON and apply refinement if enabled (refinement happens before joint mapping)
-            def processing_progress(progress_value, description):
-                if progress is not None:
-                    progress(progress_value * 0.3, desc=description)
-            
-            # Convert lod to int if it's a float from slider
-            lod_int = int(lod) if lod is not None else -1
-
-            print(f"generate_fbx(): lod_int: {lod_int}")
-            # Convert outlier_removal_percent to float
-            outlier_percent = float(outlier_removal_percent) if outlier_removal_percent is not None else 10.0
-            
-            extrinsics_file_path = extrinsics_file.name if (include_extrinsics and extrinsics_file is not None) else None
-            camera_scene_path = camera_scene.name if (create_camera and camera_scene is not None) else None
-            process_result = manager.process_from_estimation_json(
-                json_path,
+            return backend.run_fbx_generation(
+                pose_json_file,
                 profile_name,
                 use_root_motion,
-                fps=None,
-                refinement_config=refinement_config,
-                progress_callback=processing_progress,
-                lod=lod_int if include_mesh else -1,
-                use_personalized_body=use_personalized_body if include_mesh else False,
-                outlier_removal_percent=outlier_percent if (include_mesh and use_personalized_body) else 10.0,
-                lang=translator.lang,
-                auto_floor=auto_floor,
-                extrinsics_file=extrinsics_file_path,
-                extrinsics_sample_rate=int(extrinsics_sample_rate) if extrinsics_sample_rate is not None else 0,
-                extrinsics_scale=float(extrinsics_scale) if extrinsics_scale is not None else 0.0,
-                extrinsics_invert_quaternion=bool(extrinsics_invert_quaternion),
-                extrinsics_invert_translation=bool(extrinsics_invert_translation),
-                collect_refinement_logs=bool(graph_refinement),
+                auto_floor,
+                include_mesh,
+                include_extrinsics,
+                extrinsics_sample_rate,
+                extrinsics_scale,
+                extrinsics_invert_quaternion,
+                extrinsics_invert_translation,
+                extrinsics_file,
+                create_camera,
+                camera_zoom,
+                camera_scene,
+                use_personalized_body,
+                lod,
+                outlier_removal_percent,
+                export_personalized_body_obj,
+                graph_refinement,
+                input_file,
+                refinement_config,
+                translator.lang,
+                processing_progress,
             )
-
-            # Export FBX files
-            # Map export progress (0-1) to the 0.3-0.9 range in overall progress
-            def export_progress(progress_value, description):
-                if progress is not None:
-                    # progress_value is 0.0 to 1.0 from export_fbx_files
-                    # Map it to 0.3-0.9 range (export takes 60% of remaining progress after processing)
-                    base_progress = 0.3
-                    export_range = 0.6  # 0.9 - 0.3
-                    mapped_progress = base_progress + (progress_value * export_range)
-                    progress(mapped_progress, desc=description)
-
-            # Get LOD path if mesh is included
-            lod_fbx_path = None
-            if include_mesh and lod_int >= 0 and process_result.profile_name == "mhr":
-                from fbxify.metadata import PROFILES
-                profile = PROFILES.get(process_result.profile_name)
-                if profile:
-                    lod_key = f"lod{lod_int}_path"
-                    if lod_key in profile:
-                        lod_rel_path = profile[lod_key]
-                        lod_fbx_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fbxify", lod_rel_path)
-            
-            fbx_paths = manager.export_fbx_files(
-                process_result.profile_name,
-                process_result.joint_to_bone_mappings,
-                process_result.root_motions,
-                process_result.frame_paths,
-                process_result.fps,
-                export_progress,
-                lod=lod_int if include_mesh else -1,
-                mesh_obj_paths=process_result.mesh_obj_paths,  # Use generated meshes from JSON
-                lod_fbx_path=lod_fbx_path,
-                lang=translator.lang,
-                height_offset=process_result.height_offset,
-                metadata_extras=process_result.metadata_extras,
-                create_camera=bool(create_camera),
-                camera_scene_path=camera_scene_path,
-                camera_zoom=float(camera_zoom) if camera_zoom is not None else 0.0,
-                extrinsics_file=extrinsics_file_path
-            )
-            output_files.extend(fbx_paths)
-            if export_personalized_body_obj and process_result.mesh_obj_paths:
-                for mesh_path in process_result.mesh_obj_paths.values():
-                    if mesh_path and os.path.exists(mesh_path):
-                        output_files.append(mesh_path)
-            
-            if graph_refinement and process_result.refinement_logs:
-                try:
-                    from fbxify.refinement.refinement_graphs import convert_refinement_logs
-                    graph_files = convert_refinement_logs(process_result.refinement_logs)
-                    output_files.extend(graph_files)
-                except Exception as e:
-                    print(f"Graph Refinement: Failed to generate graphs: {e}")
-                    try:
-                        gr.Warning(f"Graph Refinement failed: {e}")
-                    except Exception:
-                        pass
-
         except Exception as e:
             error_type = type(e).__name__
             error_msg = str(e)
             if error_msg:
                 raise gr.Error(translator.t("errors.error_occurred", error_type=error_type, error_msg=error_msg))
-            else:
-                raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
-        
-        # Return output files and re-enable estimate_pose_btn (only if input_file still exists)
-        return (
-            output_files if output_files else None,
-            gr.update(interactive=(input_file is not None)),  # estimate_pose_btn (re-enable only if file still exists)
-            gr.update(interactive=(pose_json_file is not None))  # generate_fbx_btn
-        )
+            raise gr.Error(translator.t("errors.error_occurred_no_msg", error_type=error_type))
 
     def _format_cli_arg(value: str) -> str:
         if value is None:
@@ -1322,7 +1095,7 @@ def create_app(manager: FbxifyManager):
         )
 
         def cancel_current_jobs(input_file, pose_json_file):
-            manager.estimation_manager.cancel_current_job()
+            backend.cancel_current_job()
             return (
                 gr.update(interactive=(input_file is not None)),  # estimate_pose_btn
                 gr.update(interactive=(pose_json_file is not None))  # generate_fbx_btn
@@ -1337,39 +1110,15 @@ def create_app(manager: FbxifyManager):
 
         def run_bbox_detection_now(input_file, detection_batch_size, progress=gr.Progress()):
             """Run detection on all frames and export MOT file for download."""
-            if input_file is None:
-                return gr.update(visible=False)
-            file_path = input_file.name if hasattr(input_file, "name") else input_file
-            file_ext = os.path.splitext(file_path)[1].lower()
-            is_video = file_ext in [".mp4", ".avi", ".mov", ".mkv", ".webm"]
-            temp_dir = None
+            def prog(progress_value, desc):
+                if progress:
+                    progress(progress_value, desc=desc)
             try:
-                if is_video:
-                    frame_paths, temp_dir, _ = manager.prepare_video(file_path)
-                else:
-                    frame_paths = [file_path]
-                if not frame_paths:
-                    return gr.update(visible=False)
-                output_id = uuid.uuid4().hex
-                output_dir = tempfile.gettempdir()
-                mot_path = os.path.join(output_dir, f"detection_{output_id}.txt")
-                def prog(progress_value, desc):
-                    if progress:
-                        progress(progress_value, desc=desc)
-                batch_size = int(detection_batch_size) if detection_batch_size is not None else 1
-                manager.estimation_manager.run_detection_only(
-                    frame_paths, mot_path, progress_callback=prog, detection_batch_size=batch_size
-                )
-                return gr.update(value=mot_path, visible=True)
+                mot_path = backend.run_detection_only(input_file, detection_batch_size, prog)
+                return gr.update(value=mot_path, visible=True) if mot_path else gr.update(visible=False)
             except Exception as e:
                 print(f"[Export detection to MOT] Error: {e}")
                 raise
-            finally:
-                if temp_dir and os.path.isdir(temp_dir):
-                    try:
-                        shutil.rmtree(temp_dir)
-                    except Exception:
-                        pass
 
         pose_dev_components['pose_run_bbox_detection_btn'].click(
             fn=run_bbox_detection_now,
@@ -1430,116 +1179,61 @@ def create_app(manager: FbxifyManager):
             bg_refine_second_pass,
         ):
             """Load estimation JSON, re-run tracking with debug, remap IDs, save and set as pose output."""
-            if estimation_file is None:
-                return (
-                    gr.update(),
-                    gr.update(),
-                    None,
-                    gr.update(),
-                )
-            path = estimation_file
-            if isinstance(estimation_file, list):
-                path = estimation_file[0] if estimation_file else None
-            elif hasattr(estimation_file, "name"):
-                path = estimation_file.name
-            if not path or not os.path.isfile(path):
-                return (
-                    gr.update(),
-                    gr.update(),
-                    None,
-                    gr.update(),
-                )
+            tracking_config_params = {
+                "tracking_enabled": True,  # force enabled so tracking runs
+                "max_gap_frames": max_gap_frames,
+                "merge_max_gap_frames": merge_max_gap_frames,
+                "min_tracklet_length": min_tracklet_length,
+                "min_similarity": min_similarity,
+                "shape_distance_threshold": shape_distance_threshold,
+                "cam_distance_threshold": cam_distance_threshold,
+                "min_cam_similarity": min_cam_similarity,
+                "pose_distance_threshold": pose_distance_threshold,
+                "min_pose_similarity": min_pose_similarity,
+                "shape_maturity_frames": shape_maturity_frames,
+                "high_shape_override_cam": high_shape_override_cam,
+                "high_shape_threshold": high_shape_threshold,
+                "iou_distance_threshold": iou_distance_threshold,
+                "shape_weight": shape_weight,
+                "cam_weight": cam_weight,
+                "pose_weight": pose_weight,
+                "iou_weight": iou_weight,
+                "use_shape_params": use_shape_params,
+                "use_pred_cam_t": use_pred_cam_t,
+                "use_pose_aux": use_pose_aux,
+                "use_bbox_iou": use_bbox_iou,
+                "export_frame_assignments": export_frame_assignments,
+                "export_tracklet_detections": export_tracklet_detections,
+                "export_mot_bboxes": export_mot_bboxes,
+                "bg_filter_enabled": bg_filter_enabled,
+                "bg_min_bbox_height_px": bg_min_bbox_height_px,
+                "bg_min_bbox_area_px2": bg_min_bbox_area_px2,
+                "bg_depth_max_z": bg_depth_max_z,
+                "bg_keep_nearest_z_quantile": bg_keep_nearest_z_quantile,
+                "bg_size_auto_method": bg_size_auto_method,
+                "bg_size_feature": bg_size_feature,
+                "bg_size_percentile": bg_size_percentile,
+                "bg_tracklet_score_enabled": bg_tracklet_score_enabled,
+                "bg_tracklet_score_threshold": bg_tracklet_score_threshold,
+                "bg_min_tracklet_frames_for_scoring": bg_min_tracklet_frames_for_scoring,
+                "bg_w_length": bg_w_length,
+                "bg_w_size": bg_w_size,
+                "bg_w_size_stability": bg_w_size_stability,
+                "bg_w_centering": bg_w_centering,
+                "bg_auto_roi_enabled": bg_auto_roi_enabled,
+                "bg_auto_roi_window_frames": bg_auto_roi_window_frames,
+                "bg_auto_roi_point": bg_auto_roi_point,
+                "bg_auto_roi_mad_k": bg_auto_roi_mad_k,
+                "bg_auto_roi_min_radius_px": bg_auto_roi_min_radius_px,
+                "bg_auto_roi_smoothing_alpha": bg_auto_roi_smoothing_alpha,
+                "bg_refine_second_pass": bg_refine_second_pass,
+            }
             try:
-                estimation_results, metadata = manager.estimation_manager.load_estimation_results(path)
-                config = build_tracking_config_from_gui(
-                    True,  # force enabled so tracking runs
-                    max_gap_frames,
-                    merge_max_gap_frames,
-                    min_tracklet_length,
-                    min_similarity,
-                    shape_distance_threshold,
-                    cam_distance_threshold,
-                    min_cam_similarity,
-                    pose_distance_threshold,
-                    min_pose_similarity,
-                    shape_maturity_frames,
-                    high_shape_override_cam,
-                    high_shape_threshold,
-                    iou_distance_threshold,
-                    shape_weight,
-                    cam_weight,
-                    pose_weight,
-                    iou_weight,
-                    use_shape_params,
-                    use_pred_cam_t,
-                    use_pose_aux,
-                    use_bbox_iou,
-                    export_frame_assignments,
-                    export_tracklet_detections,
-                    export_mot_bboxes,
-                    bg_filter_enabled,
-                    bg_min_bbox_height_px,
-                    bg_min_bbox_area_px2,
-                    bg_depth_max_z,
-                    bg_keep_nearest_z_quantile,
-                    bg_size_auto_method,
-                    bg_size_feature,
-                    bg_size_percentile,
-                    bg_tracklet_score_enabled,
-                    bg_tracklet_score_threshold,
-                    bg_min_tracklet_frames_for_scoring,
-                    bg_w_length,
-                    bg_w_size,
-                    bg_w_size_stability,
-                    bg_w_centering,
-                    bg_auto_roi_enabled,
-                    bg_auto_roi_window_frames,
-                    bg_auto_roi_point,
-                    bg_auto_roi_mad_k,
-                    bg_auto_roi_min_radius_px,
-                    bg_auto_roi_smoothing_alpha,
-                    bg_refine_second_pass,
-                )
-                tracking_metadata = tracking_manager.run(
-                    estimation_results,
-                    config,
-                    mode="Re-run Tracking (debug)",
-                    debug_per_frame=True,
-                    step_through=bool(step_through),
-                    debug_start_frame=int(debug_start_frame or 0),
-                )
-                frame_assignments = tracking_metadata.get("frame_assignments")
-                if not frame_assignments:
-                    frame_assignments = {}
-                remapped_results = apply_frame_assignments(estimation_results, frame_assignments)
-                output_id = uuid.uuid4().hex
-                output_dir = tempfile.gettempdir()
-                new_path = os.path.join(output_dir, f"pose_outputs_rerun_{output_id}.json")
-                source_name = metadata.get("source", "unknown")
-                num_people = metadata.get("num_people")
-                fps = metadata.get("fps")
-                # Avoid 2x file size: tracking_metadata includes full tracklet detections (shape_params,
-                # pred_cam_t, etc.) which duplicate the data already in "frames". Keep only summaries.
-                save_tracking = dict(tracking_metadata)
-                if "tracklets" in save_tracking:
-                    save_tracking["tracklets"] = [
-                        {k: v for k, v in t.items() if k != "detections"}
-                        for t in save_tracking["tracklets"]
-                    ]
-                manager.estimation_manager.save_estimation_results(
-                    remapped_results,
-                    new_path,
-                    source_name=source_name,
-                    num_people=num_people,
-                    tracking_metadata=save_tracking,
-                    output_files=[new_path],
-                    fps=fps,
-                )
-                return (
-                    gr.update(value=[new_path]),
-                    gr.update(value=new_path),
-                    new_path,
-                    gr.update(interactive=True),
+                return backend.rerun_tracking(
+                    estimation_file,
+                    step_through,
+                    debug_start_frame,
+                    tracking_config_params,
                 )
             except Exception as e:
                 print(f"[Re-run tracking] Error: {e}")
@@ -1667,40 +1361,82 @@ def create_app(manager: FbxifyManager):
 
 
 if __name__ == "__main__":
-    args = parse_args()
-    if args.model == "vith":
-        checkpoint_base_path = VITH_CHECKPOINT_PATH
-    elif args.model == "dinov3":
-        checkpoint_base_path = DINOV3_CHECKPOINT_PATH
+    use_local = os.environ.get("FBXIFY_LOCAL", "").strip().lower() in ("1", "true", "yes", "on")
+    if use_local:
+        from fbxify.pose_estimation_manager import PoseEstimationManager
+        from fbxify.fbxify_manager import FbxifyManager
+        from fbxify.fbxify_manager import FbxDataPrepManager
+        from fbxify.tracking.tracking_manager import TrackingManager
+        from fbxify.checkpoint_download import download_mhr_assets_if_missing
+
+        cache_dir = os.environ.get("CACHE_DIR", "").rstrip("/") or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache"
+        )
+        os.environ.setdefault("CACHE_DIR", cache_dir)
+        download_mhr_assets_if_missing(os.path.join(cache_dir, "mhr_assets"))
+
+        args = parse_args()
+        if args.model == "vith":
+            checkpoint_base_path = VITH_CHECKPOINT_PATH
+        elif args.model == "dinov3":
+            checkpoint_base_path = DINOV3_CHECKPOINT_PATH
+        else:
+            raise ValueError(f"Invalid model: {args.model}")
+
+        checkpoint_path = os.path.join(checkpoint_base_path, "model.ckpt")
+        mhr_path = os.path.join(checkpoint_base_path, "assets", "mhr_model.pt")
+
+        detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
+        fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
+
+        estimation_manager = PoseEstimationManager(
+            checkpoint_path=checkpoint_path,
+            mhr_path=mhr_path,
+            detector_name=args.detector_name,
+            detector_path=detector_path,
+            fov_name=args.fov_name,
+            fov_path=fov_path,
+            precision="fp32"
+        )
+
+        data_prep_manager = FbxDataPrepManager()
+        manager = FbxifyManager(estimation_manager, data_prep_manager)
+        tracking_manager = TrackingManager()
+        from fbxify.backend import LocalBackend
+        backend = LocalBackend(manager, tracking_manager)
     else:
-        raise ValueError(f"Invalid model: {args.model}")
+        remote_url = os.environ.get("FBXIFY_REMOTE_WORKER_URL", "").strip()
+        if not remote_url:
+            raise SystemExit(
+                "FBXIFY_REMOTE_WORKER_URL is not set. Set it to your worker URL (e.g. https://your-worker.run.app) "
+                "or run with FBXIFY_LOCAL=1 to use the in-process backend."
+            )
+        from fbxify.backend import RemoteBackend
+        backend = RemoteBackend(remote_url)
 
-    checkpoint_path = os.path.join(checkpoint_base_path, "model.ckpt")
-    mhr_path = os.path.join(checkpoint_base_path, "assets", "mhr_model.pt")
-    
-    # Get detector path from args or environment variable
-    detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
-    # Get FOV path from args or environment variable
-    fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
-    
-    estimation_manager = PoseEstimationManager(
-        checkpoint_path=checkpoint_path,
-        mhr_path=mhr_path,
-        detector_name=args.detector_name,
-        detector_path=detector_path,
-        fov_name=args.fov_name,
-        fov_path=fov_path,
-        precision="fp32"
-    )
-    
-    data_prep_manager = FbxDataPrepManager()
-    
-    # Create manager with both managers
-    manager = FbxifyManager(estimation_manager, data_prep_manager)
+    app = create_app(backend)
 
-    app = create_app(manager)
+    # Optional Gradio login: REQUIRE_AUTH=1 + FBXIFY_AUTH_CREDENTIALS=user1:pass1,user2:pass2
+    auth_fn = None
+    if os.environ.get("REQUIRE_AUTH", "").strip().lower() in ("1", "true", "yes", "on"):
+        raw = os.environ.get("FBXIFY_AUTH_CREDENTIALS", "").strip()
+        if raw:
+            allowed = {}
+            for entry in raw.split(","):
+                entry = entry.strip()
+                if ":" in entry:
+                    user, _, passwd = entry.partition(":")
+                    if user and passwd:
+                        allowed[user.strip()] = passwd.strip()
+            if allowed:
+                def _authenticate(username: str, password: str) -> bool:
+                    return allowed.get(username) == password
+                auth_fn = _authenticate
+
+    server_port = int(os.environ.get("FBXIFY_UI_PORT", "7444"))
     app.launch(
         server_name="0.0.0.0",
-        server_port=7444,
+        server_port=server_port,
         share=True,
+        auth=auth_fn,
     )

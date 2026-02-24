@@ -1,0 +1,8 @@
+# Minimal deps for Gradio UI when using RemoteBackend (FBXIFY_REMOTE_WORKER_URL set).
+# No PyTorch, detectron2, flash-attn, MoGe, Blender, or other heavy model deps.
+gradio>=4.0
+requests
+numpy<2
+opencv-python
+tqdm
+Pillow

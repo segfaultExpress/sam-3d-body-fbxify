@@ -1,0 +1,35 @@
+# Slim UI image - Gradio only, no GPU. Connects to worker via FBXIFY_REMOTE_WORKER_URL.
+# Build: docker build -f Dockerfile.ui -t fbxify-ui .
+# Run: docker run -p 7444:7444 -e FBXIFY_REMOTE_WORKER_URL=http://worker:8000 fbxify-ui
+
+FROM python:3.12-slim
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System deps: ffmpeg, git for clone
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    git \
+    libgl1 \
+    libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+
+# PULL_FROM_LOCAL=1: use build context. PULL_FROM_LOCAL=0: git clone (BRANCH from config).
+# Pass --build-arg CACHEBUST=$(git rev-parse HEAD) to force fresh clone (bypass cache)
+ARG PULL_FROM_LOCAL=0
+ARG BRANCH=main
+ARG CACHEBUST
+WORKDIR /fbxify
+COPY . .
+RUN if [ "${PULL_FROM_LOCAL}" != "1" ]; then \
+      rm -rf /fbxify && git clone -b ${BRANCH} https://github.com/segfaultExpress/sam-3d-body-fbxify.git /fbxify; \
+    fi
+
+RUN pip install --no-cache-dir -r fbxify/docker/requirements-ui.txt
+
+ENV PYTHONPATH=/fbxify
+ENV FBXIFY_UI_PORT=7860
+
+EXPOSE 7860
+
+CMD ["python", "fbxify/app.py"]
