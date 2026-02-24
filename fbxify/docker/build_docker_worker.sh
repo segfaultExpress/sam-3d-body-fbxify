@@ -21,6 +21,11 @@ USERNAME="${1:-$USERNAME}"
 VERSION="${2:-$VERSION}"
 USERNAME="${USERNAME:-mordommin94}"
 VERSION="${VERSION:-0.1.4}"
+PULL_FROM_LOCAL="${PULL_FROM_LOCAL:-0}"
+BRANCH="${BRANCH:-main}"
 
 cd "$REPO_ROOT"
-docker build -f fbxify/docker/Dockerfile.worker -t "${USERNAME}/fbxify-worker:${VERSION}" .
+docker build -f fbxify/docker/Dockerfile.worker \
+  --build-arg PULL_FROM_LOCAL="${PULL_FROM_LOCAL}" \
+  --build-arg BRANCH="${BRANCH}" \
+  -t "${USERNAME}/fbxify-worker:${VERSION}" .

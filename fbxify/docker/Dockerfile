@@ -54,9 +54,15 @@ RUN python -m pip install "numpy<2"
 RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
-# ---- Clone repo ----
+# ---- Clone repo or copy from local ----
+# PULL_FROM_LOCAL=1: use build context. PULL_FROM_LOCAL=0: git clone (BRANCH from config).
+ARG PULL_FROM_LOCAL=0
+ARG BRANCH=main
 WORKDIR /fbxify
-RUN git clone -b web-api-headless https://github.com/segfaultExpress/sam-3d-body-fbxify.git .
+COPY . .
+RUN if [ "${PULL_FROM_LOCAL}" != "1" ]; then \
+      rm -rf /fbxify && git clone -b ${BRANCH} https://github.com/segfaultExpress/sam-3d-body-fbxify.git /fbxify; \
+    fi
 
 # ---- SAM-3D-Body Python deps ----
 RUN python -m pip install \

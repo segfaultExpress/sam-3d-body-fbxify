@@ -1,0 +1,11 @@
+# Override: mount local repo over /fbxify at runtime (used when RUN_WITH_LOCAL=1).
+# Merged with docker-compose.yml by run_ui_worker scripts.
+# Path ../../ is repo root relative to this file (fbxify/docker/).
+
+services:
+  worker:
+    volumes:
+      - ../../:/fbxify
+  ui:
+    volumes:
+      - ../../:/fbxify

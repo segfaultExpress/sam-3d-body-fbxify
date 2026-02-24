@@ -122,14 +122,13 @@
           "mode": "formdata",
           "formdata": [
             { "key": "estimation_file", "type": "file", "src": "", "description": "Pose estimation JSON (required)" },
-            { "key": "tracking_enabled", "value": "true", "type": "text" },
+            { "key": "tracking_config_file", "type": "file", "src": "", "description": "Optional tracking config JSON file (same pattern as estimation_file)" },
             { "key": "step_through", "value": "false", "type": "text" },
-            { "key": "debug_start_frame", "value": "0", "type": "text" },
-            { "key": "export_mot_bboxes", "value": "false", "type": "text" }
+            { "key": "debug_start_frame", "value": "0", "type": "text" }
           ]
         },
         "url": "{{base_url}}/jobs/rerun_tracking",
-        "description": "Rerun tracking on existing estimation JSON. Many more form params available in API."
+        "description": "Rerun tracking on existing estimation JSON. Pass tracking_config_file as JSON file (same as estimation_file). Omit for defaults."
       }
     },
     {

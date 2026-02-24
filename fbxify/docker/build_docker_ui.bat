@@ -9,6 +9,8 @@ if "%~1" neq "" set USERNAME=%~1
 if "%~2" neq "" set VERSION=%~2
 if "%USERNAME%"=="" set USERNAME=mordommin94
 if "%VERSION%"=="" set VERSION=0.1.4
+if "%PULL_FROM_LOCAL%"=="" set PULL_FROM_LOCAL=0
+if "%BRANCH%"=="" set BRANCH=main
 
 cd /d "%~dp0..\.."
-docker build -f fbxify/docker/Dockerfile.ui -t %USERNAME%/fbxify-ui:%VERSION% .
+docker build -f fbxify/docker/Dockerfile.ui --build-arg PULL_FROM_LOCAL=%PULL_FROM_LOCAL% --build-arg BRANCH=%BRANCH% -t %USERNAME%/fbxify-ui:%VERSION% .

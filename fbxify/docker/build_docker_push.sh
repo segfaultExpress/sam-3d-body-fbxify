@@ -22,6 +22,8 @@ USERNAME="${1:-$USERNAME}"
 VERSION="${2:-$VERSION}"
 USERNAME="${USERNAME:-mordommin94}"
 VERSION="${VERSION:-0.1.4}"
+PULL_FROM_LOCAL="${PULL_FROM_LOCAL:-0}"
+BRANCH="${BRANCH:-main}"
 
 echo "Building and pushing fbxify-worker, fbxify-ui, fbxify-standalone (${VERSION} and :latest)"
 echo
@@ -32,7 +34,10 @@ cd "$REPO_ROOT"
 
 # Worker
 echo "[1/9] Building fbxify-worker..."
-docker build -f fbxify/docker/Dockerfile.worker -t "${USERNAME}/fbxify-worker:${VERSION}" .
+docker build -f fbxify/docker/Dockerfile.worker \
+  --build-arg PULL_FROM_LOCAL="${PULL_FROM_LOCAL}" \
+  --build-arg BRANCH="${BRANCH}" \
+  -t "${USERNAME}/fbxify-worker:${VERSION}" .
 
 echo "[2/9] Pushing fbxify-worker:${VERSION}..."
 docker push "${USERNAME}/fbxify-worker:${VERSION}"
@@ -43,7 +48,10 @@ docker push "${USERNAME}/fbxify-worker:latest"
 
 # UI
 echo "[4/9] Building fbxify-ui..."
-docker build -f fbxify/docker/Dockerfile.ui -t "${USERNAME}/fbxify-ui:${VERSION}" .
+docker build -f fbxify/docker/Dockerfile.ui \
+  --build-arg PULL_FROM_LOCAL="${PULL_FROM_LOCAL}" \
+  --build-arg BRANCH="${BRANCH}" \
+  -t "${USERNAME}/fbxify-ui:${VERSION}" .
 
 echo "[5/9] Pushing fbxify-ui:${VERSION}..."
 docker push "${USERNAME}/fbxify-ui:${VERSION}"
@@ -54,7 +62,10 @@ docker push "${USERNAME}/fbxify-ui:latest"
 
 # Standalone
 echo "[7/9] Building fbxify-standalone..."
-docker build -f fbxify/docker/Dockerfile -t "${USERNAME}/fbxify-standalone:${VERSION}" .
+docker build -f fbxify/docker/Dockerfile \
+  --build-arg PULL_FROM_LOCAL="${PULL_FROM_LOCAL}" \
+  --build-arg BRANCH="${BRANCH}" \
+  -t "${USERNAME}/fbxify-standalone:${VERSION}" .
 
 echo "[8/9] Pushing fbxify-standalone:${VERSION}..."
 docker push "${USERNAME}/fbxify-standalone:${VERSION}"

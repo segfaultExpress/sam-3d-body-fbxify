@@ -765,15 +765,18 @@ class RemoteBackend:
         if not path or not os.path.isfile(path):
             return (gr.update(), gr.update(), None, gr.update())
         try:
+            import io
             with open(path, "rb") as f:
                 files = {"estimation_file": (os.path.basename(path), f)}
+                tc_bytes = json.dumps(tracking_config_params).encode("utf-8")
+                files["tracking_config_file"] = ("tracking_config.json", io.BytesIO(tc_bytes), "application/json")
+                data = {
+                    "step_through": bool(step_through),
+                    "debug_start_frame": int(debug_start_frame or 0),
+                }
                 r = requests.post(
                     f"{self.base_url}/jobs/rerun_tracking",
-                    data={
-                        "step_through": bool(step_through),
-                        "debug_start_frame": int(debug_start_frame or 0),
-                        **tracking_config_params,
-                    },
+                    data=data,
                     files=files,
                     headers=self._headers(),
                     timeout=300,

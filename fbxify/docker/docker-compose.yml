@@ -1,6 +1,7 @@
 # Run UI + worker locally for testing.
 # Usage (from repo root): docker compose -f fbxify/docker/docker-compose.yml up --build
-# Or: run_ui_worker.bat  (sets CHECKPOINTS_DIR to repo-root/checkpoints)
+# Or: run_ui_worker.bat / run_ui_worker.sh (loads docker-build.config, sets CHECKPOINTS_DIR)
+# RUN_WITH_LOCAL=1 in config: run scripts merge docker-compose.local.yml to mount local repo over /fbxify
 #
 # Requirements:
 # - GPU (worker)
@@ -21,6 +22,8 @@ services:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.worker
       args:
+        PULL_FROM_LOCAL: ${PULL_FROM_LOCAL:-0}
+        BRANCH: ${BRANCH:-main}
         CACHEBUST: ${CACHEBUST:-none}
     deploy:
       resources:
@@ -58,6 +61,8 @@ services:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.ui
       args:
+        PULL_FROM_LOCAL: ${PULL_FROM_LOCAL:-0}
+        BRANCH: ${BRANCH:-main}
         CACHEBUST: ${CACHEBUST:-none}
     depends_on:
       worker:

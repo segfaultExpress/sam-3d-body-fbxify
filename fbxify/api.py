@@ -350,8 +350,14 @@ def _run_rerun_tracking_job(job_id: str, estimation_path: str, params: Dict[str,
         estimation_results, metadata = manager.estimation_manager.load_estimation_results(estimation_path)
         step_through = params.get("step_through", False)
         debug_start_frame = int(params.get("debug_start_frame", 0))
-        config_params = {k: v for k, v in params.items() if k not in ("step_through", "debug_start_frame")}
-        config = build_tracking_config_from_gui(**config_params)
+        tc_raw = params.get("tracking_config")
+        if tc_raw and tc_raw.strip():
+            tc_data = json.loads(tc_raw) if isinstance(tc_raw, str) else tc_raw
+            from fbxify.tracking.tracking_config import TrackingConfig
+            config = TrackingConfig.from_dict(tc_data)
+        else:
+            config_params = {k: v for k, v in params.items() if k not in ("step_through", "debug_start_frame", "tracking_config")}
+            config = build_tracking_config_from_gui(**config_params)
         tracking_metadata = tracking_manager.run(
             estimation_results,
             config,
@@ -615,8 +621,10 @@ async def create_rerun_tracking_job(
     background_tasks: BackgroundTasks,
     _auth: None = Depends(_verify_auth),
     estimation_file: UploadFile = File(...),
+    tracking_config_file: Optional[UploadFile] = File(None),
     step_through: bool = Form(False),
     debug_start_frame: int = Form(0),
+    # Legacy: individual params (used when tracking_config_file not provided)
     tracking_enabled: bool = Form(True),
     max_gap_frames: int = Form(5),
     merge_max_gap_frames: int = Form(12),
@@ -674,7 +682,12 @@ async def create_rerun_tracking_job(
     with open(est_path, "wb") as f:
         f.write(await estimation_file.read())
 
+    tc_json = None
+    if tracking_config_file and tracking_config_file.filename:
+        tc_json = (await tracking_config_file.read()).decode("utf-8")
+
     params = {
+        "tracking_config": tc_json,
         "tracking_enabled": tracking_enabled,
         "max_gap_frames": max_gap_frames,
         "merge_max_gap_frames": merge_max_gap_frames,
