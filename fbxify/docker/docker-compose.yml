@@ -16,7 +16,7 @@
 
 services:
   worker:
-    image: mordommin94/fbxify-worker:0.1.5
+    image: mordommin94/fbxify-worker:latest
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.worker
@@ -53,7 +53,7 @@ services:
       start_period: 60s
 
   ui:
-    image: mordommin94/fbxify-ui:0.1.5
+    image: mordommin94/fbxify-ui:latest
     build:
       context: ../..
       dockerfile: fbxify/docker/Dockerfile.ui
