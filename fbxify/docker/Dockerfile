@@ -61,7 +61,7 @@ ARG BRANCH=main
 WORKDIR /fbxify
 COPY . .
 RUN if [ "${PULL_FROM_LOCAL}" != "1" ]; then \
-      rm -rf /fbxify && git clone -b ${BRANCH} https://github.com/segfaultExpress/sam-3d-body-fbxify.git /fbxify; \
+      cd / && rm -rf /fbxify && git clone -b ${BRANCH} https://github.com/segfaultExpress/sam-3d-body-fbxify.git /fbxify; \
     fi
 
 # ---- SAM-3D-Body Python deps ----
