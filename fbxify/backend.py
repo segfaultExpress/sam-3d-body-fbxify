@@ -539,6 +539,9 @@ class RemoteBackend:
             if tracking_config is not None:
                 tc = tracking_config.to_dict() if hasattr(tracking_config, "to_dict") else tracking_config
                 payload["tracking_config"] = json.dumps(tc) if not isinstance(tc, str) else tc
+                print(f"[RemoteBackend] Sending tracking_config ({len(payload['tracking_config'])} chars)")
+            else:
+                print(f"[RemoteBackend] No tracking_config (tracking_mode={tracking_mode})")
 
             r = requests.post(f"{self.base_url}/jobs/pose", data=payload, files=files or None, headers=self._headers(), timeout=300)
             r.raise_for_status()

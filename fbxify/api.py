@@ -121,8 +121,14 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
                 tc_data = json.loads(params["tracking_config"]) if isinstance(params["tracking_config"], str) else params["tracking_config"]
                 from fbxify.tracking.tracking_config import TrackingConfig
                 tracking_config = TrackingConfig.from_dict(tc_data)
-            except Exception:
-                pass
+                print(f"[pose-job {job_id[:8]}] Tracking config parsed OK: enabled={tracking_config.enabled}, "
+                      f"min_similarity={tracking_config.min_similarity}, shape_weight={tracking_config.shape_weight}")
+            except Exception as e:
+                print(f"[pose-job {job_id[:8]}] WARNING: Failed to parse tracking_config: {e}")
+                print(f"[pose-job {job_id[:8]}] Raw tracking_config value ({type(params['tracking_config']).__name__}): "
+                      f"{str(params['tracking_config'])[:200]}")
+        else:
+            print(f"[pose-job {job_id[:8]}] No tracking_config in params (tracking_mode={tracking_mode})")
 
         def prog(p, desc):
             with _jobs_lock:
@@ -142,9 +148,13 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
         )
 
         tracking_metadata = None
-        if tracking_mode in ("inference", "inference_bbox") and tracking_config:
-            mode_label = "Inference Tracking + BBOX File" if tracking_mode == "inference_bbox" else "Inference Tracking"
-            tracking_metadata = tracking_manager.run(estimation_results, tracking_config, mode=mode_label)
+        if tracking_mode in ("inference", "inference_bbox"):
+            if tracking_config:
+                mode_label = "Inference Tracking + BBOX File" if tracking_mode == "inference_bbox" else "Inference Tracking"
+                print(f"[pose-job {job_id[:8]}] Running tracking ({mode_label}) with config")
+                tracking_metadata = tracking_manager.run(estimation_results, tracking_config, mode=mode_label)
+            else:
+                print(f"[pose-job {job_id[:8]}] WARNING: tracking_mode={tracking_mode} but tracking_config is None — tracking SKIPPED")
 
         output_dir = _jobs[job_id]["output_dir"]
         output_id = job_id[:8]
@@ -355,9 +365,12 @@ def _run_rerun_tracking_job(job_id: str, estimation_path: str, params: Dict[str,
             tc_data = json.loads(tc_raw) if isinstance(tc_raw, str) else tc_raw
             from fbxify.tracking.tracking_config import TrackingConfig
             config = TrackingConfig.from_dict(tc_data)
+            print(f"[rerun-tracking {job_id[:8]}] Config from JSON: enabled={config.enabled}, "
+                  f"min_similarity={config.min_similarity}, shape_weight={config.shape_weight}")
         else:
             config_params = {k: v for k, v in params.items() if k not in ("step_through", "debug_start_frame", "tracking_config")}
             config = build_tracking_config_from_gui(**config_params)
+            print(f"[rerun-tracking {job_id[:8]}] Config from individual params (fallback)")
         tracking_metadata = tracking_manager.run(
             estimation_results,
             config,
