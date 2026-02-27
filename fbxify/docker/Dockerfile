@@ -26,6 +26,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libsm6 libxext6 libxrender1 \
     libosmesa6 libosmesa6-dev \
+    libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Blender installation ----
@@ -107,7 +108,7 @@ RUN python -m pip install \
       
 # ---- Additional fbxify Python deps ----
 RUN python -m pip install \
-      mathutils
+      "mathutils<5"
 
 # ---- flash-attn needs to be installed separately
 RUN python -m pip install -U pip setuptools wheel packaging ninja psutil \

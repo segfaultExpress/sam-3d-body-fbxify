@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libsm6 libxext6 libxrender1 \
     libosmesa6 libosmesa6-dev \
+    libeigen3-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # ---- Blender installation ----
@@ -103,7 +104,7 @@ RUN python -m pip install \
       git+https://github.com/microsoft/MoGe.git
 
 # ---- Additional fbxify Python deps ----
-RUN python -m pip install mathutils
+RUN python -m pip install "mathutils<5"
 
 # ---- FastAPI + uvicorn for worker API ----
 RUN python -m pip install fastapi uvicorn
