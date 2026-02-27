@@ -818,6 +818,117 @@ async def reload_models(_auth: None = Depends(_verify_auth)):
         )
 
 
+@app.post("/cleanup")
+async def cleanup_temp(
+    _auth: None = Depends(_verify_auth),
+    max_age_hours: float = 0,
+):
+    """Remove temp artifacts for completed/failed jobs and orphaned temp dirs.
+
+    - max_age_hours=0 (default): flush ALL completed/failed jobs regardless of age.
+    - max_age_hours>0: only flush jobs/dirs older than that many hours.
+    Actively running jobs are never touched.
+    """
+    import time, glob as _glob
+
+    now = time.time()
+    age_threshold = max_age_hours * 3600
+    removed_dirs: list[str] = []
+    errors: list[str] = []
+
+    active_output_dirs: set[str] = set()
+    purged_job_ids: list[str] = []
+
+    with _jobs_lock:
+        for jid, jdata in list(_jobs.items()):
+            if jdata["status"] in ("completed", "failed"):
+                odir = jdata.get("output_dir")
+                if odir and os.path.isdir(odir):
+                    dir_age = now - os.path.getmtime(odir)
+                    if age_threshold == 0 or dir_age >= age_threshold:
+                        try:
+                            shutil.rmtree(odir, ignore_errors=True)
+                            removed_dirs.append(odir)
+                        except Exception as exc:
+                            errors.append(f"{odir}: {exc}")
+                        purged_job_ids.append(jid)
+                else:
+                    purged_job_ids.append(jid)
+            elif jdata["status"] in ("pending", "running"):
+                odir = jdata.get("output_dir")
+                if odir:
+                    active_output_dirs.add(os.path.realpath(odir))
+        for jid in purged_job_ids:
+            del _jobs[jid]
+
+    tmp_root = tempfile.gettempdir()
+    for pattern in ("sam3d_frames_*", "fbxify_job_*"):
+        for d in _glob.glob(os.path.join(tmp_root, pattern)):
+            if not os.path.isdir(d):
+                continue
+            if os.path.realpath(d) in active_output_dirs:
+                continue
+            dir_age = now - os.path.getmtime(d)
+            if age_threshold > 0 and dir_age < age_threshold:
+                continue
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+                removed_dirs.append(d)
+            except Exception as exc:
+                errors.append(f"{d}: {exc}")
+
+    return {
+        "status": "ok",
+        "purged_jobs": len(purged_job_ids),
+        "removed_dirs": len(removed_dirs),
+        "removed_paths": removed_dirs,
+        "errors": errors,
+    }
+
+
+@app.get("/storage")
+async def storage_info(_auth: None = Depends(_verify_auth)):
+    """Report disk usage for /tmp and counts of fbxify temp artifacts."""
+    import glob as _glob
+
+    tmp_root = tempfile.gettempdir()
+    usage = shutil.disk_usage(tmp_root)
+
+    frame_dirs = [d for d in _glob.glob(os.path.join(tmp_root, "sam3d_frames_*")) if os.path.isdir(d)]
+    job_dirs = [d for d in _glob.glob(os.path.join(tmp_root, "fbxify_job_*")) if os.path.isdir(d)]
+
+    def _dir_size(path: str) -> int:
+        total = 0
+        for dirpath, _, filenames in os.walk(path):
+            for f in filenames:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, f))
+                except OSError:
+                    pass
+        return total
+
+    frame_bytes = sum(_dir_size(d) for d in frame_dirs)
+    job_bytes = sum(_dir_size(d) for d in job_dirs)
+
+    with _jobs_lock:
+        active = sum(1 for j in _jobs.values() if j["status"] in ("pending", "running"))
+        done = sum(1 for j in _jobs.values() if j["status"] in ("completed", "failed"))
+
+    return {
+        "tmp_dir": tmp_root,
+        "disk_total_gb": round(usage.total / (1 << 30), 2),
+        "disk_used_gb": round(usage.used / (1 << 30), 2),
+        "disk_free_gb": round(usage.free / (1 << 30), 2),
+        "disk_free_pct": round(usage.free / usage.total * 100, 1),
+        "sam3d_frame_dirs": len(frame_dirs),
+        "sam3d_frame_dirs_gb": round(frame_bytes / (1 << 30), 2),
+        "fbxify_job_dirs": len(job_dirs),
+        "fbxify_job_dirs_gb": round(job_bytes / (1 << 30), 2),
+        "jobs_active": active,
+        "jobs_done": done,
+    }
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
