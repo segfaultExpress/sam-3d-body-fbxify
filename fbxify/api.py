@@ -6,8 +6,10 @@ Exposes /jobs/pose, /jobs/fbx, /jobs/detection, /jobs/rerun_tracking.
 """
 from __future__ import annotations
 
+import errno
 import os
 import json
+import traceback
 import uuid
 import shutil
 import tempfile
@@ -194,6 +196,7 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception as e:
+        traceback.print_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
@@ -307,6 +310,7 @@ def _run_fbx_job(job_id: str, pose_json_path: str, extras: Dict[str, str], param
             _jobs[job_id]["progress"] = 100
             _jobs[job_id]["message"] = "Done"
     except Exception as e:
+        traceback.print_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
@@ -340,6 +344,7 @@ def _run_detection_job(job_id: str, input_path: str, batch_size: int):
         if temp_dir and os.path.exists(temp_dir):
             shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception as e:
+        traceback.print_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
@@ -401,6 +406,7 @@ def _run_rerun_tracking_job(job_id: str, estimation_path: str, params: Dict[str,
             _jobs[job_id]["output_path"] = new_path
             _jobs[job_id]["output_files"] = [os.path.basename(new_path)]
     except Exception as e:
+        traceback.print_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
@@ -692,8 +698,22 @@ async def create_rerun_tracking_job(
         _jobs[job_id] = {"status": "pending", "output_dir": output_dir, "output_files": [], "output_path": None}
 
     est_path = os.path.join(output_dir, "estimation.json")
-    with open(est_path, "wb") as f:
-        f.write(await estimation_file.read())
+    try:
+        with open(est_path, "wb") as f:
+            f.write(await estimation_file.read())
+    except OSError as e:
+        if e.errno == errno.ENOSPC:
+            with _jobs_lock:
+                _jobs.pop(job_id, None)
+            try:
+                shutil.rmtree(output_dir, ignore_errors=True)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=507,
+                detail="Insufficient storage: disk full (no space left on device). Free disk space or run cleanup and retry.",
+            ) from e
+        raise
 
     tc_json = None
     if tracking_config_file and tracking_config_file.filename:

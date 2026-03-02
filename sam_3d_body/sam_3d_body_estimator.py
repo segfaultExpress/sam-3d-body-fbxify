@@ -19,6 +19,13 @@ from sam_3d_body.utils import recursive_to
 from torchvision.transforms import ToTensor
 
 
+def _safe_len(obj):
+    """len() that handles 0-d numpy arrays gracefully."""
+    if isinstance(obj, np.ndarray) and obj.ndim == 0:
+        return 0
+    return len(obj)
+
+
 class SAM3DBodyEstimator:
     def __init__(
         self,
@@ -124,7 +131,7 @@ class SAM3DBodyEstimator:
             self.is_crop = False
 
         # If there are no detected humans, don't run prediction
-        if len(boxes) == 0:
+        if _safe_len(boxes) == 0:
             return []
 
         # The following models expect RGB images instead of BGR

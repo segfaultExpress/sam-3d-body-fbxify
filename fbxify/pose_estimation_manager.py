@@ -26,6 +26,13 @@ from typing import Dict, List, Optional, Tuple, Any
 import threading
 
 
+def _safe_len(obj):
+    """len() that handles 0-d numpy arrays gracefully."""
+    if isinstance(obj, np.ndarray) and obj.ndim == 0:
+        return 0
+    return len(obj)
+
+
 class CancelledError(Exception):
     """Raised when a running pose estimation job is cancelled."""
     pass
@@ -179,7 +186,7 @@ class PoseEstimationManager:
                 for idx, frame_index_0 in enumerate(valid_indices):
                     frame_1based = frame_index_0 + 1
                     boxes_xyxy = boxes_list[idx] if idx < len(boxes_list) else np.empty((0, 4))
-                    if len(boxes_xyxy) == 0:
+                    if _safe_len(boxes_xyxy) == 0:
                         bbox_dict[frame_1based] = []
                         continue
                     tuples_list = []
@@ -208,7 +215,7 @@ class PoseEstimationManager:
                     default_to_full_image=False,
                 )
                 frame_1based = frame_index + 1
-                if len(boxes_xyxy) == 0:
+                if _safe_len(boxes_xyxy) == 0:
                     bbox_dict[frame_1based] = []
                     continue
                 tuples_list = []
@@ -600,7 +607,7 @@ class PoseEstimationManager:
                     print(f"  [INFO] Bbox missing for frame {frame_index + 1}, skipping (behavior: Skip Frame)")
                     estimation_results[str(frame_index)] = {}
                     continue
-                if bboxes is not None and len(bboxes) == 0:
+                if bboxes is not None and _safe_len(bboxes) == 0:
                     estimation_results[str(frame_index)] = {}
                     continue
                 frame_results = self._estimate_single_frame(
@@ -678,7 +685,7 @@ class PoseEstimationManager:
                 estimation_results[str(frame_index)] = {}
                 tqdm_bar.update(1)
                 continue
-            ids = self._get_person_ids(bboxes) if isinstance(bboxes, list) else list(range(len(bboxes)))
+            ids = self._get_person_ids(bboxes) if isinstance(bboxes, list) else list(range(_safe_len(bboxes)))
             bboxes_numpy = self._convert_bboxes_to_numpy(bboxes) if isinstance(bboxes, list) else np.asarray(bboxes, dtype=np.float32)
             bboxes_orig = bboxes if isinstance(bboxes, list) else None
             chunk.append((frame_index, frame_path, bboxes_numpy, ids, bboxes_orig))
