@@ -166,6 +166,49 @@
         "url": "{{base_url}}/jobs/cancel",
         "description": "Signal worker to cancel current job."
       }
+    },
+    {
+      "name": "Cleanup Temp",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+          { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true },
+          { "key": "Content-Type", "value": "application/x-www-form-urlencoded" }
+        ],
+        "body": {
+          "mode": "urlencoded",
+          "urlencoded": [
+            { "key": "max_age_hours", "value": "0", "type": "text", "description": "0 = flush all completed/failed jobs; >0 = only older than N hours" }
+          ]
+        },
+        "url": "{{base_url}}/cleanup",
+        "description": "Remove temp artifacts for completed/failed jobs and orphaned temp dirs. max_age_hours=0 flushes everything; >0 only flushes dirs older than N hours. Running jobs are never touched."
+      }
+    },
+    {
+      "name": "Storage Info",
+      "request": {
+        "method": "GET",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+          { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+        ],
+        "url": "{{base_url}}/storage",
+        "description": "Report disk usage for /tmp and counts/sizes of fbxify temp artifacts (frame dirs, job dirs, active/done jobs)."
+      }
+    },
+    {
+      "name": "Reload Models",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+          { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+        ],
+        "url": "{{base_url}}/reload",
+        "description": "Reload models (e.g. after uploading checkpoints via SSH). Clears cached managers and reinitializes. Returns 503 if checkpoints still missing."
+      }
     }
   ]
 }
