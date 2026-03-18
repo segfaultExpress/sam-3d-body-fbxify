@@ -442,45 +442,65 @@ class MHRTracker(TrackletTracker):
         self,
         tracklet: Tracklet,
         config: TrackingConfig,
+        from_start: bool = False,
+        max_frames_override: Optional[int] = None,
+        min_frames_override: Optional[int] = None,
     ) -> Optional[List[float]]:
+        """Spike-removed weighted average of shape_params over a tracklet window.
+
+        Args:
+            from_start: When False (default), collect from the most recent
+                detections (last-N). When True, collect from the earliest
+                detections (first-N) -- used for the candidate side of merges.
+            max_frames_override: If set and > 0, use this window instead of
+                ``config.shape_avg_max_frames``.  0 or None falls back to config.
+            min_frames_override: If set, use this as the minimum required frames
+                instead of ``config.shape_maturity_frames``.
         """
-        Spike-removed weighted average of shape_params over the track's recent detections.
-        Used for matching only when track is mature (>= shape_maturity_frames).
-        Returns None if not enough data or shape params missing.
-        """
-        maturity = getattr(config, "shape_maturity_frames", 20)
-        max_frames = getattr(config, "shape_avg_max_frames", 50)
+        min_frames = (
+            min_frames_override
+            if min_frames_override is not None
+            else getattr(config, "shape_maturity_frames", 20)
+        )
+        max_frames = (
+            max_frames_override
+            if max_frames_override is not None and max_frames_override > 0
+            else getattr(config, "shape_avg_max_frames", 50)
+        )
         mad_factor = getattr(config, "shape_spike_mad_factor", 3.0)
         decay = getattr(config, "shape_avg_weight_decay", 0.98)
 
-        # Collect shape_params from most recent detections
+        # max_frames <= 0 means use the entire tracklet
+        use_all = max_frames <= 0
+
+        source = tracklet.detections if from_start else reversed(tracklet.detections)
         shapes: List[np.ndarray] = []
-        for det in reversed(tracklet.detections):
-            if len(shapes) >= max_frames:
+        for det in source:
+            if not use_all and len(shapes) >= max_frames:
                 break
             if det.shape_params is not None and len(det.shape_params) > 0:
                 shapes.append(np.array(det.shape_params, dtype=np.float32))
-        shapes.reverse()  # oldest first
 
-        if len(shapes) < maturity:
+        if from_start:
+            pass  # already oldest-first
+        else:
+            shapes.reverse()  # oldest first
+
+        if len(shapes) < min_frames:
             return None
         stack = np.stack(shapes, axis=0)
-        # Per-component median
         median_shape = np.median(stack, axis=0)
-        # L1 distance of each frame to median (mean abs diff per row)
         dists = np.mean(np.abs(stack - median_shape), axis=1)
         median_d = np.median(dists)
         mad_d = np.median(np.abs(dists - median_d))
         if mad_d <= 1e-9:
             mad_d = 1e-9
-        # Keep frames within median_d + mad_factor * MAD
         threshold = median_d + mad_factor * mad_d
         keep = dists <= threshold
         if not np.any(keep):
             keep = np.ones(len(dists), dtype=bool)
         stack = stack[keep]
         n = len(stack)
-        # Weights: newest = 1.0, older = decay^1, decay^2, ...
         weights = np.array([decay ** (n - 1 - i) for i in range(n)], dtype=np.float32)
         weights /= weights.sum()
         avg_shape = np.average(stack, axis=0, weights=weights)
@@ -585,6 +605,91 @@ class MHRTracker(TrackletTracker):
                 return 0.0, breakdown
         return total, breakdown
 
+    def _merge_similarity(
+        self,
+        base: Tracklet,
+        candidate: Tracklet,
+        config: TrackingConfig,
+    ) -> float:
+        """Similarity for the merge path: uses windowed shape averages on both sides.
+
+        Shape: last-N avg of *base* vs first-N avg of *candidate*.
+        Cam/pose/iou: single-point (base.last vs candidate.first) since
+        spatial proximity only needs the boundary frames.
+        """
+        a = base.last_detection
+        b = candidate.detections[0]
+        if a is None or b is None:
+            return 0.0
+
+        win_base = int(getattr(config, "merge_shape_window_base", 0) or 0)
+        win_cand = int(getattr(config, "merge_shape_window_candidate", 0) or 0)
+        win_b = win_base if win_base > 0 else None   # None = fall back to config default
+        win_c = win_cand if win_cand > 0 else None
+        merge_min_b = max(3, win_base) if win_base > 0 else 3
+        merge_min_c = max(3, win_cand) if win_cand > 0 else 3
+
+        total_weight = 0.0
+        score = 0.0
+
+        maturity = getattr(config, "shape_maturity_frames", 20)
+        tracklet_age = len(base.detections)
+        use_shape = config.use_shape_params and tracklet_age >= maturity
+
+        if config.use_shape_params and use_shape:
+            shape_a = self._track_shape_average(
+                base, config, from_start=False,
+                max_frames_override=win_b, min_frames_override=merge_min_b,
+            )
+            shape_b = self._track_shape_average(
+                candidate, config, from_start=True,
+                max_frames_override=win_c, min_frames_override=merge_min_c,
+            )
+            shape_a = shape_a if shape_a is not None else a.shape_params
+            shape_b = shape_b if shape_b is not None else b.shape_params
+            dist = mean_abs_diff(shape_a, shape_b)
+            sim = similarity_from_distance(dist, config.shape_distance_threshold)
+            score += config.shape_weight * sim
+            total_weight += config.shape_weight
+
+        if config.use_pred_cam_t:
+            dist = l2_distance(a.pred_cam_t, b.pred_cam_t)
+            sim = similarity_from_distance(dist, config.cam_distance_threshold)
+            score += config.cam_weight * sim
+            total_weight += config.cam_weight
+
+        if config.use_pose_aux:
+            dist = mean_abs_diff(a.pred_global_rots, b.pred_global_rots)
+            sim = similarity_from_distance(dist, config.pose_distance_threshold)
+            score += config.pose_weight * sim
+            total_weight += config.pose_weight
+
+        if config.use_bbox_iou:
+            iou = bbox_iou_xywh(a.bbox_xywh, b.bbox_xywh)
+            sim = iou if iou is not None else 0.0
+            score += config.iou_weight * sim
+            total_weight += config.iou_weight
+
+        if total_weight <= 0:
+            return 0.0
+        total = score / total_weight
+
+        min_cam = getattr(config, "min_cam_similarity", 0.0)
+        if config.use_pred_cam_t and min_cam > 0:
+            cam_dist = l2_distance(a.pred_cam_t, b.pred_cam_t)
+            cam_sim = similarity_from_distance(cam_dist, config.cam_distance_threshold)
+            if cam_sim < min_cam:
+                return 0.0
+
+        min_pose = getattr(config, "min_pose_similarity", 0.0)
+        if config.use_pose_aux and min_pose > 0:
+            pose_dist = mean_abs_diff(a.pred_global_rots, b.pred_global_rots)
+            pose_sim = similarity_from_distance(pose_dist, config.pose_distance_threshold)
+            if pose_sim < min_pose:
+                return 0.0
+
+        return total
+
     def _merge_tracklets(self, tracklets: List[Tracklet], config: TrackingConfig) -> List[Tracklet]:
         if not tracklets:
             return tracklets
@@ -604,14 +709,7 @@ class MHRTracker(TrackletTracker):
                     continue
                 if gap > config.merge_max_gap_frames:
                     break
-                tracklet_age = len(base.detections)
-                score = self._similarity(
-                    base.last_detection,
-                    candidate.detections[0],
-                    config,
-                    tracklet_age=tracklet_age,
-                    tracklet=base,
-                )
+                score = self._merge_similarity(base, candidate, config)
                 if score >= best_score:
                     best_score = score
                     best_idx = j

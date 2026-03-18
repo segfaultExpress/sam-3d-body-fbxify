@@ -99,6 +99,145 @@ def _pred_cam_z(det: Detection) -> Optional[float]:
     return z
 
 
+def _pred_cam_t_vec(det: Detection) -> Optional[np.ndarray]:
+    t = det.pred_cam_t
+    if t is None or len(t) < 3:
+        return None
+    try:
+        v = np.array([float(t[0]), float(t[1]), float(t[2])], dtype=np.float64)
+    except Exception:
+        return None
+    if not np.isfinite(v).all():
+        return None
+    return v
+
+
+def _score_trajectory(tracklet: Tracklet, min_frames: int) -> Optional[Dict[str, float]]:
+    """Trajectory linearity and speed analysis for a single tracklet.
+
+    Background walkers move in straight lines at steady speed; foreground
+    subjects are stationary or move erratically.
+
+    Returns dict with ``linearity``, ``mean_speed``, ``speed_cv``, and the
+    combined ``term`` (higher = more likely foreground), or *None* if not
+    enough data.
+    """
+    positions = []
+    for det in tracklet.detections:
+        v = _pred_cam_t_vec(det)
+        if v is not None:
+            positions.append(v)
+    if len(positions) < max(min_frames, 3):
+        return None
+
+    arr = np.stack(positions, axis=0)
+    deltas = np.diff(arr, axis=0)
+    step_lengths = np.linalg.norm(deltas, axis=1)
+    total_path = float(np.sum(step_lengths))
+    net_disp = float(np.linalg.norm(arr[-1] - arr[0]))
+
+    linearity = net_disp / max(total_path, 1e-9) if total_path > 1e-9 else 0.0
+    mean_speed = float(np.mean(step_lengths))
+    speed_std = float(np.std(step_lengths))
+    speed_cv = speed_std / max(mean_speed, 1e-9) if mean_speed > 1e-9 else 0.0
+
+    # Foreground: low linearity (stays in place), or high speed_cv (erratic)
+    # Background: high linearity (straight walk), low speed_cv (steady pace)
+    # term in [0, 1] where higher = more likely foreground
+    lin_fg = 1.0 - linearity
+    cv_fg = min(1.0, speed_cv)  # cap at 1; higher cv is more foreground-like
+    term = float(0.6 * lin_fg + 0.4 * cv_fg)
+
+    return {
+        "linearity": round(linearity, 4),
+        "mean_speed": round(mean_speed, 6),
+        "speed_cv": round(speed_cv, 4),
+        "term": round(term, 4),
+    }
+
+
+def _score_spatial_occupancy(tracklet: Tracklet) -> Optional[Dict[str, float]]:
+    """3D spatial occupancy for a single tracklet.
+
+    Foreground subjects occupy a small, persistent 3D region; background
+    walkers traverse a large spatial extent.
+
+    Uses ``max_extent`` (largest axis range of pred_cam_t bounding box)
+    rather than volume, which degenerates when motion is along a single
+    axis.
+
+    Returns dict with ``max_extent``, ``depth_std``, and the combined
+    ``term``, or *None* if not enough data.
+    """
+    positions = []
+    for det in tracklet.detections:
+        v = _pred_cam_t_vec(det)
+        if v is not None:
+            positions.append(v)
+    if len(positions) < 3:
+        return None
+
+    arr = np.stack(positions, axis=0)
+    mins = arr.min(axis=0)
+    maxs = arr.max(axis=0)
+    extents = maxs - mins  # (dx, dy, dz)
+    max_extent = float(np.max(extents))
+    depth_std = float(np.std(arr[:, 2]))
+
+    # Spatial compactness: foreground has small max_extent.
+    # sigmoid centered at 1.0 camera-unit: extent << 1 → ~1.0, extent >> 1 → ~0.0
+    compact_term = float(1.0 / (1.0 + np.exp(3.0 * (max_extent - 1.0))))
+
+    # Low depth_std is foreground-like
+    depth_term = float(np.exp(-2.0 * depth_std))
+
+    term = float(0.5 * compact_term + 0.5 * depth_term)
+
+    return {
+        "max_extent": round(max_extent, 4),
+        "depth_std": round(depth_std, 4),
+        "term": round(term, 4),
+    }
+
+
+def _score_perspective_consistency(tracklet: Tracklet) -> Optional[Dict[str, float]]:
+    """Depth-size perspective consistency for a single tracklet.
+
+    For a real person, ``bbox_height * pred_cam_t[2]`` (the depth-size
+    product) should be roughly constant across frames (pinhole camera
+    model).  Noisy background estimates break this relationship.
+
+    Returns dict with ``dsp_mean``, ``dsp_cv``, and ``term``, or *None*
+    if not enough data.
+    """
+    products = []
+    for det in tracklet.detections:
+        z = _pred_cam_z(det)
+        bb = _bbox_xywh(det)
+        if z is None or bb is None:
+            continue
+        _, _, _, h = bb
+        if h <= 0 or z <= 0:
+            continue
+        products.append(float(h * z))
+    if len(products) < 3:
+        return None
+
+    arr = np.array(products, dtype=np.float64)
+    mean_dsp = float(np.mean(arr))
+    std_dsp = float(np.std(arr))
+    cv = std_dsp / max(mean_dsp, 1e-9)
+
+    # Low CV = consistent = foreground.  k=5 gives reasonable decay.
+    term = float(np.exp(-5.0 * cv))
+
+    return {
+        "dsp_mean": round(mean_dsp, 4),
+        "dsp_cv": round(cv, 4),
+        "term": round(term, 4),
+    }
+
+
 def _sigmoid(x: float) -> float:
     x = float(x)
     if x >= 60:
@@ -470,19 +609,30 @@ def score_tracklets(
         spread = float(med_d + (3.0 * mad_d))
         frame_center[fi] = (cx, cy, spread)
 
-    # Weights
+    # Weights (original 4 + 3 new; normalized together)
     w_len = float(getattr(config, "bg_w_length", 0.45) or 0.0)
     w_size = float(getattr(config, "bg_w_size", 0.25) or 0.0)
     w_stab = float(getattr(config, "bg_w_size_stability", 0.15) or 0.0)
     w_cent = float(getattr(config, "bg_w_centering", 0.15) or 0.0)
-    w_sum = w_len + w_size + w_stab + w_cent
+    w_traj = float(getattr(config, "bg_w_trajectory", 0.0) or 0.0)
+    w_spat = float(getattr(config, "bg_w_spatial_occupancy", 0.0) or 0.0)
+    w_persp = float(getattr(config, "bg_w_perspective", 0.0) or 0.0)
+    w_sum = w_len + w_size + w_stab + w_cent + w_traj + w_spat + w_persp
     if w_sum <= 1e-9:
         w_len, w_size, w_stab, w_cent = 1.0, 0.0, 0.0, 0.0
+        w_traj, w_spat, w_persp = 0.0, 0.0, 0.0
         w_sum = 1.0
     w_len /= w_sum
     w_size /= w_sum
     w_stab /= w_sum
     w_cent /= w_sum
+    w_traj /= w_sum
+    w_spat /= w_sum
+    w_persp /= w_sum
+
+    traj_min = int(getattr(config, "bg_trajectory_min_frames", 10) or 0)
+    spatial_max_ext = float(getattr(config, "bg_spatial_max_extent", 0.0) or 0.0)
+    persp_cv_thr = float(getattr(config, "bg_perspective_cv_threshold", 0.0) or 0.0)
 
     # Length saturation constant
     tau = float(max(30, min_frames * 3, 60))
@@ -529,19 +679,58 @@ def score_tracklets(
         else:
             cent_term = 0.5
 
-        raw = (w_len * len_term) + (w_size * size_term) + (w_stab * stab_term) + (w_cent * cent_term)
+        # Trajectory term
+        traj_info = _score_trajectory(t, traj_min) if w_traj > 0 else None
+        traj_term = traj_info["term"] if traj_info is not None else 0.5
+
+        # Spatial occupancy term
+        spat_info = _score_spatial_occupancy(t) if w_spat > 0 else None
+        spat_term = spat_info["term"] if spat_info is not None else 0.5
+
+        # Perspective consistency term
+        persp_info = _score_perspective_consistency(t) if w_persp > 0 else None
+        persp_term = persp_info["term"] if persp_info is not None else 0.5
+
+        raw = (
+            (w_len * len_term)
+            + (w_size * size_term)
+            + (w_stab * stab_term)
+            + (w_cent * cent_term)
+            + (w_traj * traj_term)
+            + (w_spat * spat_term)
+            + (w_persp * persp_term)
+        )
+
+        # Hard cutoffs (set score to 0 when exceeded, before short-track penalty)
+        if spatial_max_ext > 0 and spat_info is not None:
+            if spat_info["max_extent"] > spatial_max_ext:
+                raw = 0.0
+        if persp_cv_thr > 0 and persp_info is not None:
+            if persp_info["dsp_cv"] > persp_cv_thr:
+                raw = 0.0
 
         # Penalize very short tracklets
         if min_frames > 0 and length < float(min_frames):
             raw *= float(max(0.0, length / float(min_frames)))
 
-        breakdown = {
+        breakdown: Dict[str, float] = {
             "length": round(len_term, 4),
             "size": round(size_term, 4),
             "size_stability": round(stab_term, 4),
             "centering": round(cent_term, 4),
-            "score": round(float(raw), 4),
         }
+        if traj_info is not None:
+            breakdown["trajectory"] = round(traj_term, 4)
+            breakdown["trajectory_linearity"] = traj_info["linearity"]
+            breakdown["trajectory_speed_cv"] = traj_info["speed_cv"]
+        if spat_info is not None:
+            breakdown["spatial_occupancy"] = round(spat_term, 4)
+            breakdown["spatial_max_extent"] = spat_info["max_extent"]
+            breakdown["spatial_depth_std"] = spat_info["depth_std"]
+        if persp_info is not None:
+            breakdown["perspective"] = round(persp_term, 4)
+            breakdown["perspective_dsp_cv"] = persp_info["dsp_cv"]
+        breakdown["score"] = round(float(raw), 4)
         scored.append((t, float(raw), breakdown))
 
     scored.sort(key=lambda x: x[1], reverse=True)

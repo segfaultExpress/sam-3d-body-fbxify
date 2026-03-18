@@ -38,12 +38,17 @@ class TrackingConfig:
     high_shape_threshold: float = 0.95
 
     # Mature-track shape: spike-removed weighted average over recent detections
-    # Max number of detections to use for track shape average (most recent)
+    # Max number of detections to use for track shape average (most recent). 0 = use entire tracklet.
     shape_avg_max_frames: int = 50
     # Exclude frames whose L1 distance to median shape > median_dist + this * MAD (outlier removal)
     shape_spike_mad_factor: float = 3.0
     # Exponential weight decay per frame going back in time (1.0 = most recent, decay^1 = one frame back)
     shape_avg_weight_decay: float = 0.98
+    # Merge shape windows: how many frames from each boundary to average when
+    # comparing tracklets for merging. 0 = fall back to shape_avg_max_frames.
+    # Split into base (last-N) and candidate (first-N) so the agent can tune independently.
+    merge_shape_window_base: int = 0
+    merge_shape_window_candidate: int = 0
 
     # Weights for similarity score
     shape_weight: float = 0.5
@@ -98,6 +103,18 @@ class TrackingConfig:
     bg_w_size: float = 0.25
     bg_w_size_stability: float = 0.15
     bg_w_centering: float = 0.15
+
+    # Trajectory linearity & speed (background walkers move in straight lines at steady speed)
+    bg_w_trajectory: float = 0.0
+    bg_trajectory_min_frames: int = 10
+
+    # 3D spatial occupancy volume (foreground stays in a small 3D region)
+    bg_w_spatial_occupancy: float = 0.0
+    bg_spatial_max_extent: float = 0.0  # hard cutoff on max axis extent; 0 disables
+
+    # Depth-size perspective consistency (bbox_h * z should be constant for real subjects)
+    bg_w_perspective: float = 0.0
+    bg_perspective_cv_threshold: float = 0.0  # hard cutoff on CV; 0 disables
 
     # Auto ROI (computed, not user-provided)
     bg_auto_roi_enabled: bool = False
