@@ -50,11 +50,12 @@ if "%RUN_WITH_LOCAL%"=="1" (
   REM Mount full repo for local dev
   docker run --rm -it --gpus all --shm-size=8g ^
     -e HF_TOKEN=your_hf_token_here ^
+    -e CHECKPOINTS_DIR=/fbxify/checkpoints ^
     -p 7444:7444 ^
     -v "%REPO_DIR%":/fbxify ^
-    -v "%REPO_DIR%\cache\videt_checkpoint":/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692 ^
-    -v "%REPO_DIR%\cache\hf_cache":/root/.cache/huggingface ^
-    -v "%REPO_DIR%\cache\mhr_assets":/fbxify/cache/mhr_assets ^
+    -v "%CACHE_DIR%\videt_checkpoint":/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692 ^
+    -v "%CACHE_DIR%\hf_cache":/root/.cache/huggingface ^
+    -v "%CACHE_DIR%\mhr_assets":/fbxify/cache/mhr_assets ^
     %IMAGE_NAME% ./start_server.sh
 ) else (
   REM Use image code; mount only checkpoints and cache
