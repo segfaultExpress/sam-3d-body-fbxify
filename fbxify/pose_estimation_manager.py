@@ -25,7 +25,6 @@ from datetime import datetime
 from typing import Dict, List, Optional, Tuple, Any
 import threading
 
-
 def _safe_len(obj):
     """len() that handles 0-d numpy arrays gracefully."""
     if isinstance(obj, np.ndarray) and obj.ndim == 0:
@@ -680,8 +679,8 @@ class PoseEstimationManager:
                 tqdm_bar.update(1)
                 continue
             bboxes = bbox_dict[frame_index + 1] if bbox_dict and (frame_index + 1) in bbox_dict else None
-            if bboxes is None:
-                # No detection in estimation loop; missing frames get empty result or skip
+            if bboxes is None or _safe_len(bboxes) == 0:
+                # are there no bboxes for this batch? fade-to-black, landscape shot, etc.
                 estimation_results[str(frame_index)] = {}
                 tqdm_bar.update(1)
                 continue
