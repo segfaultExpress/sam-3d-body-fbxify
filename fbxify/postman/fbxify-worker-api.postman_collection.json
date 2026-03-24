@@ -1,14 +1,15 @@
 {
   "info": {
     "name": "Fbxify Worker API",
-    "description": "Test the fbxify worker API (pose, FBX, detection, tracking). Set `base_url` in collection or environment (e.g. http://localhost:8000). Optional: set `api_key` if FBXIFY_SHARED_SECRET is configured.",
+    "description": "Test the fbxify worker API (pose, FBX, detection, tracking, mounts). Set `base_url` in collection or environment (e.g. http://localhost:8000). Optional: set `api_key` if FBXIFY_SHARED_SECRET is configured.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
     { "key": "base_url", "value": "http://localhost:8000" },
     { "key": "api_key", "value": "" },
     { "key": "job_id", "value": "" },
-    { "key": "filename", "value": "pose_outputs_xxxxxxxx.json" }
+    { "key": "filename", "value": "pose_outputs_xxxxxxxx.json" },
+    { "key": "mount_id", "value": "" }
   ],
   "auth": {
     "type": "noauth"
@@ -24,6 +25,69 @@
       }
     },
     {
+      "name": "Mounts",
+      "description": "Persistent file storage. Upload large files once, then reference them by mount_id in job endpoints to skip re-uploading.",
+      "item": [
+        {
+          "name": "Mount File",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var data = pm.response.json();",
+                  "    pm.collectionVariables.set('mount_id', data.mount_id);",
+                  "    console.log('Saved mount_id: ' + data.mount_id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+              { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file", "src": "", "description": "File to mount (e.g. estimation.json, video). Streamed in 8 MB chunks." }
+              ]
+            },
+            "url": "{{base_url}}/mount",
+            "description": "Upload a file to persistent mount storage. Returns mount_id which can be passed to job endpoints instead of re-uploading. The mount_id is automatically saved to the collection variable {{mount_id}}."
+          }
+        },
+        {
+          "name": "List Mounts",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+              { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+            ],
+            "url": "{{base_url}}/mounts",
+            "description": "List all currently mounted files. Returns array of {mount_id, filename, size_bytes, created_at}."
+          }
+        },
+        {
+          "name": "Delete Mount",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+              { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+            ],
+            "url": "{{base_url}}/mounts/{{mount_id}}",
+            "description": "Remove a single mounted file. Set {{mount_id}} to the mount to delete. Returns 404 if not found."
+          }
+        }
+      ]
+    },
+    {
       "name": "Create Pose Job",
       "request": {
         "method": "POST",
@@ -34,7 +98,8 @@
         "body": {
           "mode": "formdata",
           "formdata": [
-            { "key": "input_file", "type": "file", "src": "", "description": "Image or video (required)" },
+            { "key": "input_file", "type": "file", "src": "", "description": "Image or video. Required unless input_mount_id is set." },
+            { "key": "input_mount_id", "value": "", "type": "text", "disabled": true, "description": "Mount ID from POST /mount. Use instead of input_file to skip upload." },
             { "key": "bbox_file", "type": "file", "src": "", "description": "Optional CSV bboxes" },
             { "key": "fov_file", "type": "file", "src": "", "description": "Optional FOV file" },
             { "key": "tracking_mode", "value": "count", "type": "text" },
@@ -50,7 +115,35 @@
           ]
         },
         "url": "{{base_url}}/jobs/pose",
-        "description": "Submit image/video for pose estimation. Returns job_id. Enable Authorization/X-API-Key header if using FBXIFY_SHARED_SECRET."
+        "description": "Submit image/video for pose estimation. Provide either input_file (upload) or input_mount_id (from POST /mount), not both. Returns job_id."
+      }
+    },
+    {
+      "name": "Create Pose Job (mounted)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+          { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "input_mount_id", "value": "{{mount_id}}", "type": "text", "description": "Mount ID from POST /mount." },
+            { "key": "tracking_mode", "value": "count", "type": "text" },
+            { "key": "num_people", "value": "1", "type": "text" },
+            { "key": "missing_bbox_behavior", "value": "Run Detection", "type": "text" },
+            { "key": "fov_method", "value": "Default", "type": "text" },
+            { "key": "sample_number", "value": "1", "type": "text" },
+            { "key": "precision", "value": "fp32", "type": "text" },
+            { "key": "output_tracking_bbox", "value": "false", "type": "text" },
+            { "key": "frame_batch_size", "value": "1", "type": "text" },
+            { "key": "detection_batch_size", "value": "1", "type": "text" },
+            { "key": "lang", "value": "en", "type": "text" }
+          ]
+        },
+        "url": "{{base_url}}/jobs/pose",
+        "description": "Pose estimation using a previously mounted file. No file upload needed -- uses {{mount_id}} from the Mounts folder. Mount the file first via POST /mount."
       }
     },
     {
@@ -64,7 +157,8 @@
         "body": {
           "mode": "formdata",
           "formdata": [
-            { "key": "pose_json_file", "type": "file", "src": "", "description": "Pose estimation JSON (required)" },
+            { "key": "pose_json_file", "type": "file", "src": "", "description": "Pose estimation JSON. Required unless pose_json_mount_id is set." },
+            { "key": "pose_json_mount_id", "value": "", "type": "text", "disabled": true, "description": "Mount ID from POST /mount. Use instead of pose_json_file to skip upload." },
             { "key": "profile_name", "value": "mhr", "type": "text" },
             { "key": "use_root_motion", "value": "true", "type": "text" },
             { "key": "auto_floor", "value": "true", "type": "text" },
@@ -88,7 +182,45 @@
           ]
         },
         "url": "{{base_url}}/jobs/fbx",
-        "description": "Convert pose JSON to FBX. Use pose_outputs_*.json from a completed pose job."
+        "description": "Convert pose JSON to FBX. Provide either pose_json_file (upload) or pose_json_mount_id (from POST /mount), not both."
+      }
+    },
+    {
+      "name": "Create FBX Job (mounted)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+          { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "pose_json_mount_id", "value": "{{mount_id}}", "type": "text", "description": "Mount ID from POST /mount." },
+            { "key": "profile_name", "value": "mhr", "type": "text" },
+            { "key": "use_root_motion", "value": "true", "type": "text" },
+            { "key": "auto_floor", "value": "true", "type": "text" },
+            { "key": "include_mesh", "value": "false", "type": "text" },
+            { "key": "include_extrinsics", "value": "false", "type": "text" },
+            { "key": "extrinsics_sample_rate", "value": "0", "type": "text" },
+            { "key": "extrinsics_scale", "value": "0.0", "type": "text" },
+            { "key": "extrinsics_invert_quaternion", "value": "false", "type": "text" },
+            { "key": "extrinsics_invert_translation", "value": "false", "type": "text" },
+            { "key": "create_camera", "value": "false", "type": "text" },
+            { "key": "camera_zoom", "value": "0.0", "type": "text" },
+            { "key": "use_personalized_body", "value": "false", "type": "text" },
+            { "key": "lod", "value": "-1", "type": "text" },
+            { "key": "outlier_removal_percent", "value": "10.0", "type": "text" },
+            { "key": "export_personalized_body_obj", "value": "false", "type": "text" },
+            { "key": "graph_refinement", "value": "false", "type": "text" },
+            { "key": "lang", "value": "en", "type": "text" },
+            { "key": "extrinsics_file", "type": "file", "src": "", "description": "Optional" },
+            { "key": "camera_scene", "type": "file", "src": "", "description": "Optional" },
+            { "key": "refinement_config", "type": "file", "src": "", "description": "Optional" }
+          ]
+        },
+        "url": "{{base_url}}/jobs/fbx",
+        "description": "FBX generation using a previously mounted estimation JSON. No file upload needed -- uses {{mount_id}}. Mount the file first via POST /mount."
       }
     },
     {
@@ -121,14 +253,36 @@
         "body": {
           "mode": "formdata",
           "formdata": [
-            { "key": "estimation_file", "type": "file", "src": "", "description": "Pose estimation JSON (required)" },
-            { "key": "tracking_config_file", "type": "file", "src": "", "description": "Optional tracking config JSON file (same pattern as estimation_file)" },
+            { "key": "estimation_file", "type": "file", "src": "", "description": "Pose estimation JSON. Required unless estimation_mount_id is set." },
+            { "key": "estimation_mount_id", "value": "", "type": "text", "disabled": true, "description": "Mount ID from POST /mount. Use instead of estimation_file to skip upload." },
+            { "key": "tracking_config_file", "type": "file", "src": "", "description": "Optional tracking config JSON file" },
             { "key": "step_through", "value": "false", "type": "text" },
             { "key": "debug_start_frame", "value": "0", "type": "text" }
           ]
         },
         "url": "{{base_url}}/jobs/rerun_tracking",
-        "description": "Rerun tracking on existing estimation JSON. Pass tracking_config_file as JSON file (same as estimation_file). Omit for defaults."
+        "description": "Rerun tracking on existing estimation JSON. Provide either estimation_file (upload) or estimation_mount_id (from POST /mount), not both."
+      }
+    },
+    {
+      "name": "Rerun Tracking (mounted)",
+      "request": {
+        "method": "POST",
+        "header": [
+          { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+          { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+        ],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            { "key": "estimation_mount_id", "value": "{{mount_id}}", "type": "text", "description": "Mount ID from POST /mount." },
+            { "key": "tracking_config_file", "type": "file", "src": "", "description": "Optional tracking config JSON file" },
+            { "key": "step_through", "value": "false", "type": "text" },
+            { "key": "debug_start_frame", "value": "0", "type": "text" }
+          ]
+        },
+        "url": "{{base_url}}/jobs/rerun_tracking",
+        "description": "Rerun tracking using a previously mounted estimation JSON. No file upload needed -- uses {{mount_id}}. Mount the file first via POST /mount. Ideal for iterating on tracking parameters without re-uploading."
       }
     },
     {
@@ -179,11 +333,12 @@
         "body": {
           "mode": "urlencoded",
           "urlencoded": [
-            { "key": "max_age_hours", "value": "0", "type": "text", "description": "0 = flush all completed/failed jobs; >0 = only older than N hours" }
+            { "key": "max_age_hours", "value": "0", "type": "text", "description": "0 = flush all completed/failed jobs; >0 = only older than N hours" },
+            { "key": "unmount_all", "value": "false", "type": "text", "description": "Set to true to also remove ALL mounted files. Default false -- mounts are preserved." }
           ]
         },
         "url": "{{base_url}}/cleanup",
-        "description": "Remove temp artifacts for completed/failed jobs and orphaned temp dirs. max_age_hours=0 flushes everything; >0 only flushes dirs older than N hours. Running jobs are never touched."
+        "description": "Remove temp artifacts for completed/failed jobs and orphaned temp dirs. max_age_hours=0 flushes everything; >0 only flushes dirs older than N hours. Running jobs are never touched. Set unmount_all=true to also remove all mounted files (default: false, mounts are preserved)."
       }
     },
     {
@@ -195,7 +350,7 @@
           { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
         ],
         "url": "{{base_url}}/storage",
-        "description": "Report disk usage for /tmp and counts/sizes of fbxify temp artifacts (frame dirs, job dirs, active/done jobs)."
+        "description": "Report disk usage for /tmp, counts/sizes of fbxify temp artifacts, and mounted file stats (mounts_count, mounts_total_gb, mounts_dir)."
       }
     },
     {

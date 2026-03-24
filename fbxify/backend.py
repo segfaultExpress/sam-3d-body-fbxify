@@ -509,13 +509,16 @@ class RemoteBackend:
         detection_batch_size: Any,
         lang: str,
         progress_callback: Optional[callable] = None,
+        input_mount_id: Optional[str] = None,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         import requests
         import gradio as gr
 
         try:
             files = {}
-            if input_file:
+            if input_mount_id:
+                pass  # skip file upload; mount_id sent in payload
+            elif input_file:
                 files["input_file"] = (os.path.basename(getattr(input_file, "name", str(input_file)) or "input"), open(getattr(input_file, "name", input_file), "rb"))
             if bbox_file:
                 files["bbox_file"] = (os.path.basename(getattr(bbox_file, "name", str(bbox_file)) or "bbox"), open(getattr(bbox_file, "name", bbox_file), "rb"))
@@ -524,7 +527,7 @@ class RemoteBackend:
 
             if isinstance(tracking_mode, list):
                 tracking_mode = tracking_mode[0] if tracking_mode else "count"
-            payload = {
+            payload: Dict[str, Any] = {
                 "tracking_mode": tracking_mode,
                 "num_people": int(num_people) if num_people else 1,
                 "missing_bbox_behavior": missing_bbox_behavior or "Run Detection",
@@ -536,6 +539,8 @@ class RemoteBackend:
                 "detection_batch_size": int(detection_batch_size) if detection_batch_size else 1,
                 "lang": lang,
             }
+            if input_mount_id:
+                payload["input_mount_id"] = input_mount_id
             if tracking_config is not None:
                 tc = tracking_config.to_dict() if hasattr(tracking_config, "to_dict") else tracking_config
                 payload["tracking_config"] = json.dumps(tc) if not isinstance(tc, str) else tc
@@ -613,14 +618,19 @@ class RemoteBackend:
         refinement_config: Any,
         lang: str,
         progress_callback: Optional[callable] = None,
+        pose_json_mount_id: Optional[str] = None,
     ) -> Tuple[Optional[List], Any, Any]:
         import requests
         import gradio as gr
 
         try:
-            json_path = pose_json_file.name if hasattr(pose_json_file, "name") else pose_json_file
-            files = {"pose_json_file": (os.path.basename(json_path), open(json_path, "rb"))}
-            payload = {
+            files: Dict[str, Any] = {}
+            if pose_json_mount_id:
+                pass  # skip file upload; mount_id sent in payload
+            else:
+                json_path = pose_json_file.name if hasattr(pose_json_file, "name") else pose_json_file
+                files["pose_json_file"] = (os.path.basename(json_path), open(json_path, "rb"))
+            payload: Dict[str, Any] = {
                 "profile_name": profile_name,
                 "use_root_motion": use_root_motion,
                 "auto_floor": auto_floor,
@@ -639,6 +649,8 @@ class RemoteBackend:
                 "graph_refinement": bool(graph_refinement),
                 "lang": lang,
             }
+            if pose_json_mount_id:
+                payload["pose_json_mount_id"] = pose_json_mount_id
             if extrinsics_file:
                 files["extrinsics_file"] = (os.path.basename(getattr(extrinsics_file, "name", extrinsics_file)), open(getattr(extrinsics_file, "name", extrinsics_file), "rb"))
             if camera_scene:
@@ -699,7 +711,11 @@ class RemoteBackend:
                         output_files.append(local_path)
                     break
                 elif data.get("status") == "failed":
-                    raise RuntimeError(data.get("error", "Job failed"))
+                    err = data.get("error", "Job failed")
+                    tb = data.get("traceback")
+                    if tb:
+                        err = f"{err}\n\nWorker traceback:\n{tb}"
+                    raise RuntimeError(err)
                 if progress_callback:
                     progress_callback(data.get("progress", 0) / 100.0, data.get("message", "Processing..."))
 
@@ -758,34 +774,47 @@ class RemoteBackend:
         step_through: Any,
         debug_start_frame: Any,
         tracking_config_params: Dict[str, Any],
+        estimation_mount_id: Optional[str] = None,
     ) -> Tuple[Any, Any, Optional[str], Any]:
         import requests
         import gradio as gr
 
-        if not estimation_file:
+        if not estimation_file and not estimation_mount_id:
             return (gr.update(), gr.update(), None, gr.update())
-        path = estimation_file[0] if isinstance(estimation_file, list) else (estimation_file.name if hasattr(estimation_file, "name") else estimation_file)
-        if not path or not os.path.isfile(path):
-            return (gr.update(), gr.update(), None, gr.update())
+
         try:
             import io
-            with open(path, "rb") as f:
-                files = {"estimation_file": (os.path.basename(path), f)}
-                tc_bytes = json.dumps(tracking_config_params).encode("utf-8")
-                files["tracking_config_file"] = ("tracking_config.json", io.BytesIO(tc_bytes), "application/json")
-                data = {
-                    "step_through": bool(step_through),
-                    "debug_start_frame": int(debug_start_frame or 0),
-                }
-                r = requests.post(
-                    f"{self.base_url}/jobs/rerun_tracking",
-                    data=data,
-                    files=files,
-                    headers=self._headers(),
-                    timeout=300,
-                )
+            files: Dict[str, Any] = {}
+            data: Dict[str, Any] = {
+                "step_through": bool(step_through),
+                "debug_start_frame": int(debug_start_frame or 0),
+            }
+
+            if estimation_mount_id:
+                data["estimation_mount_id"] = estimation_mount_id
+            else:
+                path = estimation_file[0] if isinstance(estimation_file, list) else (estimation_file.name if hasattr(estimation_file, "name") else estimation_file)
+                if not path or not os.path.isfile(path):
+                    return (gr.update(), gr.update(), None, gr.update())
+                files["estimation_file"] = (os.path.basename(path), open(path, "rb"))
+
+            tc_bytes = json.dumps(tracking_config_params).encode("utf-8")
+            files["tracking_config_file"] = ("tracking_config.json", io.BytesIO(tc_bytes), "application/json")
+
+            r = requests.post(
+                f"{self.base_url}/jobs/rerun_tracking",
+                data=data,
+                files=files,
+                headers=self._headers(),
+                timeout=300,
+            )
             r.raise_for_status()
             job_id = r.json().get("job_id")
+
+            for fv in files.values():
+                if isinstance(fv, tuple) and hasattr(fv[1], "close"):
+                    fv[1].close()
+
             while True:
                 time.sleep(1)
                 s = requests.get(f"{self.base_url}/jobs/{job_id}", headers=self._headers(), timeout=30)
@@ -812,6 +841,42 @@ class RemoteBackend:
                     raise RuntimeError(d.get("error", "Job failed"))
         except Exception as e:
             raise
+
+    # ── Mount management ──────────────────────────────────────────────
+
+    def mount_file(self, file_path: str) -> str:
+        """Upload *file_path* to the worker's persistent mount storage.
+
+        Returns the ``mount_id`` that can be passed to job endpoints.
+        """
+        import requests
+
+        with open(file_path, "rb") as f:
+            files = {"file": (os.path.basename(file_path), f)}
+            r = requests.post(
+                f"{self.base_url}/mount",
+                files=files,
+                headers=self._headers(),
+                timeout=None,
+            )
+        r.raise_for_status()
+        return r.json()["mount_id"]
+
+    def list_mounts(self) -> list:
+        """Return the list of currently mounted files on the worker."""
+        import requests
+
+        r = requests.get(f"{self.base_url}/mounts", headers=self._headers(), timeout=30)
+        r.raise_for_status()
+        r = requests.delete(
+            f"{self.base_url}/mounts/{mount_id}",
+            headers=self._headers(),
+            timeout=30,
+        )
+        r.raise_for_status()
+        return r.json()
+
+    # ── Cancel ────────────────────────────────────────────────────────
 
     def cancel_current_job(self) -> None:
         import requests

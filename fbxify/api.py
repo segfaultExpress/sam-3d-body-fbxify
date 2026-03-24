@@ -45,6 +45,119 @@ _tracking_manager: Optional[Any] = None
 _jobs: Dict[str, Dict[str, Any]] = {}
 _jobs_lock = threading.Lock()
 
+# Mount storage: mount_id -> {mount_id, filename, path, size_bytes, created_at}
+_mounts: Dict[str, Dict[str, Any]] = {}
+_mounts_lock = threading.Lock()
+
+_MOUNT_CHUNK_SIZE = 8 * 1024 * 1024  # 8 MB streaming write chunks
+
+
+def _get_mounts_dir() -> str:
+    """Return the persistent mounts directory, creating it if needed."""
+    d = os.environ.get("FBXIFY_MOUNTS_DIR", "").strip()
+    if not d:
+        d = "/fbxify/mounts" if os.path.isdir("/fbxify") else os.path.join(os.getcwd(), "fbxify_mounts")
+    os.makedirs(d, exist_ok=True)
+    return d
+
+
+def _init_mounts() -> None:
+    """Scan FBXIFY_MOUNTS_DIR and rebuild the in-memory registry from disk."""
+    mounts_dir = _get_mounts_dir()
+    with _mounts_lock:
+        _mounts.clear()
+        if not os.path.isdir(mounts_dir):
+            return
+        for mount_id in os.listdir(mounts_dir):
+            mount_path = os.path.join(mounts_dir, mount_id)
+            if not os.path.isdir(mount_path):
+                continue
+            files = os.listdir(mount_path)
+            if not files:
+                continue
+            filename = files[0]
+            file_path = os.path.join(mount_path, filename)
+            try:
+                stat = os.stat(file_path)
+                _mounts[mount_id] = {
+                    "mount_id": mount_id,
+                    "filename": filename,
+                    "path": file_path,
+                    "size_bytes": stat.st_size,
+                    "created_at": stat.st_ctime,
+                }
+            except OSError:
+                continue
+    count = len(_mounts)
+    if count:
+        print(f"[mounts] Restored {count} mount(s) from {mounts_dir}")
+
+
+def _lookup_mount(mount_id: str) -> Dict[str, Any]:
+    """Look up a mount by ID; raises HTTPException 404 if not found."""
+    with _mounts_lock:
+        entry = _mounts.get(mount_id)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Mount '{mount_id}' not found")
+    if not os.path.isfile(entry["path"]):
+        with _mounts_lock:
+            _mounts.pop(mount_id, None)
+        raise HTTPException(status_code=404, detail=f"Mount '{mount_id}' file missing from disk")
+    return entry
+
+
+async def _resolve_mount_or_upload(
+    upload: Optional[UploadFile],
+    mount_id: Optional[str],
+    dest_path: str,
+    param_name: str,
+) -> str:
+    """Resolve a file from either an upload or a mount reference.
+
+    Returns the path to use for processing.  When a mount is used the file is
+    symlinked (or copied on Windows) into *dest_path* so job runners see a
+    local file in their output_dir.
+    """
+    has_upload = upload is not None and upload.filename
+    has_mount = mount_id is not None and mount_id.strip()
+
+    if has_upload and has_mount:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Provide either '{param_name}' upload or '{param_name}_mount_id', not both.",
+        )
+    if not has_upload and not has_mount:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Either '{param_name}' upload or '{param_name}_mount_id' is required.",
+        )
+
+    if has_mount:
+        entry = _lookup_mount(mount_id.strip())
+        src = entry["path"]
+        try:
+            os.symlink(src, dest_path)
+        except (OSError, NotImplementedError):
+            shutil.copy2(src, dest_path)
+        return dest_path
+
+    # Normal upload path
+    try:
+        with open(dest_path, "wb") as f:
+            while True:
+                chunk = await upload.read(_MOUNT_CHUNK_SIZE)
+                if not chunk:
+                    break
+                f.write(chunk)
+    except OSError as e:
+        if e.errno == errno.ENOSPC:
+            raise HTTPException(
+                status_code=507,
+                detail="Insufficient storage: disk full. Free disk space or run cleanup and retry.",
+            ) from e
+        raise
+    return dest_path
+
 
 def _get_manager():
     global _manager
@@ -197,10 +310,12 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
             shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception as e:
         traceback.print_exc()
+        tb_str = traceback.format_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
                 _jobs[job_id]["error"] = str(e)
+                _jobs[job_id]["traceback"] = tb_str
                 _jobs[job_id]["message"] = str(e)
         raise
 
@@ -311,10 +426,12 @@ def _run_fbx_job(job_id: str, pose_json_path: str, extras: Dict[str, str], param
             _jobs[job_id]["message"] = "Done"
     except Exception as e:
         traceback.print_exc()
+        tb_str = traceback.format_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
                 _jobs[job_id]["error"] = str(e)
+                _jobs[job_id]["traceback"] = tb_str
                 _jobs[job_id]["message"] = str(e)
         raise
 
@@ -345,10 +462,12 @@ def _run_detection_job(job_id: str, input_path: str, batch_size: int):
             shutil.rmtree(temp_dir, ignore_errors=True)
     except Exception as e:
         traceback.print_exc()
+        tb_str = traceback.format_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
                 _jobs[job_id]["error"] = str(e)
+                _jobs[job_id]["traceback"] = tb_str
         raise
 
 
@@ -407,10 +526,12 @@ def _run_rerun_tracking_job(job_id: str, estimation_path: str, params: Dict[str,
             _jobs[job_id]["output_files"] = [os.path.basename(new_path)]
     except Exception as e:
         traceback.print_exc()
+        tb_str = traceback.format_exc()
         with _jobs_lock:
             if job_id in _jobs:
                 _jobs[job_id]["status"] = "failed"
                 _jobs[job_id]["error"] = str(e)
+                _jobs[job_id]["traceback"] = tb_str
         raise
 
 
@@ -430,6 +551,8 @@ async def file_not_found_handler(request: Request, exc: FileNotFoundError):
 @app.on_event("startup")
 async def startup():
     """Load models on startup. If checkpoints are missing, try HF download (when HF_TOKEN set), else stay in waiting mode."""
+    _init_mounts()
+
     from fbxify.cli_common import checkpoints_available
     from fbxify.checkpoint_download import download_checkpoints_if_missing, download_mhr_assets_if_missing
 
@@ -463,11 +586,92 @@ async def startup():
         print("Upload checkpoints to CHECKPOINTS_DIR, then POST /reload to load models.")
 
 
+@app.post("/mount")
+async def mount_file(
+    _auth: None = Depends(_verify_auth),
+    file: UploadFile = File(...),
+):
+    """Upload a file to persistent mount storage.
+
+    The file is streamed to disk in chunks so even multi-GB uploads stay
+    memory-efficient.  Returns a ``mount_id`` that can be passed to job
+    endpoints in place of a file upload.
+    """
+    import time as _time
+
+    mount_id = uuid.uuid4().hex
+    mounts_dir = _get_mounts_dir()
+    mount_dir = os.path.join(mounts_dir, mount_id)
+    os.makedirs(mount_dir, exist_ok=True)
+
+    filename = file.filename or "uploaded_file"
+    file_path = os.path.join(mount_dir, filename)
+    size = 0
+    try:
+        with open(file_path, "wb") as f:
+            while True:
+                chunk = await file.read(_MOUNT_CHUNK_SIZE)
+                if not chunk:
+                    break
+                f.write(chunk)
+                size += len(chunk)
+    except OSError as e:
+        shutil.rmtree(mount_dir, ignore_errors=True)
+        if e.errno == errno.ENOSPC:
+            raise HTTPException(
+                status_code=507,
+                detail="Insufficient storage: disk full. Free disk space or run cleanup and retry.",
+            ) from e
+        raise
+
+    entry = {
+        "mount_id": mount_id,
+        "filename": filename,
+        "path": file_path,
+        "size_bytes": size,
+        "created_at": _time.time(),
+    }
+    with _mounts_lock:
+        _mounts[mount_id] = entry
+
+    return {"mount_id": mount_id, "filename": filename, "size_bytes": size}
+
+
+@app.get("/mounts")
+async def list_mounts(_auth: None = Depends(_verify_auth)):
+    """List all currently mounted files."""
+    with _mounts_lock:
+        entries = list(_mounts.values())
+    return [
+        {
+            "mount_id": e["mount_id"],
+            "filename": e["filename"],
+            "size_bytes": e["size_bytes"],
+            "created_at": e["created_at"],
+        }
+        for e in entries
+    ]
+
+
+@app.delete("/mounts/{mount_id}")
+async def delete_mount(mount_id: str, _auth: None = Depends(_verify_auth)):
+    """Remove a single mounted file."""
+    with _mounts_lock:
+        entry = _mounts.pop(mount_id, None)
+    if not entry:
+        raise HTTPException(status_code=404, detail=f"Mount '{mount_id}' not found")
+    mount_dir = os.path.dirname(entry["path"])
+    if os.path.isdir(mount_dir):
+        shutil.rmtree(mount_dir, ignore_errors=True)
+    return {"status": "ok", "mount_id": mount_id}
+
+
 @app.post("/jobs/pose")
 async def create_pose_job(
     background_tasks: BackgroundTasks,
     _auth: None = Depends(_verify_auth),
-    input_file: UploadFile = File(...),
+    input_file: Optional[UploadFile] = File(None),
+    input_mount_id: Optional[str] = Form(None),
     bbox_file: Optional[UploadFile] = File(None),
     fov_file: Optional[UploadFile] = File(None),
     tracking_mode: str = Form("count"),
@@ -487,9 +691,21 @@ async def create_pose_job(
     with _jobs_lock:
         _jobs[job_id] = {"status": "pending", "output_dir": output_dir, "output_files": [], "progress": 0, "message": ""}
 
-    input_path = os.path.join(output_dir, "input" + os.path.splitext(input_file.filename or "")[1] or ".jpg")
-    with open(input_path, "wb") as f:
-        f.write(await input_file.read())
+    if input_mount_id and input_mount_id.strip():
+        mount_entry = _lookup_mount(input_mount_id.strip())
+        ext = os.path.splitext(mount_entry["filename"])[1] or ".jpg"
+    elif input_file and input_file.filename:
+        ext = os.path.splitext(input_file.filename)[1] or ".jpg"
+    else:
+        ext = ".jpg"
+    input_path = os.path.join(output_dir, "input" + ext)
+    try:
+        await _resolve_mount_or_upload(input_file, input_mount_id, input_path, "input_file")
+    except HTTPException:
+        with _jobs_lock:
+            _jobs.pop(job_id, None)
+        shutil.rmtree(output_dir, ignore_errors=True)
+        raise
 
     bbox_path = None
     if bbox_file and bbox_file.filename:
@@ -531,7 +747,8 @@ async def create_pose_job(
 async def create_fbx_job(
     background_tasks: BackgroundTasks,
     _auth: None = Depends(_verify_auth),
-    pose_json_file: UploadFile = File(...),
+    pose_json_file: Optional[UploadFile] = File(None),
+    pose_json_mount_id: Optional[str] = Form(None),
     profile_name: str = Form("mhr"),
     use_root_motion: bool = Form(True),
     auto_floor: bool = Form(True),
@@ -559,8 +776,13 @@ async def create_fbx_job(
         _jobs[job_id] = {"status": "pending", "output_dir": output_dir, "output_files": [], "progress": 0, "message": ""}
 
     pose_path = os.path.join(output_dir, "estimation.json")
-    with open(pose_path, "wb") as f:
-        f.write(await pose_json_file.read())
+    try:
+        await _resolve_mount_or_upload(pose_json_file, pose_json_mount_id, pose_path, "pose_json_file")
+    except HTTPException:
+        with _jobs_lock:
+            _jobs.pop(job_id, None)
+        shutil.rmtree(output_dir, ignore_errors=True)
+        raise
 
     extras: Dict[str, str] = {}
     if extrinsics_file and extrinsics_file.filename:
@@ -639,7 +861,8 @@ async def create_detection_job(
 async def create_rerun_tracking_job(
     background_tasks: BackgroundTasks,
     _auth: None = Depends(_verify_auth),
-    estimation_file: UploadFile = File(...),
+    estimation_file: Optional[UploadFile] = File(None),
+    estimation_mount_id: Optional[str] = Form(None),
     tracking_config_file: Optional[UploadFile] = File(None),
     step_through: bool = Form(False),
     debug_start_frame: int = Form(0),
@@ -699,20 +922,11 @@ async def create_rerun_tracking_job(
 
     est_path = os.path.join(output_dir, "estimation.json")
     try:
-        with open(est_path, "wb") as f:
-            f.write(await estimation_file.read())
-    except OSError as e:
-        if e.errno == errno.ENOSPC:
-            with _jobs_lock:
-                _jobs.pop(job_id, None)
-            try:
-                shutil.rmtree(output_dir, ignore_errors=True)
-            except OSError:
-                pass
-            raise HTTPException(
-                status_code=507,
-                detail="Insufficient storage: disk full (no space left on device). Free disk space or run cleanup and retry.",
-            ) from e
+        await _resolve_mount_or_upload(estimation_file, estimation_mount_id, est_path, "estimation_file")
+    except HTTPException:
+        with _jobs_lock:
+            _jobs.pop(job_id, None)
+        shutil.rmtree(output_dir, ignore_errors=True)
         raise
 
     tc_json = None
@@ -788,7 +1002,7 @@ async def get_job_status(job_id: str, _auth: None = Depends(_verify_auth)):
         if job_id not in _jobs:
             raise HTTPException(status_code=404, detail="Job not found")
         j = _jobs[job_id]
-    return {
+    resp = {
         "status": j["status"],
         "progress": j.get("progress", 0),
         "message": j.get("message", ""),
@@ -797,6 +1011,9 @@ async def get_job_status(job_id: str, _auth: None = Depends(_verify_auth)):
         "mot_path": j.get("mot_path"),
         "error": j.get("error"),
     }
+    if os.environ.get("FBXIFY_DEBUG", ""):
+        resp["traceback"] = j.get("traceback")
+    return resp
 
 
 @app.get("/jobs/{job_id}/files/{filename}")
@@ -842,11 +1059,13 @@ async def reload_models(_auth: None = Depends(_verify_auth)):
 async def cleanup_temp(
     _auth: None = Depends(_verify_auth),
     max_age_hours: float = 0,
+    unmount_all: bool = False,
 ):
     """Remove temp artifacts for completed/failed jobs and orphaned temp dirs.
 
     - max_age_hours=0 (default): flush ALL completed/failed jobs regardless of age.
     - max_age_hours>0: only flush jobs/dirs older than that many hours.
+    - unmount_all=true: also remove ALL mounted files (default false).
     Actively running jobs are never touched.
     """
     import time, glob as _glob
@@ -897,11 +1116,27 @@ async def cleanup_temp(
             except Exception as exc:
                 errors.append(f"{d}: {exc}")
 
+    unmounted = 0
+    if unmount_all:
+        with _mounts_lock:
+            unmounted = len(_mounts)
+            _mounts.clear()
+        mounts_dir = _get_mounts_dir()
+        if os.path.isdir(mounts_dir):
+            for name in os.listdir(mounts_dir):
+                d = os.path.join(mounts_dir, name)
+                if os.path.isdir(d):
+                    try:
+                        shutil.rmtree(d, ignore_errors=True)
+                    except Exception as exc:
+                        errors.append(f"{d}: {exc}")
+
     return {
         "status": "ok",
         "purged_jobs": len(purged_job_ids),
         "removed_dirs": len(removed_dirs),
         "removed_paths": removed_dirs,
+        "unmounted": unmounted,
         "errors": errors,
     }
 
@@ -934,6 +1169,11 @@ async def storage_info(_auth: None = Depends(_verify_auth)):
         active = sum(1 for j in _jobs.values() if j["status"] in ("pending", "running"))
         done = sum(1 for j in _jobs.values() if j["status"] in ("completed", "failed"))
 
+    mounts_dir = _get_mounts_dir()
+    with _mounts_lock:
+        mounts_count = len(_mounts)
+        mounts_bytes = sum(e.get("size_bytes", 0) for e in _mounts.values())
+
     return {
         "tmp_dir": tmp_root,
         "disk_total_gb": round(usage.total / (1 << 30), 2),
@@ -946,6 +1186,9 @@ async def storage_info(_auth: None = Depends(_verify_auth)):
         "fbxify_job_dirs_gb": round(job_bytes / (1 << 30), 2),
         "jobs_active": active,
         "jobs_done": done,
+        "mounts_dir": mounts_dir,
+        "mounts_count": mounts_count,
+        "mounts_total_gb": round(mounts_bytes / (1 << 30), 2),
     }
 
 
