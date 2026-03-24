@@ -868,6 +868,12 @@ class RemoteBackend:
 
         r = requests.get(f"{self.base_url}/mounts", headers=self._headers(), timeout=30)
         r.raise_for_status()
+        return r.json()
+
+    def unmount(self, mount_id: str) -> dict:
+        """Remove a single mount from the worker."""
+        import requests
+
         r = requests.delete(
             f"{self.base_url}/mounts/{mount_id}",
             headers=self._headers(),
