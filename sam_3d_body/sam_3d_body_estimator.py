@@ -19,12 +19,13 @@ from sam_3d_body.utils import recursive_to
 from torchvision.transforms import ToTensor
 
 
+""" BATCHING FIX FOR FBXIFY - SAFE_LEN FIX """ 
 def _safe_len(obj):
     """len() that handles 0-d numpy arrays gracefully."""
     if isinstance(obj, np.ndarray) and obj.ndim == 0:
         return 0
     return len(obj)
-
+""" BATCHING FIX FOR FBXIFY - SAFE_LEN FIX """ 
 
 class SAM3DBodyEstimator:
     def __init__(
@@ -131,8 +132,10 @@ class SAM3DBodyEstimator:
             self.is_crop = False
 
         # If there are no detected humans, don't run prediction
+        """ BATCHING FIX FOR FBXIFY - SAFE_LEN FIX """ 
         if _safe_len(boxes) == 0:
             return []
+        """ BATCHING FIX FOR FBXIFY - SAFE_LEN FIX """ 
 
         # The following models expect RGB images instead of BGR
         if image_format == "bgr":
@@ -315,8 +318,12 @@ class SAM3DBodyEstimator:
             boxes = np.asarray(f["bboxes"])
             if boxes.ndim == 1:
                 boxes = boxes.reshape(1, -1)
-            if len(boxes) == 0:
+            """ BATCHING FIX FOR FBXIFY - SAFE_LEN FIX """ 
+            if boxes.ndim == 0 or _safe_len(boxes) == 0:
                 raise ValueError(f"Frame {i} has zero bboxes.")
+            # if len(boxes) == 0:
+            #     raise ValueError(f"Frame {i} has zero bboxes.")
+            """ BATCHING FIX FOR FBXIFY - SAFE_LEN FIX """ 
             masks = f.get("masks")
             masks_score = f.get("masks_score")
             frame_list.append((images[i], boxes, masks, masks_score))
