@@ -14,11 +14,13 @@ import pytest
 from fbxify.tracking.tracklet import Detection, Tracklet
 from fbxify.tracking.tracking_config import TrackingConfig
 from fbxify.tracking.background_filter import (
+    BackgroundFilterStats,
     _score_trajectory,
     _score_spatial_occupancy,
     _score_perspective_consistency,
     score_tracklets,
     filter_tracklets_by_score,
+    filter_detections_for_frame,
 )
 
 
@@ -432,6 +434,74 @@ class TestEdgeCases:
         assert len(scored) == 1
         _, s, bd = scored[0]
         assert math.isfinite(s)
+
+
+# ---------------------------------------------------------------------------
+# N-closest cap (bg_keep_only_n_closest)
+# ---------------------------------------------------------------------------
+
+class TestKeepOnlyNClosest:
+    @staticmethod
+    def _dets_at_distances() -> list:
+        """5 detections with known L2 distances: 3.0, 5.0, 7.0, 10.0, 15.0."""
+        return [
+            _make_detection(0, "a", cam_t=[0.0, 0.0, 3.0]),   # dist=3
+            _make_detection(0, "b", cam_t=[3.0, 4.0, 0.0]),   # dist=5
+            _make_detection(0, "c", cam_t=[0.0, 0.0, 7.0]),   # dist=7
+            _make_detection(0, "d", cam_t=[6.0, 8.0, 0.0]),   # dist=10
+            _make_detection(0, "e", cam_t=[9.0, 12.0, 0.0]),  # dist=15
+        ]
+
+    def test_keeps_n_closest_by_distance(self):
+        dets = self._dets_at_distances()
+        config = TrackingConfig(bg_filter_enabled=True, bg_keep_only_n_closest=2)
+        kept, dismissed = filter_detections_for_frame(dets, config)
+        kept_ids = {d.person_id for d in kept}
+        assert kept_ids == {"a", "b"}, f"Expected 2 closest, got {kept_ids}"
+        assert len(dismissed) == 3
+
+    def test_zero_disables(self):
+        dets = self._dets_at_distances()
+        config = TrackingConfig(bg_filter_enabled=True, bg_keep_only_n_closest=0)
+        kept, dismissed = filter_detections_for_frame(dets, config)
+        assert len(kept) == 5
+        assert len(dismissed) == 0
+
+    def test_negative_disables(self):
+        dets = self._dets_at_distances()
+        config = TrackingConfig(bg_filter_enabled=True, bg_keep_only_n_closest=-1)
+        kept, dismissed = filter_detections_for_frame(dets, config)
+        assert len(kept) == 5
+        assert len(dismissed) == 0
+
+    def test_n_greater_than_count_keeps_all(self):
+        dets = self._dets_at_distances()[:3]
+        config = TrackingConfig(bg_filter_enabled=True, bg_keep_only_n_closest=10)
+        kept, dismissed = filter_detections_for_frame(dets, config)
+        assert len(kept) == 3
+        assert len(dismissed) == 0
+
+    def test_missing_cam_t_sorted_last(self):
+        dets = [
+            _make_detection(0, "close", cam_t=[0.0, 0.0, 2.0]),  # dist=2
+            _make_detection(0, "no_cam", cam_t=None),             # inf
+            _make_detection(0, "far", cam_t=[0.0, 0.0, 20.0]),   # dist=20
+        ]
+        config = TrackingConfig(bg_filter_enabled=True, bg_keep_only_n_closest=1)
+        kept, dismissed = filter_detections_for_frame(dets, config)
+        assert len(kept) == 1
+        assert kept[0].person_id == "close"
+        dismissed_ids = {d.person_id for d, _ in dismissed}
+        assert "no_cam" in dismissed_ids
+        assert "far" in dismissed_ids
+
+    def test_stats_counter(self):
+        dets = self._dets_at_distances()
+        config = TrackingConfig(bg_filter_enabled=True, bg_keep_only_n_closest=3)
+        stats = BackgroundFilterStats()
+        kept, dismissed = filter_detections_for_frame(dets, config, stats=stats)
+        assert len(kept) == 3
+        assert stats.dropped_keep_only_n_closest == 2
 
 
 if __name__ == "__main__":

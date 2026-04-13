@@ -100,6 +100,8 @@
       "bg_depth_max_z_info": "Conserva detecciones con pred_cam_t[2] <= este valor. 0 = desactivado.",
       "bg_keep_nearest_z_quantile": "Conservar cuantil más cercano (z)",
       "bg_keep_nearest_z_quantile_info": "Por fotograma: conserva la fracción más cercana por z (p. ej., 0.7 conserva el 70% más cercano). 0 = desactivado.",
+      "bg_keep_only_n_closest": "Conservar solo las N personas más cercanas",
+      "bg_keep_only_n_closest_info": "Por fotograma: conserva solo las N personas más cercanas a la cámara (por distancia pred_cam_t). 0 = desactivado.",
       "bg_auto_size_title": "Corte automático por tamaño",
       "bg_size_auto_method": "Método automático por tamaño",
       "bg_size_auto_method_info": "none/percentile/otsu/gmm2. Usa altura/área del bbox. Se aplica por fotograma.",

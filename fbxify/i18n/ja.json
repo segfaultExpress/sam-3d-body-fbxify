@@ -100,6 +100,8 @@
       "bg_depth_max_z_info": "pred_cam_t[2] がこの値以下の検出を保持します。0 で無効。",
       "bg_keep_nearest_z_quantile": "近いzの分位を保持",
       "bg_keep_nearest_z_quantile_info": "フレームごと：zが近い順に指定割合を保持（例：0.7 で近い方から70%を保持）。0 で無効。",
+      "bg_keep_only_n_closest": "最も近いN人のみ保持",
+      "bg_keep_only_n_closest_info": "フレームごと：pred_cam_t の距離でカメラに最も近いN人のみを保持します。0 で無効。",
       "bg_auto_size_title": "サイズ自動しきい値",
       "bg_size_auto_method": "サイズ自動方式",
       "bg_size_auto_method_info": "none/percentile/otsu/gmm2。bboxの高さ/面積を使用。フレームごとに適用。",

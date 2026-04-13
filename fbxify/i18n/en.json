@@ -100,6 +100,8 @@
       "bg_depth_max_z_info": "Keep detections with pred_cam_t[2] <= this. 0 disables.",
       "bg_keep_nearest_z_quantile": "Keep nearest z quantile",
       "bg_keep_nearest_z_quantile_info": "Per frame: keep the nearest fraction by z (e.g. 0.7 keeps nearest 70%). 0 disables.",
+      "bg_keep_only_n_closest": "Keep only N closest people",
+      "bg_keep_only_n_closest_info": "Per frame: keep only the N people nearest to the camera (by pred_cam_t distance). 0 disables.",
       "bg_auto_size_title": "Auto Size Cutoff",
       "bg_size_auto_method": "Auto size method",
       "bg_size_auto_method_info": "none/percentile/otsu/gmm2. Uses bbox height/area. Applied per frame.",

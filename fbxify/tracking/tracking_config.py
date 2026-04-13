@@ -81,6 +81,8 @@ class TrackingConfig:
     bg_depth_max_z: float = 0.0
     # Keep nearest z-quantile per frame (0 disables). Example: 0.7 keeps nearest 70% by z.
     bg_keep_nearest_z_quantile: float = 0.0
+    # Keep only the N people closest to camera per frame (by L2 norm of pred_cam_t). 0 disables.
+    bg_keep_only_n_closest: int = 0
 
     # Automatic size cutoffs (applied per frame; uses bbox height/area)
     # - none: disabled

@@ -24,6 +24,7 @@ class BackgroundFilterStats:
     dropped_keep_nearest_z_quantile: int = 0
     dropped_auto_size: int = 0
     dropped_auto_roi: int = 0
+    dropped_keep_only_n_closest: int = 0
 
     tracklets_seen: int = 0
     tracklets_kept: int = 0
@@ -42,6 +43,7 @@ class BackgroundFilterStats:
             "dropped_keep_nearest_z_quantile": self.dropped_keep_nearest_z_quantile,
             "dropped_auto_size": self.dropped_auto_size,
             "dropped_auto_roi": self.dropped_auto_roi,
+            "dropped_keep_only_n_closest": self.dropped_keep_only_n_closest,
             "tracklets_seen": self.tracklets_seen,
             "tracklets_kept": self.tracklets_kept,
             "tracklets_dropped_by_score": self.tracklets_dropped_by_score,
@@ -507,6 +509,26 @@ def filter_detections_for_frame(
                         f"Outside ROI (pt=({pt[0]:.1f}, {pt[1]:.1f}), roi=({cx:.1f}, {cy:.1f}), dist={dist:.1f} > r={r:.1f})",
                     )
                 )
+        kept = out
+
+    # N-closest cap (keep only the N people nearest to camera)
+    n_closest = int(getattr(config, "bg_keep_only_n_closest", 0) or 0)
+    if n_closest > 0 and len(kept) > n_closest:
+        scored_dets = []
+        for d in kept:
+            v = _pred_cam_t_vec(d)
+            dist = float(np.linalg.norm(v)) if v is not None else float("inf")
+            scored_dets.append((dist, d))
+        scored_dets.sort(key=lambda x: x[0])
+        out = []
+        for i, (dist, d) in enumerate(scored_dets):
+            if i < n_closest:
+                out.append(d)
+            else:
+                if stats is not None:
+                    stats.dropped_keep_only_n_closest += 1
+                dist_s = f"{dist:.2f}" if np.isfinite(dist) else "inf"
+                dismissed.append((d, f"N-Closest Cap (dist={dist_s}, kept {n_closest})"))
         kept = out
 
     if stats is not None:

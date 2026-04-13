@@ -231,6 +231,14 @@ def create_tracking_section(translator: Translator) -> Dict[str, Any]:
                         step=0.05,
                         info=translator.t("ui.tracking.bg_keep_nearest_z_quantile_info"),
                     )
+                components["bg_keep_only_n_closest"] = gr.Number(
+                    label=translator.t("ui.tracking.bg_keep_only_n_closest"),
+                    value=0,
+                    precision=0,
+                    minimum=0,
+                    step=1,
+                    info=translator.t("ui.tracking.bg_keep_only_n_closest_info"),
+                )
 
             with gr.Accordion(label=translator.t("ui.tracking.bg_auto_size_title"), open=False):
                 with gr.Row():
@@ -407,6 +415,7 @@ def build_tracking_config_from_gui(
     bg_min_bbox_area_px2,
     bg_depth_max_z,
     bg_keep_nearest_z_quantile,
+    bg_keep_only_n_closest,
     bg_size_auto_method,
     bg_size_feature,
     bg_size_percentile,
@@ -456,6 +465,7 @@ def build_tracking_config_from_gui(
         bg_min_bbox_area_px2=float(bg_min_bbox_area_px2),
         bg_depth_max_z=float(bg_depth_max_z),
         bg_keep_nearest_z_quantile=float(bg_keep_nearest_z_quantile),
+        bg_keep_only_n_closest=int(bg_keep_only_n_closest),
         bg_size_auto_method=str(bg_size_auto_method),
         bg_size_feature=str(bg_size_feature),
         bg_size_percentile=float(bg_size_percentile),
@@ -508,6 +518,7 @@ def _updates_from_config(config: TrackingConfig) -> List[gr.update]:
         gr.update(value=getattr(config, "bg_min_bbox_area_px2", 0.0)),
         gr.update(value=getattr(config, "bg_depth_max_z", 0.0)),
         gr.update(value=getattr(config, "bg_keep_nearest_z_quantile", 0.0)),
+        gr.update(value=getattr(config, "bg_keep_only_n_closest", 0)),
         gr.update(value=getattr(config, "bg_size_auto_method", "none")),
         gr.update(value=getattr(config, "bg_size_feature", "bbox_height")),
         gr.update(value=getattr(config, "bg_size_percentile", 0.0)),
@@ -569,6 +580,7 @@ def save_tracking_configuration(
     bg_min_bbox_area_px2,
     bg_depth_max_z,
     bg_keep_nearest_z_quantile,
+    bg_keep_only_n_closest,
     bg_size_auto_method,
     bg_size_feature,
     bg_size_percentile,
@@ -618,6 +630,7 @@ def save_tracking_configuration(
         bg_min_bbox_area_px2,
         bg_depth_max_z,
         bg_keep_nearest_z_quantile,
+        bg_keep_only_n_closest,
         bg_size_auto_method,
         bg_size_feature,
         bg_size_percentile,
@@ -676,6 +689,7 @@ def update_tracking_language(lang: str, translator: Translator) -> Tuple[Any, ..
         gr.update(label=t.t("ui.tracking.bg_min_bbox_area_px2"), info=t.t("ui.tracking.bg_min_bbox_area_px2_info")),  # bg_min_bbox_area_px2
         gr.update(label=t.t("ui.tracking.bg_depth_max_z"), info=t.t("ui.tracking.bg_depth_max_z_info")),  # bg_depth_max_z
         gr.update(label=t.t("ui.tracking.bg_keep_nearest_z_quantile"), info=t.t("ui.tracking.bg_keep_nearest_z_quantile_info")),  # bg_keep_nearest_z_quantile
+        gr.update(label=t.t("ui.tracking.bg_keep_only_n_closest"), info=t.t("ui.tracking.bg_keep_only_n_closest_info")),  # bg_keep_only_n_closest
         gr.update(label=t.t("ui.tracking.bg_size_auto_method"), info=t.t("ui.tracking.bg_size_auto_method_info")),  # bg_size_auto_method
         gr.update(label=t.t("ui.tracking.bg_size_feature"), info=t.t("ui.tracking.bg_size_feature_info")),  # bg_size_feature
         gr.update(label=t.t("ui.tracking.bg_size_percentile"), info=t.t("ui.tracking.bg_size_percentile_info")),  # bg_size_percentile
