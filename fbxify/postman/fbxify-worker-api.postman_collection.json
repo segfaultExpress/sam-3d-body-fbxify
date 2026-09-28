@@ -21,7 +21,16 @@
         "method": "GET",
         "header": [],
         "url": "{{base_url}}/health",
-        "description": "Check worker is up. No auth required."
+        "description": "Readiness. 200 and ready=true means MHR assets and SAM 3D Body are loaded. 503 means do not submit pose jobs. No auth required."
+      }
+    },
+    {
+      "name": "Live",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": "{{base_url}}/live",
+        "description": "Process liveness. 200 while the process is up, including when /health is 503. No auth required."
       }
     },
     {

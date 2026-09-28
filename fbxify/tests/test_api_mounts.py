@@ -38,6 +38,13 @@ def _isolate_mounts(tmp_path, monkeypatch):
     mounts_dir = str(tmp_path / "mounts")
     os.makedirs(mounts_dir, exist_ok=True)
     monkeypatch.setenv("FBXIFY_MOUNTS_DIR", mounts_dir)
+    cache_assets = tmp_path / "cache" / "mhr_assets"
+    cache_assets.mkdir(parents=True)
+    monkeypatch.setenv("CACHE_DIR", str(tmp_path / "cache"))
+    monkeypatch.setenv("FBXIFY_MHR_RUNTIME_ASSETS", str(cache_assets))
+    monkeypatch.delenv("HF_TOKEN", raising=False)
+    monkeypatch.setattr("fbxify.cli_common.checkpoints_available", lambda model: False)
+    monkeypatch.setattr(api_module, "worker_blockers", lambda: [])
 
     # Reset global registries between tests
     with api_module._mounts_lock:

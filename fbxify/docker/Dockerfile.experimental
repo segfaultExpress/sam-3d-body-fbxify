@@ -1,0 +1,17 @@
+# Experimental worker: local checkout on the current dependency image.
+# Includes uncommitted fast-inference changes. Does not retag :latest.
+#
+# Dockerfile.worker with PULL_FROM_LOCAL=0 reclones the git branch and drops
+# those changes. PULL_FROM_LOCAL=1 on that file also rebuilds the CUDA stack.
+# This image copies the same local context onto mordommin94/fbxify-worker:latest.
+#
+#   docker build -f fbxify/docker/Dockerfile.experimental -t mordommin94/fbxify-worker:exp-fast-mhr101 .
+ARG WORKER_BASE=mordommin94/fbxify-worker:latest
+FROM ${WORKER_BASE}
+WORKDIR /fbxify
+COPY . /fbxify
+COPY fbxify/docker/worker-entrypoint.sh /worker-entrypoint.sh
+RUN sed -i 's/\r$//' /worker-entrypoint.sh && chmod +x /worker-entrypoint.sh
+EXPOSE 8000
+ENV PORT=8000
+ENTRYPOINT ["/worker-entrypoint.sh"]

@@ -128,11 +128,8 @@ docker run --gpus all --shm-size=8g -p 8000:8000 \
 - Hugging Face: `/root/.cache/huggingface`
 - MHR assets: `/opt/venv/lib/python3.12/site-packages/assets`
 
-**MHR assets (required for FBX LOD meshes):** The worker needs `lod0.fbx`, `lod1.fbx`, etc. from [MHR v1.0.0](https://github.com/facebookresearch/MHR/releases/tag/v1.0.0). Download `assets.zip`, extract the contents of the `assets` folder into `CACHE_DIR/mhr_assets`. Or run:
+**MHR assets (required before the worker is ready):** Pose estimation loads `lod1.fbx`, `compact_v6_1.model`, and the LOD 1 corrective files from the `mhr` package path `site-packages/assets`. The entrypoint links that path at `CACHE_DIR/mhr_assets`. On startup the worker downloads [MHR v1.0.1 `assets.zip`](https://github.com/facebookresearch/MHR/releases/download/v1.0.1/assets.zip) when those files are missing, and checks the archive size and sha256 before publishing them. A failed download leaves an existing cache in place.
 
-```bash
-./fbxify/docker/mhr_assets_download.sh   # Linux/macOS
-fbxify\docker\mhr_assets_download.bat    # Windows
-```
+`GET /health` is readiness: it returns 503 until the mesh and SAM 3D Body are loaded, and the dispatcher treats that as "do not assign work." `GET /live` only means the process is up. `POST /jobs/pose` also returns 503 before it accepts a video when the worker is not ready. `POST /reload` downloads assets again, then reloads models.
 
-Pre-warm the volume once (run one worker, let it download), then attach that volume to new workers so startup stays fast.
+Pre-warm the cache volume once (let one worker finish the download), then attach that volume to new workers so startup stays fast. The old `v1.0.0/assets.zip` URL returns 404.

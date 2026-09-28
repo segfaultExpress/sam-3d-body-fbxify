@@ -1383,13 +1383,14 @@ if __name__ == "__main__":
         from fbxify.fbxify_manager import FbxifyManager
         from fbxify.fbxify_manager import FbxDataPrepManager
         from fbxify.tracking.tracking_manager import TrackingManager
-        from fbxify.checkpoint_download import download_mhr_assets_if_missing
+        from fbxify.checkpoint_download import ensure_mhr_assets
 
         cache_dir = os.environ.get("CACHE_DIR", "").rstrip("/") or os.path.join(
             os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cache"
         )
         os.environ.setdefault("CACHE_DIR", cache_dir)
-        download_mhr_assets_if_missing(os.path.join(cache_dir, "mhr_assets"))
+        if not ensure_mhr_assets(os.path.join(cache_dir, "mhr_assets")):
+            raise SystemExit("MHR mesh assets are missing; refusing to start the local UI.")
 
         args = parse_args()
         if args.model == "vith":

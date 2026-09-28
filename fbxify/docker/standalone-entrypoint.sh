@@ -24,17 +24,42 @@ mkdir -p /root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitd
 ln -snf "$CACHE_DIR/videt_checkpoint" /root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
 ln -snf "$CACHE_DIR/hf_cache" /root/.cache/huggingface
 
-# mhr_assets: symlink assets -> CACHE_DIR/mhr_assets so mhr finds lod1.fbx etc.
-# API startup downloads to CACHE_DIR/mhr_assets; symlink lets mhr find them.
-ASSETS_PATH="/opt/venv/lib/python3.12/site-packages/assets"
-if (mountpoint -q "$ASSETS_PATH" 2>/dev/null) || grep -q " $ASSETS_PATH " /proc/mounts 2>/dev/null; then
-  : # Already mounted, nothing to do
-elif [ -L "$ASSETS_PATH" ]; then
-  : # Already a symlink, nothing to do
-else
-  [ -d "$ASSETS_PATH" ] && cp -a "$ASSETS_PATH/." "$CACHE_DIR/mhr_assets/" 2>/dev/null || true
-  rm -rf "$ASSETS_PATH"
-  ln -snf "$CACHE_DIR/mhr_assets" "$ASSETS_PATH"
-fi
+# mhr reads site-packages/assets/lod1.fbx (Path(__file__).parent.parent / "assets").
+# A stale symlink is replaced. A mount or a directory that already has lod1.fbx is left alone.
+link_mhr_runtime_assets() {
+  local assets_path="$1"
+  local cache_assets="$2"
+  mkdir -p "$cache_assets"
+  if [ "$(readlink -f "$assets_path" 2>/dev/null || true)" = "$(readlink -f "$cache_assets")" ]; then
+    return 0
+  fi
+  if (mountpoint -q "$assets_path" 2>/dev/null) || grep -q " ${assets_path} " /proc/mounts 2>/dev/null; then
+    echo "mhr_assets: ${assets_path} is mounted; leaving it unchanged"
+    return 0
+  fi
+  if [ -L "$assets_path" ]; then
+    if [ -f "$assets_path/lod1.fbx" ]; then
+      echo "mhr_assets: runtime symlink ${assets_path} already has lod1.fbx"
+      return 0
+    fi
+    echo "mhr_assets: replacing stale symlink ${assets_path} -> ${cache_assets}"
+    rm -f "$assets_path"
+    ln -snf "$cache_assets" "$assets_path"
+    return 0
+  fi
+  if [ -d "$assets_path" ]; then
+    if [ -f "$assets_path/lod1.fbx" ]; then
+      echo "mhr_assets: runtime directory ${assets_path} already has lod1.fbx"
+      return 0
+    fi
+    cp -an "$assets_path/." "$cache_assets/" 2>/dev/null || true
+    rm -rf "$assets_path"
+    ln -snf "$cache_assets" "$assets_path"
+    return 0
+  fi
+  mkdir -p "$(dirname "$assets_path")"
+  ln -snf "$cache_assets" "$assets_path"
+}
+link_mhr_runtime_assets "/opt/venv/lib/python3.12/site-packages/assets" "$CACHE_DIR/mhr_assets"
 
 exec "$@"

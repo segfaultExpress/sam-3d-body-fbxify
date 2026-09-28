@@ -50,11 +50,12 @@ services:
     ports:
       - "8000:8000"
     healthcheck:
+      # /health is readiness and returns 503 until assets and models are loaded.
       test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 60s
+      start_period: 300s
 
   ui:
     image: mordommin94/fbxify-ui:latest
