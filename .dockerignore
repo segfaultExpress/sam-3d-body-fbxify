@@ -22,8 +22,10 @@ input/
 blender_debug/
 **/blender_debug/
 
-# Logs / outputs
+# Logs / outputs. "*.log" only matches the repo root; tracking logs live in logs/.
 *.log
+**/*.log
+logs/
 output/
 outputs/
 

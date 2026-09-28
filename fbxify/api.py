@@ -194,6 +194,46 @@ def _get_tracking_manager():
     return _tracking_manager
 
 
+_JOBS_REQUIRING_READY = {
+    "/jobs/pose",
+    "/jobs/fbx",
+    "/jobs/detection",
+    "/jobs/rerun_tracking",
+}
+
+
+def worker_blockers() -> list[str]:
+    """Reasons the worker must not accept a pose job. Empty when it is ready."""
+    from fbxify.checkpoint_download import mhr_runtime_assets_ready
+
+    blockers = []
+    if not mhr_runtime_assets_ready():
+        blockers.append(
+            "MHR mesh assets are missing at the runtime path "
+            "(lod1.fbx, compact_v6_1.model, and corrective blendshapes)."
+        )
+    if _manager is None:
+        blockers.append(
+            "SAM 3D Body is not loaded. Upload checkpoints to CHECKPOINTS_DIR, then POST /reload."
+        )
+    return blockers
+
+
+def _require_ready() -> None:
+    blockers = worker_blockers()
+    if blockers:
+        raise HTTPException(status_code=503, detail="Worker is not ready: " + " ".join(blockers))
+
+
+def _prepare_mhr_assets() -> bool:
+    from fbxify.checkpoint_download import ensure_mhr_assets
+
+    cache_dir = os.environ.get("CACHE_DIR", "/fbxify/cache").rstrip("/") or "/fbxify/cache"
+    mhr_assets_dir = os.path.join(cache_dir, "mhr_assets")
+    print(f"mhr_assets: CACHE_DIR={cache_dir!r} -> downloading to {mhr_assets_dir!r}", flush=True)
+    return ensure_mhr_assets(mhr_assets_dir)
+
+
 def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_path: Optional[str], params: Dict[str, Any]):
     try:
         with _jobs_lock:
@@ -559,23 +599,37 @@ async def file_not_found_handler(request: Request, exc: FileNotFoundError):
     )
 
 
+@app.middleware("http")
+async def _reject_jobs_when_unready(request: Request, call_next):
+    """Refuse pose work before the upload is parsed when assets or models are missing."""
+    if request.method == "POST" and request.url.path in _JOBS_REQUIRING_READY:
+        blockers = worker_blockers()
+        if blockers:
+            from fastapi.responses import JSONResponse
+            return JSONResponse(
+                status_code=503,
+                content={"detail": "Worker is not ready: " + " ".join(blockers)},
+            )
+    return await call_next(request)
+
+
 @app.on_event("startup")
 async def startup():
     """Load models on startup. If checkpoints are missing, try HF download (when HF_TOKEN set), else stay in waiting mode."""
     _init_mounts()
 
     from fbxify.cli_common import checkpoints_available
-    from fbxify.checkpoint_download import download_checkpoints_if_missing, download_mhr_assets_if_missing
+    from fbxify.checkpoint_download import download_checkpoints_if_missing
 
     model = os.environ.get("FBXIFY_MODEL", "vith")
     checkpoints_dir = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
-    cache_dir = os.environ.get("CACHE_DIR", "/fbxify/cache").rstrip("/")
     # Download to CACHE_DIR/mhr_assets so host mounts (e.g. -v host/cache:/workspace/cache) receive the files.
-    # Entrypoint symlinks /opt/venv/.../assets -> CACHE_DIR/mhr_assets so the app finds them.
-    mhr_assets_dir = os.path.join(cache_dir, "mhr_assets")
-    print(f"mhr_assets: CACHE_DIR={cache_dir!r} -> downloading to {mhr_assets_dir!r}", flush=True)
-
-    download_mhr_assets_if_missing(mhr_assets_dir)
+    # The runtime mesh path is site-packages/assets, which the entrypoint links at the cache.
+    assets_ok = _prepare_mhr_assets()
+    if not assets_ok:
+        print("MHR assets are not usable. Worker is not ready and will not load models.", flush=True)
+        print("Fix the asset cache, then POST /reload.", flush=True)
+        return
 
     available = checkpoints_available(model)
     if not available and os.environ.get("HF_TOKEN"):
@@ -698,6 +752,7 @@ async def create_pose_job(
     lang: str = Form("en"),
     tracking_config: Optional[str] = Form(None),
 ):
+    _require_ready()
     job_id = uuid.uuid4().hex
     output_dir = tempfile.mkdtemp(prefix="fbxify_job_")
     with _jobs_lock:
@@ -1055,10 +1110,15 @@ async def cancel_jobs(_auth: None = Depends(_verify_auth)):
 
 @app.post("/reload")
 async def reload_models(_auth: None = Depends(_verify_auth)):
-    """Reload models (e.g. after uploading checkpoints via SSH). Clears cached managers and reinitializes."""
+    """Reload models after checkpoints or MHR assets change. Re-validates the mesh cache first."""
     global _manager, _tracking_manager
     _manager = None
     _tracking_manager = None
+    if not _prepare_mhr_assets():
+        raise HTTPException(
+            status_code=503,
+            detail="MHR mesh assets are missing at the runtime path. Worker was not reloaded.",
+        )
     try:
         _get_manager()
         _get_tracking_manager()
@@ -1207,6 +1267,20 @@ async def storage_info(_auth: None = Depends(_verify_auth)):
     }
 
 
+@app.get("/live")
+async def live():
+    """Process liveness. This stays up when the worker is not ready for jobs."""
+    return {"status": "alive"}
+
+
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Readiness. 200 only when mesh assets and SAM 3D Body are usable."""
+    blockers = worker_blockers()
+    if blockers:
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=503,
+            content={"status": "unavailable", "ready": False, "detail": " ".join(blockers)},
+        )
+    return {"status": "ok", "ready": True}

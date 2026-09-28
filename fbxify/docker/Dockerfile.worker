@@ -51,7 +51,8 @@ RUN python -m pip install --index-url https://download.pytorch.org/whl/cu128 \
     torch==2.8.0 torchvision==0.23.0 torchaudio==2.8.0
 
 # ---- Clone repo or copy from local ----
-# PULL_FROM_LOCAL=1: use build context. PULL_FROM_LOCAL=0: git clone (BRANCH from config).
+# PULL_FROM_LOCAL=1: use the build context, including uncommitted files.
+# PULL_FROM_LOCAL=0 reclones BRANCH and drops local changes such as fast inference.
 # Pass --build-arg CACHEBUST=$(git rev-parse HEAD) to force fresh clone (bypass cache)
 ARG PULL_FROM_LOCAL=0
 ARG BRANCH=main

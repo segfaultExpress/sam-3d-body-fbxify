@@ -24,7 +24,7 @@ Use these files to test the fbxify worker API against any base URL (e.g. `http:/
 
 ## Usage
 
-1. **Health** – GET `{{base_url}}/health` to confirm the worker is up.
+1. **Health** – GET `{{base_url}}/health`. `200` with `"ready": true` means mesh assets and models are loaded. `503` means the worker is up but must not receive pose jobs. `GET /live` only checks that the process is answering.
 2. **Create Pose Job** – POST with `input_file` (image/video). Copy the returned `job_id` into the environment variable `job_id`. Optional form field `fast_inference=true` skips the second body-decoder pass (Fast SAM 3D Body).
 3. **Get Job Status** – GET `{{base_url}}/jobs/{{job_id}}` until `status` is `completed`.
 4. **Download Job File** – Set `filename` to one of `output_files` (e.g. `pose_outputs_abc12345.json`) and GET `{{base_url}}/jobs/{{job_id}}/files/{{filename}}`.
