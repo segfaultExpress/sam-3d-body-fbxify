@@ -113,6 +113,7 @@ class PoseEstimationManager:
 
         self.precision = "fp32"
         self.set_inference_options(precision=precision)
+        self.estimator.skip_keypoint_prompt = False
         self._cancel_event = threading.Event()
         self._lod_faces_cache: Dict[int, np.ndarray] = {}
         self._lod_faces_initialized = False
@@ -358,9 +359,13 @@ class PoseEstimationManager:
         self.cached_cam_int = torch.mean(cam_ints_stacked, dim=0)  # (1, 3, 3)
         print(f"Cached camera intrinsics (averaged of {average_of} images): {self.cached_cam_int}")
 
-    def set_inference_options(self, precision: str = "fp32"):
+    def set_inference_options(self, precision: str = "fp32", skip_keypoint_prompt: Optional[bool] = None):
         """
-        Configure inference precision.
+        Configure inference precision and optional Fast SAM 3D Body shortcuts.
+
+        skip_keypoint_prompt: if True, skip the second body-decoder pass
+        (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT). Hands are still estimated.
+        None leaves the current setting unchanged.
         """
         precision = (precision or "fp32").lower()
         if precision not in ["fp32", "bf16", "fp16"]:
@@ -369,6 +374,14 @@ class PoseEstimationManager:
         if precision != self.precision:
             self._apply_precision(precision)
             self.precision = precision
+
+        if skip_keypoint_prompt is not None:
+            new_val = bool(skip_keypoint_prompt)
+            prev = bool(getattr(self.estimator, "skip_keypoint_prompt", False))
+            self.estimator.skip_keypoint_prompt = new_val
+            if new_val != prev:
+                state = "ON" if new_val else "OFF"
+                print(f"Fast inference skip_keypoint_prompt={state}")
 
     def _apply_precision(self, precision: str):
         model = self.estimator.model

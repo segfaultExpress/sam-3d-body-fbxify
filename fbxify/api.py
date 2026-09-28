@@ -220,7 +220,18 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
             manager.set_camera_intrinsics("Sample", None, frame_paths, int(params.get("sample_number", 1)))
 
         precision = params.get("precision", "fp32")
-        manager.estimation_manager.set_inference_options(precision=precision)
+        skip_keypoint_prompt = bool(params.get("fast_inference", False))
+        if not skip_keypoint_prompt and os.environ.get("FBXIFY_FAST_INFERENCE", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        ):
+            skip_keypoint_prompt = True
+            print("FBXIFY_FAST_INFERENCE is on: skipping the second body-decoder pass", flush=True)
+        manager.estimation_manager.set_inference_options(
+            precision=precision, skip_keypoint_prompt=skip_keypoint_prompt
+        )
 
         bbox_dict = None
         if bbox_path:
@@ -680,6 +691,7 @@ async def create_pose_job(
     fov_method: str = Form("Default"),
     sample_number: int = Form(1),
     precision: str = Form("fp32"),
+    fast_inference: bool = Form(False),
     output_tracking_bbox: bool = Form(False),
     frame_batch_size: int = Form(1),
     detection_batch_size: int = Form(1),
@@ -726,6 +738,7 @@ async def create_pose_job(
         "fov_method": fov_method,
         "sample_number": sample_number,
         "precision": precision,
+        "fast_inference": fast_inference,
         "output_tracking_bbox": output_tracking_bbox,
         "frame_batch_size": frame_batch_size,
         "detection_batch_size": detection_batch_size,

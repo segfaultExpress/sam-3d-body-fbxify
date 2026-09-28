@@ -93,6 +93,7 @@ def create_app(backend):
         fov_file,
         sample_number,
         precision,
+        fast_inference,
         output_tracking_bbox,
         tracking_enabled,
         max_gap_frames,
@@ -230,6 +231,7 @@ def create_app(backend):
                 detection_batch_size,
                 translator.lang,
                 progress_callback,
+                fast_inference=bool(fast_inference),
             )
         except Exception as e:
             error_type = type(e).__name__
@@ -294,7 +296,7 @@ def create_app(backend):
         return text
 
     def build_pose_cli_command(tracking_mode, bbox_file, num_people, missing_bbox_behavior, fov_method,
-                               fov_file, sample_number, precision, tracking_config_file, frame_batch_size, detection_batch_size):
+                               fov_file, sample_number, precision, fast_inference, tracking_config_file, frame_batch_size, detection_batch_size):
         precision_map = {
             "FP32 (Full)": "fp32",
             "BF16 (Fast + Safer)": "bf16",
@@ -337,6 +339,8 @@ def create_app(backend):
                     cmd_parts += ["--sample_number", str(int(sample_number))]
 
         cmd_parts += ["--precision", precision_value]
+        if fast_inference:
+            cmd_parts.append("--fast_inference")
         if frame_batch_size is not None and int(frame_batch_size) > 1:
             cmd_parts += ["--frame_batch_size", str(int(frame_batch_size))]
         if detection_batch_size is not None and int(detection_batch_size) > 1:
@@ -488,6 +492,7 @@ def create_app(backend):
                 entry_components['num_people'], entry_components['missing_bbox_behavior'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
                 entry_components['precision'],
+                entry_components['fast_inference'],
                 entry_components['frame_batch_size'],
                 entry_components['detection_batch_size'],
                 entry_components['tracking_group'],
@@ -865,6 +870,7 @@ def create_app(backend):
                 entry_components['fov_file'],
                 entry_components['sample_number'],
                 entry_components['precision'],
+                entry_components['fast_inference'],
                 pose_dev_components['pose_output_tracking_bbox'],
                 entry_components['tracking_enabled'],
                 entry_components['max_gap_frames'],
@@ -1077,6 +1083,7 @@ def create_app(backend):
                 entry_components['fov_file'],
                 entry_components['sample_number'],
                 entry_components['precision'],
+                entry_components['fast_inference'],
                 entry_components['tracking_config_upload'],
                 entry_components['frame_batch_size'],
                 entry_components['detection_batch_size'],

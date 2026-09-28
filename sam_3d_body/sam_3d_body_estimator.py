@@ -42,6 +42,8 @@ class SAM3DBodyEstimator:
         self.sam = human_segmentor
         self.fov_estimator = fov_estimator
         self.thresh_wrist_angle = 1.4
+        # Fast SAM 3D Body SKIP_KEYPOINT_PROMPT: skip the second body-decoder pass.
+        self.skip_keypoint_prompt = False
 
         # For mesh visualization
         self.faces = self.model.head_pose.faces.cpu().numpy()
@@ -188,6 +190,7 @@ class SAM3DBodyEstimator:
             inference_type=inference_type,
             transform_hand=self.transform_hand,
             thresh_wrist_angle=self.thresh_wrist_angle,
+            skip_keypoint_prompt=self.skip_keypoint_prompt,
         )
         if inference_type == "full":
             pose_output, batch_lhand, batch_rhand, _, _ = outputs
@@ -353,6 +356,7 @@ class SAM3DBodyEstimator:
             transform_hand=self.transform_hand,
             n_per_frame=n_per_frame,
             thresh_wrist_angle=self.thresh_wrist_angle,
+            skip_keypoint_prompt=self.skip_keypoint_prompt,
         )
 
         out = pose_output["mhr"]

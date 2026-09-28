@@ -108,6 +108,7 @@
             { "key": "fov_method", "value": "Default", "type": "text" },
             { "key": "sample_number", "value": "1", "type": "text" },
             { "key": "precision", "value": "fp32", "type": "text" },
+            { "key": "fast_inference", "value": "false", "type": "text", "description": "Skip second body-decoder keypoint-prompt pass (Fast SAM 3D Body). Hands still run." },
             { "key": "output_tracking_bbox", "value": "false", "type": "text" },
             { "key": "frame_batch_size", "value": "1", "type": "text" },
             { "key": "detection_batch_size", "value": "1", "type": "text" },
@@ -115,7 +116,7 @@
           ]
         },
         "url": "{{base_url}}/jobs/pose",
-        "description": "Submit image/video for pose estimation. Provide either input_file (upload) or input_mount_id (from POST /mount), not both. Returns job_id."
+        "description": "Submit image/video for pose estimation. Provide either input_file (upload) or input_mount_id (from POST /mount), not both. Returns job_id. Set fast_inference=true to skip the second body-decoder pass."
       }
     },
     {
@@ -136,6 +137,7 @@
             { "key": "fov_method", "value": "Default", "type": "text" },
             { "key": "sample_number", "value": "1", "type": "text" },
             { "key": "precision", "value": "fp32", "type": "text" },
+            { "key": "fast_inference", "value": "false", "type": "text", "description": "Skip second body-decoder keypoint-prompt pass (Fast SAM 3D Body). Hands still run." },
             { "key": "output_tracking_bbox", "value": "false", "type": "text" },
             { "key": "frame_batch_size", "value": "1", "type": "text" },
             { "key": "detection_batch_size", "value": "1", "type": "text" },
@@ -143,7 +145,7 @@
           ]
         },
         "url": "{{base_url}}/jobs/pose",
-        "description": "Pose estimation using a previously mounted file. No file upload needed -- uses {{mount_id}} from the Mounts folder. Mount the file first via POST /mount."
+        "description": "Pose estimation using a previously mounted file. No file upload needed -- uses {{mount_id}} from the Mounts folder. Mount the file first via POST /mount. Set fast_inference=true to skip the second body-decoder pass."
       }
     },
     {

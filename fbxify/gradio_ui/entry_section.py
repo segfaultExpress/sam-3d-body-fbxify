@@ -105,6 +105,11 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
         value="FP32 (Full)",
         info=translator.t("ui.precision_info")
     )
+    components['fast_inference'] = gr.Checkbox(
+        label=translator.t("ui.fast_inference"),
+        value=False,
+        info=translator.t("ui.fast_inference_info"),
+    )
 
     # Frame batching (run pose model once per N frames for speed)
     components['frame_batch_size'] = gr.Number(
@@ -200,6 +205,7 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.fov_file")),  # fov_file
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
         gr.update(label=t.t("ui.precision"), info=t.t("ui.precision_info")),  # precision
+        gr.update(label=t.t("ui.fast_inference"), info=t.t("ui.fast_inference_info")),  # fast_inference
         gr.update(label=t.t("ui.frame_batch_size"), info=t.t("ui.frame_batch_size_info")),  # frame_batch_size
         gr.update(label=t.t("ui.detection_batch_size"), info=t.t("ui.detection_batch_size_info")),  # detection_batch_size
     )

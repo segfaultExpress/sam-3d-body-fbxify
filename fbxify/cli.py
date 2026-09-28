@@ -153,6 +153,11 @@ def parse_args():
         choices=["fp32", "bf16", "fp16"],
         help="Inference precision: fp32 (full), bf16 (fast + safer), fp16 (fastest)"
     )
+    parser.add_argument(
+        "--fast_inference",
+        action="store_true",
+        help="Skip the second body-decoder keypoint-prompt pass (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT). Hands still run. Test/A-B vs stock 3DB."
+    )
     
     # Root motion
     parser.add_argument(
@@ -311,6 +316,11 @@ def main():
     except Exception as e:
         print(f"Error initializing estimator: {e}")
         sys.exit(1)
+
+    if args.fast_inference:
+        estimation_manager.set_inference_options(
+            precision=args.precision, skip_keypoint_prompt=True
+        )
 
     data_prep_manager = FbxDataPrepManager()
     manager = FbxifyManager(estimation_manager, data_prep_manager)

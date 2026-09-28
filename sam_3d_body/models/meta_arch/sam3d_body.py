@@ -1209,6 +1209,7 @@ class SAM3DBody(BaseModel):
         inference_type: str = "full",
         transform_hand: Any = None,
         thresh_wrist_angle=1.4,
+        skip_keypoint_prompt: bool = False,
     ):
         """
         Run 3DB inference (optionally with hand detector).
@@ -1217,6 +1218,11 @@ class SAM3DBody(BaseModel):
             - full: full-body inference with both body and hand decoders
             - body: inference with body decoder only (still full-body output)
             - hand: inference with hand decoder only (only hand output)
+
+        skip_keypoint_prompt:
+            Fast SAM 3D Body SKIP_KEYPOINT_PROMPT. Skip the second body-decoder
+            pass that re-prompts with wrist/elbow keypoints. Hands are still
+            decoded and fused. Default False preserves stock 3DB behavior.
         """
 
         height, width = img.shape[:2]
@@ -1396,6 +1402,7 @@ class SAM3DBody(BaseModel):
         batch_size, num_person = batch["img"].shape[:2]
         self.hand_batch_idx = []
         self.body_batch_idx = list(range(batch_size * num_person))
+        do_keypoint_prompt = not skip_keypoint_prompt
 
         ## Get right & left wrist keypoints from crops; full image. Each are B x 1 x 2
         kps_right_wrist_idx = 41
@@ -1469,7 +1476,7 @@ class SAM3DBody(BaseModel):
                 keypoint_prompt[:, :, :2] + 0.5, min=0.0, max=1.0
             )  # [-0.5, 0.5] --> [0, 1]
 
-        if keypoint_prompt.numel() != 0:
+        if do_keypoint_prompt and keypoint_prompt.numel() != 0:
             pose_output, _ = self.run_keypoint_prompt(
                 batch, pose_output, keypoint_prompt
             )
@@ -1663,6 +1670,7 @@ class SAM3DBody(BaseModel):
         transform_hand: Any,
         n_per_frame: list,
         thresh_wrist_angle: float = 1.4,
+        skip_keypoint_prompt: bool = False,
     ) -> Tuple[Dict, Dict, Dict]:
         """
         Batched full-body inference: body forward + batched hand refinement.
@@ -1677,6 +1685,7 @@ class SAM3DBody(BaseModel):
             transform_hand=transform_hand,
             n_per_frame=n_per_frame,
             thresh_wrist_angle=thresh_wrist_angle,
+            skip_keypoint_prompt=skip_keypoint_prompt,
         )
 
     def run_hand_refinement_batched(
@@ -1687,6 +1696,7 @@ class SAM3DBody(BaseModel):
         transform_hand: Any,
         n_per_frame: list,
         thresh_wrist_angle: float = 1.4,
+        skip_keypoint_prompt: bool = False,
     ) -> Tuple[Dict, list, list]:
         """
         Batched hand refinement across all frames. Replaces K sequential
@@ -1941,7 +1951,7 @@ class SAM3DBody(BaseModel):
             "image_embeddings": pose_output["image_embeddings"],
             "condition_info": pose_output["condition_info"],
         }
-        if keypoint_prompt.numel() != 0:
+        if (not skip_keypoint_prompt) and keypoint_prompt.numel() != 0:
             self.run_keypoint_prompt(batch, output_for_kpt, keypoint_prompt)
             pose_output["mhr"] = output_for_kpt["mhr"]
 

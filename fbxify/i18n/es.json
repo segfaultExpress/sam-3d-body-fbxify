@@ -150,6 +150,8 @@
     "sample_number_info": "Número de imágenes a muestrear y promediar para la estimación FOV",
     "precision": "🎛️ Precisión",
     "precision_info": "FP32 para máxima calidad, BF16/FP16 para inferencia más rápida",
+    "fast_inference": "⚡ Inferencia rápida",
+    "fast_inference_info": "Omite la segunda pasada del decodificador del cuerpo. Las manos siguen ejecutándose. Más rápido, con menos corrección de brazos.",
     "frame_batch_size": "Tamaño de lote de fotogramas",
     "frame_batch_size_info": "Ejecutar el modelo de pose una vez cada N fotogramas (1 = por fotograma). 4 u 8 puede acelerar el vídeo. Mayor = más memoria GPU.",
     "detection_batch_size": "Tamaño de lote de detección",
