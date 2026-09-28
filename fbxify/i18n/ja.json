@@ -150,6 +150,8 @@
     "sample_number_info": "FOV推定のためにサンプリング・平均する画像の数",
     "precision": "🎛️ 精度",
     "precision_info": "FP32で最高品質、BF16/FP16で高速推論",
+    "fast_inference": "⚡ 高速推論",
+    "fast_inference_info": "2回目の身体デコーダパスを省略します。手は引き続き推定します。速くなりますが、腕の補正は少なくなります。",
     "frame_batch_size": "フレームバッチサイズ",
     "frame_batch_size_info": "Nフレームごとにポーズモデルを1回実行（1=フレームごと）。4や8で動画を高速化。大きいほどGPUメモリを使用。",
     "detection_batch_size": "検出バッチサイズ",

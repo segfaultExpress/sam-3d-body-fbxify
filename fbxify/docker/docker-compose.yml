@@ -44,6 +44,7 @@ services:
       - CHECKPOINTS_DIR=${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}
       - CACHE_DIR=${CACHE_DIR_CONTAINER:-/fbxify/cache}
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
+      - FBXIFY_FAST_INFERENCE=${FBXIFY_FAST_INFERENCE:-0}
       - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
       - HF_TOKEN=${HF_TOKEN}
     ports:

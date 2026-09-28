@@ -150,6 +150,8 @@
     "sample_number_info": "Number of images to sample and average for FOV estimation",
     "precision": "🎛️ Precision",
     "precision_info": "FP32 for best quality, BF16/FP16 for faster inference",
+    "fast_inference": "⚡ Fast inference",
+    "fast_inference_info": "Skip the second body-decoder pass. Hands still run. Faster, with less arm correction.",
     "frame_batch_size": "Frame batch size",
     "frame_batch_size_info": "Run pose model once per N frames (1 = per-frame). 4 or 8 can speed up video. Higher = more GPU memory.",
     "detection_batch_size": "Detection batch size",
