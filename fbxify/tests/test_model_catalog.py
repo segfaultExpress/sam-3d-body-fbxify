@@ -263,6 +263,33 @@ def test_api_exposes_models_and_accepts_names_only():
     assert '"models": _loaded_models()' in api  # /health reports what is loaded
 
 
+def test_job_requests_reject_unknown_disabled_and_missing_names(tmp_path, monkeypatch):
+    """Bad names are refused with 400 before a job is queued (not failed inside the job)."""
+    fastapi = pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    from fbxify import api as api_module
+
+    cat = _load(tmp_path, {"detectors": {"broken": {
+        "enabled": True, "type": "ultralytics", "source": {"kind": "local", "path": str(tmp_path / "nope.pt")}}}})
+    monkeypatch.setattr(api_module, "_get_catalog", lambda refresh=False: cat)
+    monkeypatch.setattr(api_module, "_loaded_models", lambda: {"body_model": "vith", "encoder": "fp32", "detector": "vitdet"})
+    monkeypatch.setattr(api_module, "worker_blockers", lambda: [])  # readiness is covered elsewhere
+    png = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+    with TestClient(api_module.app, raise_server_exceptions=False) as client:
+        def detect(name):
+            import io
+            return client.post("/jobs/detection", files={"input_file": ("f.png", io.BytesIO(png))}, data={"detector": name})
+
+        assert detect("../etc/passwd").status_code == 400
+        r = detect("yolo11m")
+        assert r.status_code == 400 and "disabled" in r.json()["detail"]
+        r = detect("broken")
+        assert r.status_code == 400 and "missing" in r.json()["detail"]
+        assert api_module._jobs == {}
+    del fastapi
+
+
 def test_manager_swaps_under_lock_and_frees_gpu():
     src = _read("fbxify/pose_estimation_manager.py")
     assert "def select(self, body_model=None, encoder=None, detector=None)" in src

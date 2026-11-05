@@ -303,6 +303,14 @@ def _validate_model_names(**names: Optional[str]) -> None:
                     status_code=400,
                     detail=f"{key} {entry.name!r} is disabled in the model catalogue; enable it in models.json",
                 )
+            if not entry.is_ready():
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"{key} {entry.name!r} is {entry.status()}: its files are not on disk. "
+                        "POST /models/fetch (downloadable sources) or check the mount path in models.json."
+                    ),
+                )
         body = names.get("body_model")
         enc = names.get("encoder")
         if enc and str(enc).strip():
