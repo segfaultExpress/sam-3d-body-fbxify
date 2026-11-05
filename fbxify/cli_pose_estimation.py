@@ -65,6 +65,13 @@ def parse_args():
         action="store_true",
         help="Skip the second body-decoder keypoint-prompt pass (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT).",
     )
+    parser.add_argument(
+        "--quantized_backbone",
+        type=str,
+        default=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
+        choices=["none", "pt2", "trt"],
+        help="Swap the DINOv3 encoder for the embedl INT8 export (dinov3 only): pt2 or trt. Default from FBXIFY_QUANTIZED_BACKBONE.",
+    )
     # Input / output
     parser.add_argument(
         "input_file",
@@ -187,6 +194,7 @@ def main():
             fov_name=args.fov_name,
             fov_path=fov_path,
             precision=args.precision,
+            quantized_backbone=args.quantized_backbone,
         )
     except Exception as e:
         print(f"Error initializing estimator: {e}")

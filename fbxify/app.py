@@ -74,6 +74,13 @@ def parse_args():
         type=str,
         help="Path to fov estimation model folder (or set SAM3D_FOV_PATH)",
     )
+    parser.add_argument(
+        "--quantized_backbone",
+        type=str,
+        default=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
+        choices=["none", "pt2", "trt"],
+        help="Swap the DINOv3 encoder for the embedl INT8 export (dinov3 only): pt2 or trt. Default from FBXIFY_QUANTIZED_BACKBONE.",
+    )
     return parser.parse_args()
 
 
@@ -1413,7 +1420,8 @@ if __name__ == "__main__":
             detector_path=detector_path,
             fov_name=args.fov_name,
             fov_path=fov_path,
-            precision="fp32"
+            precision="fp32",
+            quantized_backbone=args.quantized_backbone,
         )
 
         data_prep_manager = FbxDataPrepManager()

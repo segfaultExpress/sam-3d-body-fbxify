@@ -37,6 +37,21 @@ class CancelledError(Exception):
     pass
 
 
+QUANTIZED_BACKBONE_CHOICES = ("none", "pt2", "trt")
+
+
+def normalize_quantized_mode(value) -> Optional[str]:
+    """Map None/""/"0"/"none"/"off" -> None, else validate "pt2"/"trt"."""
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    if text in ("", "0", "none", "off", "false", "no"):
+        return None
+    if text not in ("pt2", "trt"):
+        raise ValueError(f"quantized_backbone must be one of {QUANTIZED_BACKBONE_CHOICES}, got {value!r}")
+    return text
+
+
 class PoseEstimationManager:
     """
     Manages pose estimation operations (the expensive part).
@@ -55,6 +70,8 @@ class PoseEstimationManager:
         fov_name="moge2",
         fov_path=None,
         precision="fp32",
+        quantized_backbone=None,
+        quantized_dir=None,
     ):
         """
         Initialize the pose estimation manager.
@@ -67,15 +84,35 @@ class PoseEstimationManager:
             detector_path: Path to detector model
             fov_name: Name of FOV estimator to use
             fov_path: Path to FOV estimator model
+            quantized_backbone: None/"none" (stock fp32 DINOv3), "pt2" or "trt" to swap the
+                encoder for the embedl INT8 export (dinov3 checkpoint only).
+            quantized_dir: Folder with the embedl files. Defaults to
+                FBXIFY_QUANTIZED_DIR or CHECKPOINTS_DIR/embedl-sam-3d-body.
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Loading SAM 3D Body on {self.device}...")
         
+        self.quantized_backbone = normalize_quantized_mode(quantized_backbone)
         model, cfg = load_sam_3d_body(
             checkpoint_path=checkpoint_path,
             device=self.device,
-            mhr_path=mhr_path
+            mhr_path=mhr_path,
+            # The INT8 encoder replaces the checkpoint's backbone, so its weights need not load.
+            require_backbone_weights=not self.quantized_backbone,
         )
+
+        self.quantized_dir = None
+        if self.quantized_backbone:
+            from fbxify.checkpoint_download import download_embedl_if_missing, embedl_quantized_dir
+            from sam_3d_body.models.backbones.embedl_int8 import swap_in_quantized_backbone
+
+            self.quantized_dir = quantized_dir or embedl_quantized_dir()
+            if not download_embedl_if_missing(self.quantized_backbone, self.quantized_dir):
+                raise FileNotFoundError(
+                    f"embedl INT8 encoder files for mode {self.quantized_backbone!r} not found in "
+                    f"{self.quantized_dir}. See fbxify/docker/Quantized.md."
+                )
+            swap_in_quantized_backbone(model, self.quantized_dir, self.quantized_backbone)
 
         self.cfg = cfg
         
@@ -396,6 +433,9 @@ class PoseEstimationManager:
 
         model.convert_to_fp16()
         model.backbone_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+        if self.quantized_backbone:
+            # The INT8 encoder owns its own precision; it casts inputs itself.
+            model.backbone_dtype = torch.float32
 
 
     def cache_cam_int_from_file(self, cam_int):

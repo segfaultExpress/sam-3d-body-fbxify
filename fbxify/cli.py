@@ -158,6 +158,13 @@ def parse_args():
         action="store_true",
         help="Skip the second body-decoder keypoint-prompt pass (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT). Hands still run. Test/A-B vs stock 3DB."
     )
+    parser.add_argument(
+        "--quantized_backbone",
+        type=str,
+        default=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
+        choices=["none", "pt2", "trt"],
+        help="Swap the DINOv3 encoder for the embedl INT8 export (dinov3 only): pt2 = torch.export, trt = TensorRT engine. Default from FBXIFY_QUANTIZED_BACKBONE."
+    )
     
     # Root motion
     parser.add_argument(
@@ -312,6 +319,7 @@ def main():
             fov_name=args.fov_name,
             fov_path=fov_path,
             precision=args.precision,
+            quantized_backbone=args.quantized_backbone,
         )
     except Exception as e:
         print(f"Error initializing estimator: {e}")

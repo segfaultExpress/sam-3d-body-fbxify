@@ -19,6 +19,8 @@ This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export 
 
 **Option B: Docker** - See [fbxify/docker/ReadMe.md](fbxify/docker/ReadMe.md) for UI, worker, and simple image variants.
 
+**Experimental: quantized INT8 encoder (TensorRT)** - See [fbxify/docker/Quantized.md](fbxify/docker/Quantized.md) to swap the DINOv3 encoder for [embedl/sam-3d-body](https://huggingface.co/embedl/sam-3d-body) and run the quantized × fast benchmark matrix.
+
 **Start the server** (Docker):
 - Linux/Mac: `./run.sh`
 - Windows: `./run.bat`

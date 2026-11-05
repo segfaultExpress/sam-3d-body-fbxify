@@ -180,6 +180,7 @@ def _get_manager():
             fov_name=os.environ.get("FBXIFY_FOV", "moge2"),
             fov_path=fov_path,
             precision=os.environ.get("FBXIFY_PRECISION", "fp32"),
+            quantized_backbone=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
         )
         data_prep_manager = FbxDataPrepManager()
         _manager = FbxifyManager(estimation_manager, data_prep_manager)
