@@ -77,7 +77,7 @@ def add_model_args(parser) -> None:
         "--detector",
         type=str,
         default=os.environ.get("FBXIFY_DETECTOR") or None,
-        help="Detector name from the catalogue (vitdet, yolo11m, ...). 'none' disables detection. Default: catalogue default.",
+        help="Detector name from the catalogue (vitdet, or one from your models.json overlay). 'none' disables detection. Default: catalogue default.",
     )
     parser.add_argument(
         "--detector_name",

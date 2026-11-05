@@ -8,7 +8,8 @@
     "point FBXIFY_MODELS_JSON at one; it is overlaid on this file. See README: 'Model catalogue'.",
     "source.kind is one of: huggingface (repo_id + files), url (single file), local (already on a",
     "mount, never downloaded), none (no files). ${CHECKPOINTS_DIR} and ${CACHE_DIR} are expanded.",
-    "Shipped entries carry sha256 + size for every file and are verified; custom entries may omit them."
+    "Shipped entries carry sha256 + size for every file and are verified; custom entries may omit them.",
+    "Other detector architectures (type \"ultralytics\" or one you register) are added from your own overlay only."
   ],
   "detectors": {
     "vitdet": {
@@ -27,26 +28,6 @@
       "local_dir": "${CACHE_DIR}/videt_checkpoint",
       "options": {},
       "notes": "The detector SAM 3D Body shipped with. ~1 s per 1080p frame on an RTX 4070 Ti, ~5 GB VRAM."
-    },
-    "yolo11m": {
-      "display_name": "YOLO11m (Ultralytics, AGPL-3.0)",
-      "enabled": false,
-      "default": false,
-      "type": "ultralytics",
-      "licence": "AGPL-3.0 (Ultralytics) - opt in only; needs `pip install ultralytics`",
-      "source": {
-        "kind": "url",
-        "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
-        "filename": "yolo11m.pt",
-        "sha256": "d5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95",
-        "size": 40684120
-      },
-      "local_dir": "${CACHE_DIR}/ultralytics",
-      "options": {
-        "imgsz": 640,
-        "classes": [0]
-      },
-      "notes": "Person class only. Much faster than ViTDet; box style differs slightly, so compare pose output on your own footage before switching."
     }
   },
   "encoders": {

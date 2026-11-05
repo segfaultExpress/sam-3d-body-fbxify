@@ -73,7 +73,7 @@ file, [`fbxify/models.json`](fbxify/models.json). Three sections, one entry per 
 
 | Section | Shipped entries | Purpose |
 | --- | --- | --- |
-| `detectors` | `vitdet` (default), `yolo11m` (off, AGPL opt-in) | person bbox when no bbox file is given |
+| `detectors` | `vitdet` (default) | person bbox when no bbox file is given |
 | `encoders` | `fp32` (default), `embedl_int8_trt`, `embedl_int8_pt2` (off) | image encoder variant inside SAM 3D Body |
 | `body_models` | `vith` (default), `dinov3` | SAM 3D Body checkpoint + MHR head |
 
@@ -89,8 +89,9 @@ Rules:
   download carries `sha256` + `size` and is verified after fetch (`python -m fbxify.model_catalog verify --deep`
   re-hashes everything). Custom entries without a checksum are only checked for presence.
 - Hugging Face repos are gated: accept the licence on the model page and pass `HF_TOKEN` to the container.
-  Ultralytics weights load through the `ultralytics` package (AGPL-3.0), which is not installed by default:
-  `pip install ultralytics` in your image if you enable a YOLO entry.
+- The shipped catalogue only lists weights whose licences are compatible with this repo. Other
+  detector families (for example anything loaded through the `ultralytics` package, which is AGPL-3.0
+  and not installed by default) are yours to add from your own overlay, under your own licence terms.
 
 ### Switching at runtime
 
@@ -117,7 +118,7 @@ initial selection and force-enable those entries.
 
 Put a `models.json` next to your checkpoints (`$CHECKPOINTS_DIR/models.json`) or point
 `FBXIFY_MODELS_JSON` at one. It is overlaid on the shipped file: same name patches the shipped entry
-(for example `{"yolo11m": {"enabled": true}}`), a new name adds an entry, `null` removes one, and
+(for example `{"embedl_int8_trt": {"enabled": true}}` under `encoders`), a new name adds an entry, `null` removes one, and
 `"default": true` on your entry takes the default away from the shipped one. `sha256` / `size` on
 your own files are optional; when present they are verified like the shipped ones.
 
@@ -125,13 +126,12 @@ your own files are optional; when present they are verified like the shipped one
 {
   "schema": "fbxify.models/1",
   "detectors": {
-    "yolo11m": { "enabled": true },
-    "dancers_yolo": {
-      "display_name": "YOLO11m fine-tuned on our footage",
+    "dancers_detector": {
+      "display_name": "Person detector fine-tuned on our footage",
       "enabled": true, "default": true,
       "type": "ultralytics",
       "licence": "AGPL-3.0",
-      "source": { "kind": "local", "path": "/workspace/models/dancers_yolo11m.pt" },
+      "source": { "kind": "local", "path": "/workspace/models/dancers_detector.pt" },
       "options": { "imgsz": 960, "classes": [0] }
     },
     "rtdetr_from_hub": {

@@ -61,12 +61,14 @@ def test_shipped_defaults_and_opt_ins(tmp_path):
     assert cat.default("body_models").name == "vith"
     assert cat.default("encoders").name == "fp32"
     assert cat.default("detectors").name == "vitdet"
-    assert cat.get("detectors", "yolo11m").enabled is False  # AGPL: opt in
-    assert cat.get("detectors", "yolo11m").type == "ultralytics"
+    # Only licence-compatible weights ship; other detector families come from the user's overlay.
+    assert cat.names("detectors", enabled_only=False) == ["vitdet"]
+    assert all(e.type != "ultralytics" for e in cat.section("detectors").values())
+    assert cat.get("encoders", "embedl_int8_trt").enabled is False  # gated: opt in
     assert cat.get("encoders", "embedl_int8_trt").requires_body == ["dinov3"]
     assert cat.names("body_models") == ["vith", "dinov3"]
-    assert "yolo11m" not in cat.names("detectors")
-    assert "yolo11m" in cat.names("detectors", enabled_only=False)
+    assert "embedl_int8_trt" not in cat.names("encoders")
+    assert "embedl_int8_trt" in cat.names("encoders", enabled_only=False)
 
 
 def test_paths_expand_checkpoints_and_cache_dirs(tmp_path):
@@ -102,10 +104,9 @@ def test_user_overlay_adds_local_entries_and_moves_default(tmp_path):
                 "source": {"kind": "local", "path": str(weights)},
                 "options": {"imgsz": 960},
             },
-            "yolo11m": {"enabled": True},
             "vitdet": {"enabled": False},
         },
-        "encoders": {"embedl_int8_pt2": None},
+        "encoders": {"embedl_int8_pt2": None, "embedl_int8_trt": {"enabled": True}},
     })
     assert cat.validate() == []
     body = cat.get("body_models", "my_sam3d")
@@ -119,8 +120,8 @@ def test_user_overlay_adds_local_entries_and_moves_default(tmp_path):
     det, kwargs = cat.resolve_detector("dancers_yolo")
     assert kwargs["weights"] == str(weights)
     assert kwargs["options"] == {"imgsz": 960}
-    assert cat.get("detectors", "yolo11m").enabled is True       # patched shipped entry
-    assert cat.get("detectors", "yolo11m").builtin is True        # source untouched -> still verified
+    assert cat.get("encoders", "embedl_int8_trt").enabled is True   # patched shipped entry
+    assert cat.get("encoders", "embedl_int8_trt").builtin is True    # source untouched -> still verified
     assert cat.get("detectors", "vitdet").enabled is False
     assert "embedl_int8_pt2" not in cat.section("encoders")      # null removes
 
@@ -183,11 +184,13 @@ def test_unknown_names_raise_and_describe_hides_paths(tmp_path):
 
 
 def test_status_tracks_missing_size_and_ready(tmp_path):
-    cat = _load(tmp_path)
-    det = cat.get("detectors", "yolo11m")
-    det.enabled = True
+    cat = _load(tmp_path, {"detectors": {"mine": {
+        "enabled": True, "type": "ultralytics",
+        "source": {"kind": "url", "url": "https://example.invalid/mine.pt", "filename": "mine.pt", "size": 4096},
+        "local_dir": "${CACHE_DIR}/mine"}}})
+    det = cat.get("detectors", "mine")
     assert det.status() == "missing"
-    p = Path(det.file_path("yolo11m.pt"))
+    p = Path(det.file_path("mine.pt"))
     p.parent.mkdir(parents=True)
     p.write_bytes(b"short")
     assert det.status() == "size-mismatch"
@@ -244,7 +247,7 @@ def test_cli_list_json(tmp_path, monkeypatch, capsys):
     monkeypatch.delenv("FBXIFY_MODELS_JSON", raising=False)
     assert mc._cli(["list", "--all", "--json"]) == 0
     rows = json.loads(capsys.readouterr().out)
-    assert {r["name"] for r in rows} >= {"vitdet", "yolo11m", "fp32", "embedl_int8_trt", "vith", "dinov3"}
+    assert {r["name"] for r in rows} >= {"vitdet", "fp32", "embedl_int8_trt", "vith", "dinov3"}
 
 
 # ----------------------------------------------------------------------------- plumbing
@@ -270,8 +273,10 @@ def test_job_requests_reject_unknown_disabled_and_missing_names(tmp_path, monkey
 
     from fbxify import api as api_module
 
-    cat = _load(tmp_path, {"detectors": {"broken": {
-        "enabled": True, "type": "ultralytics", "source": {"kind": "local", "path": str(tmp_path / "nope.pt")}}}})
+    cat = _load(tmp_path, {"detectors": {
+        "broken": {"enabled": True, "type": "ultralytics", "source": {"kind": "local", "path": str(tmp_path / "nope.pt")}},
+        "off": {"enabled": False, "type": "ultralytics", "source": {"kind": "local", "path": str(tmp_path / "off.pt")}},
+    }})
     monkeypatch.setattr(api_module, "_get_catalog", lambda refresh=False: cat)
     monkeypatch.setattr(api_module, "_loaded_models", lambda: {"body_model": "vith", "encoder": "fp32", "detector": "vitdet"})
     monkeypatch.setattr(api_module, "worker_blockers", lambda: [])  # readiness is covered elsewhere
@@ -282,7 +287,7 @@ def test_job_requests_reject_unknown_disabled_and_missing_names(tmp_path, monkey
             return client.post("/jobs/detection", files={"input_file": ("f.png", io.BytesIO(png))}, data={"detector": name})
 
         assert detect("../etc/passwd").status_code == 400
-        r = detect("yolo11m")
+        r = detect("off")
         assert r.status_code == 400 and "disabled" in r.json()["detail"]
         r = detect("broken")
         assert r.status_code == 400 and "missing" in r.json()["detail"]

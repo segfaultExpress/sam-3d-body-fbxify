@@ -53,7 +53,7 @@
               "formdata": [
                 { "key": "body_model", "value": "vith", "type": "text", "description": "Catalogue name from body_models (e.g. vith, dinov3). Omit to keep the current one." },
                 { "key": "encoder", "value": "fp32", "type": "text", "description": "Catalogue name from encoders (e.g. fp32, embedl_int8_trt). Some encoders require a specific body model." },
-                { "key": "detector", "value": "vitdet", "type": "text", "description": "Catalogue name from detectors (e.g. vitdet, yolo11m). Omit to keep the current one." }
+                { "key": "detector", "value": "vitdet", "type": "text", "description": "Catalogue name from detectors (e.g. vitdet). Omit to keep the current one." }
               ]
             },
             "url": "{{base_url}}/models/select",
@@ -174,7 +174,7 @@
             { "key": "lang", "value": "en", "type": "text" },
             { "key": "body_model", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (see Models > List Models). Swaps before the job runs; omit to use what is loaded." },
             { "key": "encoder", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. fp32, embedl_int8_trt)." },
-            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. vitdet, yolo11m)." }
+            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. vitdet)." }
           ]
         },
         "url": "{{base_url}}/jobs/pose",
@@ -206,7 +206,7 @@
             { "key": "lang", "value": "en", "type": "text" },
             { "key": "body_model", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (see Models > List Models)." },
             { "key": "encoder", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. fp32, embedl_int8_trt)." },
-            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. vitdet, yolo11m)." }
+            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. vitdet)." }
           ]
         },
         "url": "{{base_url}}/jobs/pose",
@@ -303,7 +303,7 @@
           "formdata": [
             { "key": "input_file", "type": "file", "src": "", "description": "Image or video (required)" },
             { "key": "detection_batch_size", "value": "1", "type": "text" },
-            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional detector catalogue name (e.g. vitdet, yolo11m). Omit to use what is loaded." }
+            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional detector catalogue name (e.g. vitdet). Omit to use what is loaded." }
           ]
         },
         "url": "{{base_url}}/jobs/detection",
