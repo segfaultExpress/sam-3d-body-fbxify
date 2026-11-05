@@ -62,4 +62,13 @@ link_mhr_runtime_assets() {
 }
 link_mhr_runtime_assets "/opt/venv/lib/python3.12/site-packages/assets" "$CACHE_DIR/mhr_assets"
 
+# Fetch only the models that are enabled in the catalogue (fbxify/models.json overlaid with
+# FBXIFY_MODELS_JSON or $CHECKPOINTS_DIR/models.json). Hugging Face entries need HF_TOKEN;
+# "local" entries are only checked. Non-fatal: the API starts in waiting mode if something
+# is missing. Set FBXIFY_SKIP_MODEL_FETCH=1 to skip (the API start-up repeats the check).
+if [ "${FBXIFY_SKIP_MODEL_FETCH:-0}" != "1" ] && [ "${FBXIFY_MODELS_FETCHED:-0}" != "1" ]; then
+  python -m fbxify.model_catalog fetch || echo "model_catalog: some enabled models are missing (see above)"
+  export FBXIFY_MODELS_FETCHED=1
+fi
+
 exec uvicorn fbxify.api:app --host 0.0.0.0 --port "${PORT:-8000}"

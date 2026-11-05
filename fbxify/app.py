@@ -41,46 +41,14 @@ from fbxify.gradio_ui.developer_section import (
 from fbxify.gradio_ui.pose_tab import create_pose_tab
 from fbxify.gradio_ui.fbx_tab import create_fbx_tab
 
-_CHECKPOINTS_BASE = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
-VITH_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-vith")
-DINOV3_CHECKPOINT_PATH = os.path.join(_CHECKPOINTS_BASE, "sam-3d-body-dinov3")
-
 
 def parse_args():
+    from fbxify.cli_common import add_model_args
+
     parser = argparse.ArgumentParser()
-    # can choose between vith and dinov3
-    parser.add_argument("--model", type=str, default="vith", choices=["vith", "dinov3"])
-    parser.add_argument(
-        "--detector_name",
-        default="vitdet",
-        type=str,
-        help="Human detection model for demo (Default `vitdet`, add your favorite detector if needed).",
-    )
-    parser.add_argument(
-        "--detector_path",
-        default="",
-        type=str,
-        help="Path to human detection model folder (or set SAM3D_DETECTOR_PATH)",
-    )
-    parser.add_argument(
-        "--fov_name",
-        default="moge2",
-        type=str,
-        help="FOV estimation model for demo (Default `moge2`, add your favorite fov estimator if needed).",
-    )
-    parser.add_argument(
-        "--fov_path",
-        default="",
-        type=str,
-        help="Path to fov estimation model folder (or set SAM3D_FOV_PATH)",
-    )
-    parser.add_argument(
-        "--quantized_backbone",
-        type=str,
-        default=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
-        choices=["none", "pt2", "trt"],
-        help="Swap the DINOv3 encoder for the embedl INT8 export (dinov3 only): pt2 or trt. Default from FBXIFY_QUANTIZED_BACKBONE.",
-    )
+    # --model / --encoder / --detector are names from the model catalogue (fbxify/models.json),
+    # plus the legacy --detector_name/--detector_path/--fov_*/--quantized_backbone flags.
+    add_model_args(parser)
     return parser.parse_args()
 
 
@@ -101,6 +69,9 @@ def create_app(backend):
         sample_number,
         precision,
         fast_inference,
+        body_model,
+        encoder,
+        detector,
         output_tracking_bbox,
         tracking_enabled,
         max_gap_frames,
@@ -239,6 +210,9 @@ def create_app(backend):
                 translator.lang,
                 progress_callback,
                 fast_inference=bool(fast_inference),
+                body_model=body_model,
+                encoder=encoder,
+                detector=detector,
             )
         except Exception as e:
             error_type = type(e).__name__
@@ -303,7 +277,8 @@ def create_app(backend):
         return text
 
     def build_pose_cli_command(tracking_mode, bbox_file, num_people, missing_bbox_behavior, fov_method,
-                               fov_file, sample_number, precision, fast_inference, tracking_config_file, frame_batch_size, detection_batch_size):
+                               fov_file, sample_number, precision, fast_inference, tracking_config_file, frame_batch_size, detection_batch_size,
+                               body_model=None, encoder=None, detector=None):
         precision_map = {
             "FP32 (Full)": "fp32",
             "BF16 (Fast + Safer)": "bf16",
@@ -319,6 +294,12 @@ def create_app(backend):
         tracking_mode_value = tracking_mode_map.get(tracking_mode, "count")
 
         cmd_parts = ["python", "-m", "fbxify.cli"]
+        if body_model:
+            cmd_parts += ["--model", _format_cli_arg(str(body_model))]
+        if encoder:
+            cmd_parts += ["--encoder", _format_cli_arg(str(encoder))]
+        if detector:
+            cmd_parts += ["--detector", _format_cli_arg(str(detector))]
         cmd_parts += ["--tracking_mode", tracking_mode_value]
 
         if tracking_mode_value == "bbox":
@@ -431,9 +412,17 @@ def create_app(backend):
         heading_md, description_md, header_tabs, lang_selector = create_header_section(translator)
 
         # Pose/FBX tabs inside Program area
+        # Model catalogue for the dropdowns. A worker that is down or old just leaves them empty
+        # (allow_custom_value lets a name be typed; the job then uses whatever is loaded).
+        try:
+            models_payload = backend.list_models() if hasattr(backend, "list_models") else None
+        except Exception as e:
+            print(f"[fbxify] Could not fetch the model catalogue from the backend: {e}")
+            models_payload = None
+
         with gr.Tabs() as pose_fbx_tabs:
             with gr.Tab(translator.t("ui.pose_tab_label")) as pose_tab:
-                pose_tab_components = create_pose_tab(translator)
+                pose_tab_components = create_pose_tab(translator, models=models_payload)
             with gr.Tab(translator.t("ui.fbx_tab_label")) as fbx_tab:
                 fbx_tab_components = create_fbx_tab(translator)
 
@@ -495,6 +484,7 @@ def create_app(backend):
                 heading_md, description_md, header_tabs,  # header
                 pose_tab, fbx_tab,  # pose/fbx tabs
                 entry_components['input_file'],
+                entry_components['body_model'], entry_components['encoder'], entry_components['detector'],
                 entry_components['tracking_mode'], entry_components['bbox_file'],
                 entry_components['num_people'], entry_components['missing_bbox_behavior'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
@@ -878,6 +868,9 @@ def create_app(backend):
                 entry_components['sample_number'],
                 entry_components['precision'],
                 entry_components['fast_inference'],
+                entry_components['body_model'],
+                entry_components['encoder'],
+                entry_components['detector'],
                 pose_dev_components['pose_output_tracking_bbox'],
                 entry_components['tracking_enabled'],
                 entry_components['max_gap_frames'],
@@ -1094,6 +1087,9 @@ def create_app(backend):
                 entry_components['tracking_config_upload'],
                 entry_components['frame_batch_size'],
                 entry_components['detection_batch_size'],
+                entry_components['body_model'],
+                entry_components['encoder'],
+                entry_components['detector'],
             ],
             outputs=[pose_cli_components['pose_cli_command']]
         )
@@ -1128,13 +1124,13 @@ def create_app(backend):
             cancels=[estimate_pose_click, generate_fbx_click]
         )
 
-        def run_bbox_detection_now(input_file, detection_batch_size, progress=gr.Progress()):
+        def run_bbox_detection_now(input_file, detection_batch_size, detector=None, progress=gr.Progress()):
             """Run detection on all frames and export MOT file for download."""
             def prog(progress_value, desc):
                 if progress:
                     progress(progress_value, desc=desc)
             try:
-                mot_path = backend.run_detection_only(input_file, detection_batch_size, prog)
+                mot_path = backend.run_detection_only(input_file, detection_batch_size, prog, detector=detector)
                 return gr.update(value=mot_path, visible=True) if mot_path else gr.update(visible=False)
             except Exception as e:
                 print(f"[Export detection to MOT] Error: {e}")
@@ -1142,7 +1138,7 @@ def create_app(backend):
 
         pose_dev_components['pose_run_bbox_detection_btn'].click(
             fn=run_bbox_detection_now,
-            inputs=[entry_components['input_file'], entry_components['detection_batch_size']],
+            inputs=[entry_components['input_file'], entry_components['detection_batch_size'], entry_components['detector']],
             outputs=[pose_dev_components['pose_bbox_detection_output']],
         )
 
@@ -1400,29 +1396,9 @@ if __name__ == "__main__":
             raise SystemExit("MHR mesh assets are missing; refusing to start the local UI.")
 
         args = parse_args()
-        if args.model == "vith":
-            checkpoint_base_path = VITH_CHECKPOINT_PATH
-        elif args.model == "dinov3":
-            checkpoint_base_path = DINOV3_CHECKPOINT_PATH
-        else:
-            raise ValueError(f"Invalid model: {args.model}")
+        from fbxify.cli_common import build_estimation_manager
 
-        checkpoint_path = os.path.join(checkpoint_base_path, "model.ckpt")
-        mhr_path = os.path.join(checkpoint_base_path, "assets", "mhr_model.pt")
-
-        detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
-        fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
-
-        estimation_manager = PoseEstimationManager(
-            checkpoint_path=checkpoint_path,
-            mhr_path=mhr_path,
-            detector_name=args.detector_name,
-            detector_path=detector_path,
-            fov_name=args.fov_name,
-            fov_path=fov_path,
-            precision="fp32",
-            quantized_backbone=args.quantized_backbone,
-        )
+        estimation_manager = build_estimation_manager(args, precision="fp32")
 
         data_prep_manager = FbxDataPrepManager()
         manager = FbxifyManager(estimation_manager, data_prep_manager)

@@ -159,32 +159,91 @@ async def _resolve_mount_or_upload(
     return dest_path
 
 
+def _env_model_selection() -> Dict[str, Optional[str]]:
+    """Initial model selection from the environment (legacy variables keep working).
+
+    FBXIFY_MODEL -> body model name, FBXIFY_ENCODER or FBXIFY_QUANTIZED_BACKBONE (none|pt2|trt)
+    -> encoder name, FBXIFY_DETECTOR -> detector name ("" or "none" = no detector).
+    Unset variables fall back to the catalogue defaults.
+    """
+    from fbxify.model_catalog import encoder_name_for_quantized_mode
+
+    body = os.environ.get("FBXIFY_MODEL", "").strip() or None
+    encoder = os.environ.get("FBXIFY_ENCODER", "").strip() or None
+    if encoder is None:
+        quantized = os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none")
+        encoder = encoder_name_for_quantized_mode(quantized) if quantized.strip().lower() not in ("", "none") else None
+    detector_raw = os.environ.get("FBXIFY_DETECTOR")
+    if detector_raw is None:
+        detector = None
+    elif detector_raw.strip().lower() in ("", "none", "off", "0"):
+        detector = ""
+    else:
+        detector = detector_raw.strip()
+    return {"body_model": body, "encoder": encoder, "detector": detector}
+
+
+def _get_catalog(refresh: bool = False):
+    from fbxify.model_catalog import load_catalog
+
+    catalog = load_catalog(refresh=refresh)
+    sel = _env_model_selection()
+    catalog.force_enable("body_models", sel["body_model"])
+    catalog.force_enable("encoders", sel["encoder"])
+    if sel["detector"]:
+        catalog.force_enable("detectors", sel["detector"])
+    return catalog
+
+
 def _get_manager():
     global _manager
     if _manager is None:
         from fbxify.pose_estimation_manager import PoseEstimationManager
         from fbxify.fbx_data_prep_manager import FbxDataPrepManager
         from fbxify.fbxify_manager import FbxifyManager
-        from fbxify.cli_common import get_checkpoint_paths
 
-        model = os.environ.get("FBXIFY_MODEL", "vith")
-        checkpoint_path, mhr_path = get_checkpoint_paths(model)
-        detector_path = os.environ.get("SAM3D_DETECTOR_PATH", "")
-        fov_path = os.environ.get("SAM3D_FOV_PATH", "")
-
-        estimation_manager = PoseEstimationManager(
-            checkpoint_path=checkpoint_path,
-            mhr_path=mhr_path,
-            detector_name=os.environ.get("FBXIFY_DETECTOR", "vitdet"),
-            detector_path=detector_path,
+        catalog = _get_catalog()
+        sel = _env_model_selection()
+        body_entry, checkpoint_path, mhr_path = catalog.resolve_body(sel["body_model"])
+        if not (os.path.exists(checkpoint_path) and os.path.exists(mhr_path)):
+            raise FileNotFoundError(
+                f"body model {body_entry.name!r}: {checkpoint_path} / {mhr_path}"
+            )
+        estimation_manager = PoseEstimationManager.from_catalog(
+            catalog,
+            body_model=body_entry.name,
+            encoder=sel["encoder"],
+            detector=sel["detector"],
             fov_name=os.environ.get("FBXIFY_FOV", "moge2"),
-            fov_path=fov_path,
+            fov_path=os.environ.get("SAM3D_FOV_PATH", ""),
             precision=os.environ.get("FBXIFY_PRECISION", "fp32"),
-            quantized_backbone=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
         )
         data_prep_manager = FbxDataPrepManager()
         _manager = FbxifyManager(estimation_manager, data_prep_manager)
     return _manager
+
+
+def _loaded_models() -> Dict[str, Optional[str]]:
+    if _manager is None:
+        return {}
+    try:
+        return _manager.estimation_manager.loaded_selection()
+    except Exception:
+        return {}
+
+
+def _select_models(manager, params: Dict[str, Any]) -> None:
+    """Apply per-request body_model / encoder / detector names (catalogue names only)."""
+    wanted = {k: params.get(k) for k in ("body_model", "encoder", "detector")}
+    wanted = {k: (v.strip() if isinstance(v, str) else v) for k, v in wanted.items()}
+    if all(v in (None, "") for v in wanted.values()):
+        return
+    from fbxify.model_catalog import CatalogError
+
+    try:
+        manager.estimation_manager.select(**{k: v for k, v in wanted.items() if v not in (None, "")})
+    except CatalogError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _get_tracking_manager():
@@ -217,6 +276,8 @@ def worker_blockers() -> list[str]:
         blockers.append(
             "SAM 3D Body is not loaded. Upload checkpoints to CHECKPOINTS_DIR, then POST /reload."
         )
+    elif getattr(getattr(_manager, "estimation_manager", None), "estimator", object()) is None:
+        blockers.append("The last model swap failed and nothing is loaded. POST /models/select or /reload.")
     return blockers
 
 
@@ -224,6 +285,31 @@ def _require_ready() -> None:
     blockers = worker_blockers()
     if blockers:
         raise HTTPException(status_code=503, detail="Worker is not ready: " + " ".join(blockers))
+
+
+def _validate_model_names(**names: Optional[str]) -> None:
+    """400 for unknown catalogue names before a job is queued. Only names are accepted, never paths."""
+    from fbxify.model_catalog import CatalogError
+
+    section_for = {"body_model": "body_models", "encoder": "encoders", "detector": "detectors"}
+    try:
+        catalog = _get_catalog()
+        for key, value in names.items():
+            if value is None or str(value).strip() == "":
+                continue
+            entry = catalog.get(section_for[key], str(value).strip())
+            if not entry.enabled:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"{key} {entry.name!r} is disabled in the model catalogue; enable it in models.json",
+                )
+        body = names.get("body_model")
+        enc = names.get("encoder")
+        if enc and str(enc).strip():
+            body_name = str(body).strip() if body and str(body).strip() else (_loaded_models().get("body_model") or catalog.default("body_models").name)
+            catalog.resolve_encoder(str(enc).strip(), body=body_name)
+    except CatalogError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _prepare_mhr_assets() -> bool:
@@ -236,6 +322,7 @@ def _prepare_mhr_assets() -> bool:
 
 
 def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_path: Optional[str], params: Dict[str, Any]):
+    swap_lock = None
     try:
         with _jobs_lock:
             _jobs[job_id]["status"] = "running"
@@ -253,6 +340,14 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
             frame_paths, temp_dir, fps = manager.prepare_video(input_path)
         else:
             frame_paths = [input_path]
+
+        # One resident model set at a time: hold the swap lock for the whole GPU phase so a
+        # model swap requested by another job or POST /models/select cannot interleave.
+        swap_lock = manager.estimation_manager.swap_lock
+        swap_lock.acquire()
+        with _jobs_lock:
+            _jobs[job_id]["message"] = "Selecting models..."
+        _select_models(manager, params)
 
         fov_method = params.get("fov_method", "Default")
         if fov_method == "File" and fov_path:
@@ -370,6 +465,9 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
                 _jobs[job_id]["traceback"] = tb_str
                 _jobs[job_id]["message"] = str(e)
         raise
+    finally:
+        if swap_lock is not None:
+            swap_lock.release()
 
 
 def _run_fbx_job(job_id: str, pose_json_path: str, extras: Dict[str, str], params: Dict[str, Any]):
@@ -488,7 +586,7 @@ def _run_fbx_job(job_id: str, pose_json_path: str, extras: Dict[str, str], param
         raise
 
 
-def _run_detection_job(job_id: str, input_path: str, batch_size: int):
+def _run_detection_job(job_id: str, input_path: str, batch_size: int, detector: Optional[str] = None):
     try:
         with _jobs_lock:
             _jobs[job_id]["status"] = "running"
@@ -503,7 +601,9 @@ def _run_detection_job(job_id: str, input_path: str, batch_size: int):
             frame_paths = [input_path]
         output_dir = _jobs[job_id]["output_dir"]
         mot_path = os.path.join(output_dir, f"detection_{job_id[:8]}.txt")
-        manager.estimation_manager.run_detection_only(frame_paths, mot_path, detection_batch_size=batch_size)
+        with manager.estimation_manager.swap_lock:
+            _select_models(manager, {"detector": detector})
+            manager.estimation_manager.run_detection_only(frame_paths, mot_path, detection_batch_size=batch_size)
 
         with _jobs_lock:
             _jobs[job_id]["status"] = "completed"
@@ -620,10 +720,8 @@ async def startup():
     _init_mounts()
 
     from fbxify.cli_common import checkpoints_available
-    from fbxify.checkpoint_download import download_checkpoints_if_missing
+    from fbxify.model_catalog import CatalogError, fetch_enabled
 
-    model = os.environ.get("FBXIFY_MODEL", "vith")
-    checkpoints_dir = os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints").rstrip("/")
     # Download to CACHE_DIR/mhr_assets so host mounts (e.g. -v host/cache:/workspace/cache) receive the files.
     # The runtime mesh path is site-packages/assets, which the entrypoint links at the cache.
     assets_ok = _prepare_mhr_assets()
@@ -632,19 +730,26 @@ async def startup():
         print("Fix the asset cache, then POST /reload.", flush=True)
         return
 
+    # Fetch only the catalogue entries that are enabled (models.json + user overlay). Hugging Face
+    # entries need HF_TOKEN; local entries are only checked; nothing disabled is touched.
+    try:
+        catalog = _get_catalog(refresh=True)
+    except (CatalogError, OSError, ValueError) as exc:
+        print(f"Model catalogue is invalid: {exc}. Worker is not ready; fix models.json and POST /reload.", flush=True)
+        return
+    if os.environ.get("FBXIFY_SKIP_MODEL_FETCH", "").strip().lower() not in ("1", "true", "yes", "on"):
+        fetch_enabled(catalog)
+    model = catalog.resolve_body(_env_model_selection()["body_model"])[0].name
+
     available = checkpoints_available(model)
-    if not available and os.environ.get("HF_TOKEN"):
-        print("Checkpoints missing; attempting download from HuggingFace (HF_TOKEN set)...", flush=True)
-        download_checkpoints_if_missing(model, checkpoints_dir)
-        available = checkpoints_available(model)
     if available:
         try:
             print("Loading SAM 3D Body (GPU)...")
             _get_manager()
             _get_tracking_manager()
-            print("Worker ready.")
-        except FileNotFoundError as e:
-            print(f"Checkpoints not found: {e}")
+            print(f"Worker ready. Loaded models: {_loaded_models()}", flush=True)
+        except (FileNotFoundError, CatalogError) as e:
+            print(f"Models could not be loaded: {e}")
             print("Running in waiting mode.")
             print("Upload checkpoints to CHECKPOINTS_DIR, then POST /reload to load models.")
     else:
@@ -752,8 +857,12 @@ async def create_pose_job(
     detection_batch_size: int = Form(1),
     lang: str = Form("en"),
     tracking_config: Optional[str] = Form(None),
+    body_model: Optional[str] = Form(None),
+    encoder: Optional[str] = Form(None),
+    detector: Optional[str] = Form(None),
 ):
     _require_ready()
+    _validate_model_names(body_model=body_model, encoder=encoder, detector=detector)
     job_id = uuid.uuid4().hex
     output_dir = tempfile.mkdtemp(prefix="fbxify_job_")
     with _jobs_lock:
@@ -800,6 +909,9 @@ async def create_pose_job(
         "detection_batch_size": detection_batch_size,
         "lang": lang,
         "tracking_config": tracking_config,
+        "body_model": body_model,
+        "encoder": encoder,
+        "detector": detector,
     }
 
     def run():
@@ -906,7 +1018,9 @@ async def create_detection_job(
     _auth: None = Depends(_verify_auth),
     input_file: UploadFile = File(...),
     detection_batch_size: int = Form(1),
+    detector: Optional[str] = Form(None),
 ):
+    _validate_model_names(detector=detector)
     job_id = uuid.uuid4().hex
     output_dir = tempfile.mkdtemp(prefix="fbxify_job_")
     with _jobs_lock:
@@ -918,7 +1032,7 @@ async def create_detection_job(
 
     def run():
         try:
-            _run_detection_job(job_id, input_path, detection_batch_size)
+            _run_detection_job(job_id, input_path, detection_batch_size, detector=detector)
         except Exception:
             pass
 
@@ -1109,25 +1223,99 @@ async def cancel_jobs(_auth: None = Depends(_verify_auth)):
     return {"status": "ok"}
 
 
+def _models_payload() -> Dict[str, Any]:
+    from fbxify.model_catalog import CatalogError
+
+    try:
+        catalog = _get_catalog()
+    except (CatalogError, OSError, ValueError) as exc:
+        raise HTTPException(status_code=500, detail=f"model catalogue is invalid: {exc}")
+    payload = catalog.describe(loaded=_loaded_models())
+    payload["ready"] = _manager is not None
+    payload["defaults"] = {
+        "body_model": catalog.default("body_models").name,
+        "encoder": catalog.default("encoders").name,
+        "detector": catalog.default("detectors").name,
+    }
+    return payload
+
+
+@app.get("/models")
+async def list_models(_auth: None = Depends(_verify_auth)):
+    """Model catalogue: detectors, encoders and body models with fetch status and what is loaded.
+
+    Entries come from fbxify/models.json plus the user overlay (FBXIFY_MODELS_JSON or
+    CHECKPOINTS_DIR/models.json). Jobs refer to entries by ``name``; paths are never exposed.
+    """
+    return _models_payload()
+
+
+@app.get("/api/models")
+async def list_models_alias(_auth: None = Depends(_verify_auth)):
+    """Alias of GET /models."""
+    return _models_payload()
+
+
+@app.post("/models/select")
+async def select_models(
+    _auth: None = Depends(_verify_auth),
+    body_model: Optional[str] = Form(None),
+    encoder: Optional[str] = Form(None),
+    detector: Optional[str] = Form(None),
+):
+    """Swap the resident models now (frees the old ones first). 409 while a job holds the GPU."""
+    _require_ready()
+    _validate_model_names(body_model=body_model, encoder=encoder, detector=detector)
+    manager = _get_manager()
+    lock = manager.estimation_manager.swap_lock
+    if not lock.acquire(blocking=False):
+        raise HTTPException(status_code=409, detail="A job is running; try again when it finishes.")
+    try:
+        _select_models(manager, {"body_model": body_model, "encoder": encoder, "detector": detector})
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    finally:
+        lock.release()
+    return {"status": "ok", "loaded": _loaded_models()}
+
+
+@app.post("/models/fetch")
+async def fetch_models(_auth: None = Depends(_verify_auth)):
+    """Re-read the catalogue and fetch every enabled entry that is missing (blocking)."""
+    from fbxify.model_catalog import fetch_enabled
+
+    catalog = _get_catalog(refresh=True)
+    results = fetch_enabled(catalog)
+    return {"status": "ok", "results": [r.as_dict() for r in results]}
+
+
 @app.post("/reload")
 async def reload_models(_auth: None = Depends(_verify_auth)):
     """Reload models after checkpoints or MHR assets change. Re-validates the mesh cache first."""
     global _manager, _tracking_manager
+    if _manager is not None:
+        try:
+            _manager.estimation_manager._release_body()
+        except Exception:
+            pass
     _manager = None
     _tracking_manager = None
+    _get_catalog(refresh=True)
     if not _prepare_mhr_assets():
         raise HTTPException(
             status_code=503,
             detail="MHR mesh assets are missing at the runtime path. Worker was not reloaded.",
         )
+    from fbxify.model_catalog import CatalogError
+
     try:
         _get_manager()
         _get_tracking_manager()
-        return {"status": "ok", "message": "Models loaded"}
-    except FileNotFoundError as e:
+        return {"status": "ok", "message": "Models loaded", "loaded": _loaded_models()}
+    except (FileNotFoundError, CatalogError) as e:
         raise HTTPException(
             status_code=503,
-            detail=f"Checkpoints not found: {e}. Upload to CHECKPOINTS_DIR and retry.",
+            detail=f"Models could not be loaded: {e}. Check CHECKPOINTS_DIR / models.json and retry.",
         )
 
 
@@ -1282,6 +1470,6 @@ async def health():
         from fastapi.responses import JSONResponse
         return JSONResponse(
             status_code=503,
-            content={"status": "unavailable", "ready": False, "detail": " ".join(blockers)},
+            content={"status": "unavailable", "ready": False, "detail": " ".join(blockers), "models": _loaded_models()},
         )
-    return {"status": "ok", "ready": True}
+    return {"status": "ok", "ready": True, "models": _loaded_models()}

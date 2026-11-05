@@ -9,8 +9,7 @@ import os
 import argparse
 import sys
 import shutil
-from fbxify.cli_common import get_checkpoint_paths
-from fbxify.pose_estimation_manager import PoseEstimationManager
+from fbxify.cli_common import add_model_args, build_estimation_manager
 from fbxify.fbx_data_prep_manager import FbxDataPrepManager
 from fbxify.fbxify_manager import FbxifyManager
 
@@ -21,42 +20,8 @@ def parse_args():
         description="Convert images/videos to Unity Humanoid FBX files using SAM 3D Body"
     )
     
-    # Model selection
-    parser.add_argument(
-        "--model",
-        type=str,
-        default="vith",
-        choices=["vith", "dinov3"],
-        help="Model to use (default: vith)"
-    )
-    
-    # Detector options
-    parser.add_argument(
-        "--detector_name",
-        default="vitdet",
-        type=str,
-        help="Human detection model (default: vitdet)"
-    )
-    parser.add_argument(
-        "--detector_path",
-        default="",
-        type=str,
-        help="Path to human detection model folder (or set SAM3D_DETECTOR_PATH)"
-    )
-    
-    # FOV estimator options
-    parser.add_argument(
-        "--fov_name",
-        default="moge2",
-        type=str,
-        help="FOV estimation model (default: moge2)"
-    )
-    parser.add_argument(
-        "--fov_path",
-        default="",
-        type=str,
-        help="Path to FOV estimation model folder (or set SAM3D_FOV_PATH)"
-    )
+    # Model selection: --model / --encoder / --detector are catalogue names (fbxify/models.json)
+    add_model_args(parser)
     
     # Input/Output
     parser.add_argument(
@@ -157,13 +122,6 @@ def parse_args():
         "--fast_inference",
         action="store_true",
         help="Skip the second body-decoder keypoint-prompt pass (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT). Hands still run. Test/A-B vs stock 3DB."
-    )
-    parser.add_argument(
-        "--quantized_backbone",
-        type=str,
-        default=os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none"),
-        choices=["none", "pt2", "trt"],
-        help="Swap the DINOv3 encoder for the embedl INT8 export (dinov3 only): pt2 = torch.export, trt = TensorRT engine. Default from FBXIFY_QUANTIZED_BACKBONE."
     )
     
     # Root motion
@@ -299,31 +257,14 @@ def main():
         run_fbx_generation(fbx_args)
         return
 
-    # Full pipeline: resolve checkpoint path and initialize managers
-    try:
-        checkpoint_path, mhr_path = get_checkpoint_paths(args.model)
-    except (ValueError, FileNotFoundError) as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    detector_path = args.detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
-    fov_path = args.fov_path or os.environ.get("SAM3D_FOV_PATH", None)
-
+    # Full pipeline: resolve models through the catalogue and initialize managers
     print("Initializing SAM 3D Body estimator...")
     try:
-        estimation_manager = PoseEstimationManager(
-            checkpoint_path=checkpoint_path,
-            mhr_path=mhr_path,
-            detector_name=args.detector_name,
-            detector_path=detector_path,
-            fov_name=args.fov_name,
-            fov_path=fov_path,
-            precision=args.precision,
-            quantized_backbone=args.quantized_backbone,
-        )
+        estimation_manager = build_estimation_manager(args, precision=args.precision)
     except Exception as e:
         print(f"Error initializing estimator: {e}")
         sys.exit(1)
+    print(f"Loaded models: {estimation_manager.loaded_selection()}")
 
     if args.fast_inference:
         estimation_manager.set_inference_options(

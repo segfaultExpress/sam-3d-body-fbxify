@@ -66,6 +66,125 @@ The system supports three mapping methods:
 2. **`keypoint_with_global_rot_roll`**: Extends keypoint-based mapping by adding roll rotation from MHR rig bones, useful for rigs that need proper bone orientation
 3. **Keypoint-based mapping**: Uses keypoints from the MHR pose estimation to drive bone rotations
 
+## Model catalogue
+
+Which bbox detector, image encoder and SAM 3D Body checkpoint fbxify uses is driven by one JSON
+file, [`fbxify/models.json`](fbxify/models.json). Three sections, one entry per model:
+
+| Section | Shipped entries | Purpose |
+| --- | --- | --- |
+| `detectors` | `vitdet` (default), `yolo11m` (off, AGPL opt-in) | person bbox when no bbox file is given |
+| `encoders` | `fp32` (default), `embedl_int8_trt`, `embedl_int8_pt2` (off) | image encoder variant inside SAM 3D Body |
+| `body_models` | `vith` (default), `dinov3` | SAM 3D Body checkpoint + MHR head |
+
+Rules:
+
+- **Only `"enabled": true` entries are fetched** when the container starts (`python -m fbxify.model_catalog fetch`
+  in both entrypoints, repeated by the worker's start-up) and only those appear in the dropdowns.
+  `"default": true` is what loads first. Nothing disabled is downloaded or touched.
+- **Sources** say where files come from: `huggingface` (`repo_id`, pinned `revision`, `files`),
+  `url` (single file), `local` (already on one of your mounts - checked, never downloaded) or `none`.
+  `${CHECKPOINTS_DIR}` and `${CACHE_DIR}` expand in paths.
+- **Checksums are required for the shipped defaults and optional for your own.** Every shipped
+  download carries `sha256` + `size` and is verified after fetch (`python -m fbxify.model_catalog verify --deep`
+  re-hashes everything). Custom entries without a checksum are only checked for presence.
+- Hugging Face repos are gated: accept the licence on the model page and pass `HF_TOKEN` to the container.
+  Ultralytics weights load through the `ultralytics` package (AGPL-3.0), which is not installed by default:
+  `pip install ultralytics` in your image if you enable a YOLO entry.
+
+### Switching at runtime
+
+The three dropdowns on the pose tab (body model, encoder, detector) are filled from the catalogue.
+Picking a different one on the next job unloads the current weights, flushes the CUDA cache and loads
+the new ones (one resident set at a time, ComfyUI-style). INT8 encoders only pair with `dinov3`;
+the UI/API refuse other combinations up front.
+
+Worker API:
+
+- `GET /models` (alias `GET /api/models`): catalogue with `status` (`ready`, `missing`,
+  `size-mismatch`, `disabled`), `loaded` flags and `defaults`. `GET /health` also reports `models`.
+- `POST /jobs/pose` and `POST /jobs/detection` accept optional form fields `body_model`, `encoder`, `detector`
+  (catalogue **names only**, never paths). Unknown or disabled names return 400.
+- `POST /models/select` swaps now (409 while a job holds the GPU); `POST /models/fetch` re-reads the
+  catalogue and downloads enabled entries that are missing; `POST /reload` rebuilds everything.
+
+CLI: `--model`, `--encoder`, `--detector` on `fbxify.cli` / `fbxify.cli_pose_estimation` / `fbxify.app`
+take the same names (`--quantized_backbone trt` still works as an alias for `--encoder embedl_int8_trt`).
+Environment: `FBXIFY_MODEL`, `FBXIFY_ENCODER` (or `FBXIFY_QUANTIZED_BACKBONE`), `FBXIFY_DETECTOR` set the
+initial selection and force-enable those entries.
+
+### Adding your own detector or pose variant
+
+Put a `models.json` next to your checkpoints (`$CHECKPOINTS_DIR/models.json`) or point
+`FBXIFY_MODELS_JSON` at one. It is overlaid on the shipped file: same name patches the shipped entry
+(for example `{"yolo11m": {"enabled": true}}`), a new name adds an entry, `null` removes one, and
+`"default": true` on your entry takes the default away from the shipped one. `sha256` / `size` on
+your own files are optional; when present they are verified like the shipped ones.
+
+```json
+{
+  "schema": "fbxify.models/1",
+  "detectors": {
+    "yolo11m": { "enabled": true },
+    "dancers_yolo": {
+      "display_name": "YOLO11m fine-tuned on our footage",
+      "enabled": true, "default": true,
+      "type": "ultralytics",
+      "licence": "AGPL-3.0",
+      "source": { "kind": "local", "path": "/workspace/models/dancers_yolo11m.pt" },
+      "options": { "imgsz": 960, "classes": [0] }
+    },
+    "rtdetr_from_hub": {
+      "display_name": "My detector on the Hub",
+      "enabled": false,
+      "type": "ultralytics",
+      "source": {
+        "kind": "huggingface", "repo_id": "me/my-detector", "revision": "main",
+        "files": [ { "path": "best.pt", "size": 12345678 } ]
+      },
+      "local_dir": "${CACHE_DIR}/my-detector"
+    }
+  },
+  "body_models": {
+    "mhr_finetune": {
+      "display_name": "SAM 3D Body (our fine-tune)",
+      "enabled": true,
+      "type": "sam_3d_body",
+      "source": { "kind": "local", "path": "/workspace/models/sam3d-finetune" }
+    }
+  },
+  "encoders": {
+    "my_int8": {
+      "display_name": "INT8 export (TensorRT)",
+      "enabled": true,
+      "type": "embedl_int8",
+      "options": { "mode": "trt" },
+      "requires_body": ["dinov3"],
+      "source": { "kind": "local", "path": "/workspace/models/my-int8-export" }
+    }
+  }
+}
+```
+
+What each `type` expects on disk:
+
+- `sam_3d_body`: `model.ckpt`, `model_config.yaml` and `assets/mhr_model.pt` in the directory
+  (override file names with `options.checkpoint_file` / `options.mhr_file`).
+- `detectron2_vitdet`: `model_final_f05665.pkl` in the directory (the config is the repo's).
+- `ultralytics`: one `.pt` weights file (`source.path` may point straight at it). `options` go to
+  `model.predict` (`imgsz`, `classes`, `half`, `max_det`); the job's confidence/NMS thresholds
+  still come from the caller like for ViTDet.
+- `embedl_int8`: `embedl_sam3dbody_int8.onnx` + `.onnx.data` for `mode: trt`, or
+  `embedl_sam3dbody_int8.pt2` for `mode: pt2`. Set `requires_body` to the checkpoints it was exported from.
+- `checkpoint` (encoders): no files; uses the encoder stored in the body-model checkpoint.
+
+A detector architecture that is neither detectron2 nor Ultralytics needs a loader/runner pair
+registered with `tools.build_detector.register_detector_type(name, loader, runner, batch_runner)`;
+the runner must return xyxy boxes sorted like `run_detectron2_vitdet`. Then reference that `name` as the
+entry's `type`.
+
+Check what the catalogue sees with `python -m fbxify.model_catalog list --all` (add `--json` for scripts).
+
 ### Adding Custom Rigs
 
 To add support for a custom rig:

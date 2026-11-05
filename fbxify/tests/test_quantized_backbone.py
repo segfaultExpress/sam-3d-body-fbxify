@@ -35,7 +35,7 @@ def _load_embedl_module():
 def test_manager_accepts_quantized_backbone_and_keeps_encoder_fp32():
     src = _read("fbxify/pose_estimation_manager.py")
     assert "quantized_backbone=None" in src
-    assert "swap_in_quantized_backbone(model, self.quantized_dir, self.quantized_backbone)" in src
+    assert "swap_in_quantized_backbone(model, self.quantized_dir, quantized_mode)" in src
     assert "if self.quantized_backbone:" in src and "model.backbone_dtype = torch.float32" in src
 
 
@@ -53,10 +53,15 @@ def test_normalize_quantized_mode():
 
 
 def test_entry_points_expose_quantized_backbone():
+    # The flag lives in the shared argparse helper; every entry point calls it and the legacy
+    # value is mapped onto an encoder catalogue name.
+    common = _read("fbxify/cli_common.py")
+    assert "--quantized_backbone" in common
+    assert 'encoder_name_for_quantized_mode(getattr(args, "quantized_backbone", "none"))' in common
     for rel in ("fbxify/cli.py", "fbxify/cli_pose_estimation.py", "fbxify/app.py"):
         src = _read(rel)
-        assert "--quantized_backbone" in src, rel
-        assert "quantized_backbone=args.quantized_backbone" in src, rel
+        assert "add_model_args(parser)" in src, rel
+        assert "build_estimation_manager(args" in src, rel
     api = _read("fbxify/api.py")
     assert 'os.environ.get("FBXIFY_QUANTIZED_BACKBONE", "none")' in api
     compose = _read("fbxify/docker/docker-compose.yml")
@@ -115,7 +120,7 @@ def test_loader_refuses_checkpoint_without_backbone_weights():
     assert "require_backbone_weights: bool = True" in src
     assert "_assert_backbone_weights_loaded(model, state_dict, checkpoint_path, model_cfg)" in src
     manager = _read("fbxify/pose_estimation_manager.py")
-    assert "require_backbone_weights=not self.quantized_backbone" in manager
+    assert "require_backbone_weights=not quantized_mode" in manager
 
 
 def test_swap_rejects_non_dinov3():

@@ -201,6 +201,20 @@ class EmbedlInt8Backbone(nn.Module):
     def get_layer_depth(self, param_name: str, prefix: str = "encoder."):
         return 0, 1
 
+    def close(self):
+        """Release the runner (TensorRT context/engine or exported module) so its device memory
+        can be returned; the module is unusable afterwards."""
+        runner = getattr(self, "_runner", None)
+        if runner is None:
+            return
+        for attr in ("context", "engine", "_out"):
+            if hasattr(runner, attr):
+                try:
+                    setattr(runner, attr, None)
+                except Exception:
+                    pass
+        object.__setattr__(self, "_runner", None)
+
 
 def quantized_files_present(quantized_dir: str, mode: str) -> bool:
     if mode == "pt2":

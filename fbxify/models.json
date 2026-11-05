@@ -1,0 +1,145 @@
+{
+  "schema": "fbxify.models/1",
+  "_comment": [
+    "Model catalogue for fbxify. Three sections: detectors (bbox), encoders (image encoder variants)",
+    "and body_models (SAM 3D Body checkpoints). Only entries with \"enabled\": true are fetched at",
+    "start-up and offered in the dropdowns; \"default\": true picks what loads first.",
+    "To add your own, drop a models.json next to your checkpoints (CHECKPOINTS_DIR/models.json) or",
+    "point FBXIFY_MODELS_JSON at one; it is overlaid on this file. See README: 'Model catalogue'.",
+    "source.kind is one of: huggingface (repo_id + files), url (single file), local (already on a",
+    "mount, never downloaded), none (no files). ${CHECKPOINTS_DIR} and ${CACHE_DIR} are expanded.",
+    "Shipped entries carry sha256 + size for every file and are verified; custom entries may omit them."
+  ],
+  "detectors": {
+    "vitdet": {
+      "display_name": "ViTDet-H Cascade Mask R-CNN (detectron2)",
+      "enabled": true,
+      "default": true,
+      "type": "detectron2_vitdet",
+      "licence": "Apache-2.0 (detectron2 weights, Meta)",
+      "source": {
+        "kind": "url",
+        "url": "https://dl.fbaipublicfiles.com/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692/model_final_f05665.pkl",
+        "filename": "model_final_f05665.pkl",
+        "sha256": "8601bc52000c8a87960f3db6a9672596c5e06ce33bc30a3b8f96a96efe42ae60",
+        "size": 2765948277
+      },
+      "local_dir": "${CACHE_DIR}/videt_checkpoint",
+      "options": {},
+      "notes": "The detector SAM 3D Body shipped with. ~1 s per 1080p frame on an RTX 4070 Ti, ~5 GB VRAM."
+    },
+    "yolo11m": {
+      "display_name": "YOLO11m (Ultralytics, AGPL-3.0)",
+      "enabled": false,
+      "default": false,
+      "type": "ultralytics",
+      "licence": "AGPL-3.0 (Ultralytics) - opt in only; needs `pip install ultralytics`",
+      "source": {
+        "kind": "url",
+        "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11m.pt",
+        "filename": "yolo11m.pt",
+        "sha256": "d5ffc1a674953a08e11a8d21e022781b1b23a19b730afc309290bd9fb5305b95",
+        "size": 40684120
+      },
+      "local_dir": "${CACHE_DIR}/ultralytics",
+      "options": {
+        "imgsz": 640,
+        "classes": [0]
+      },
+      "notes": "Person class only. Much faster than ViTDet; box style differs slightly, so compare pose output on your own footage before switching."
+    }
+  },
+  "encoders": {
+    "fp32": {
+      "display_name": "Checkpoint encoder (fp32, stock)",
+      "enabled": true,
+      "default": true,
+      "type": "checkpoint",
+      "licence": "Same as the selected body model",
+      "source": { "kind": "none" },
+      "requires_body": [],
+      "notes": "Uses the image encoder stored in the body-model checkpoint. Works with every body model."
+    },
+    "embedl_int8_trt": {
+      "display_name": "embedl INT8 encoder (TensorRT, DINOv3 only)",
+      "enabled": false,
+      "default": false,
+      "type": "embedl_int8",
+      "licence": "Embedl Models Community Licence 1.0 (gated on Hugging Face) + SAM licence",
+      "source": {
+        "kind": "huggingface",
+        "repo_id": "embedl/sam-3d-body",
+        "revision": "ffe0cb289b0366e5cfa2d38e0b4d601a81b0ef3c",
+        "files": [
+          { "path": "embedl_sam3dbody_int8.onnx", "sha256": "6817af4d0aaa70b6774c54f296a9a223da17ea7c6f4379cf919ed0aa34ca7ea6", "size": 3421452 },
+          { "path": "embedl_sam3dbody_int8.onnx.data", "sha256": "33ee702c51026fc2b6a717e0e0c1f827a10c5b05b59e92684df0bf285d2767c6", "size": 3368771584 },
+          { "path": "sam3dbody_faces.npy", "sha256": "38a54991de6de3f9b9399e17f265dbda47da25b23fc5cb967276536803374841", "size": 885104 }
+        ]
+      },
+      "local_dir": "${CHECKPOINTS_DIR}/embedl-sam-3d-body",
+      "options": { "mode": "trt" },
+      "requires_body": ["dinov3"],
+      "notes": "Builds a TensorRT engine next to the ONNX on first use (minutes). Halves encoder time, ~0.5 GB less VRAM; hands/forearms deviate most. See fbxify/docker/Quantized.md."
+    },
+    "embedl_int8_pt2": {
+      "display_name": "embedl INT8 encoder (torch.export pt2, DINOv3 only)",
+      "enabled": false,
+      "default": false,
+      "type": "embedl_int8",
+      "licence": "Embedl Models Community Licence 1.0 (gated on Hugging Face) + SAM licence",
+      "source": {
+        "kind": "huggingface",
+        "repo_id": "embedl/sam-3d-body",
+        "revision": "ffe0cb289b0366e5cfa2d38e0b4d601a81b0ef3c",
+        "files": [
+          { "path": "embedl_sam3dbody_int8.pt2", "sha256": "e5fa431b044b51b9a67f727d6d6381216c44dfd9985280a27ef721d6db77eb70", "size": 3374983373 },
+          { "path": "sam3dbody_faces.npy", "sha256": "38a54991de6de3f9b9399e17f265dbda47da25b23fc5cb967276536803374841", "size": 885104 }
+        ]
+      },
+      "local_dir": "${CHECKPOINTS_DIR}/embedl-sam-3d-body",
+      "options": { "mode": "pt2" },
+      "requires_body": ["dinov3"],
+      "notes": "Portable fallback for the TensorRT variant; slower than fp32 on GPU in PyTorch eager. Prefer embedl_int8_trt."
+    }
+  },
+  "body_models": {
+    "vith": {
+      "display_name": "SAM 3D Body ViT-H",
+      "enabled": true,
+      "default": true,
+      "type": "sam_3d_body",
+      "licence": "SAM licence (gated on Hugging Face)",
+      "source": {
+        "kind": "huggingface",
+        "repo_id": "facebook/sam-3d-body-vith",
+        "revision": "f7f4ba4f67739e297f291639afb7c59041745367",
+        "files": [
+          { "path": "model.ckpt", "sha256": "3b1cb897f4bbd977bf81cbb0b30780a9582681ac642ee112865790ceb4d66056", "size": 1691205237 },
+          { "path": "model_config.yaml", "sha256": "d2e772e108b8727e9367681845fecb32806144acd0debc20868d100689470570", "size": 1486 },
+          { "path": "assets/mhr_model.pt", "sha256": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc", "size": 696110248 }
+        ]
+      },
+      "local_dir": "${CHECKPOINTS_DIR}/sam-3d-body-vith",
+      "notes": "Default checkpoint."
+    },
+    "dinov3": {
+      "display_name": "SAM 3D Body DINOv3 (ViT-H+/16)",
+      "enabled": true,
+      "default": false,
+      "type": "sam_3d_body",
+      "licence": "SAM licence (gated on Hugging Face)",
+      "source": {
+        "kind": "huggingface",
+        "repo_id": "facebook/sam-3d-body-dinov3",
+        "revision": "11aaa346c7204874a1cbafe3d39a979080b2c55a",
+        "files": [
+          { "path": "model.ckpt", "sha256": "b5a2f9d305dd02626b967aa2e86021fba07065df66ce7a7e00ffb9664f150abf", "size": 2109129346 },
+          { "path": "model_config.yaml", "sha256": "1012fc3f39cb5e90e3f8fbadf7bded31604bfafdce0321d17a7c1a2d3f08b88d", "size": 1488 },
+          { "path": "assets/mhr_model.pt", "sha256": "352e271a6c42729c68554ceaea0c955e866970160c31e35506d782dc0f7377bc", "size": 696110248 }
+        ]
+      },
+      "local_dir": "${CHECKPOINTS_DIR}/sam-3d-body-dinov3",
+      "notes": "Required by the embedl INT8 encoders. model.ckpt is 2.1 GB; a 1.7 GB file in this folder is the ViT-H checkpoint by mistake."
+    }
+  }
+}

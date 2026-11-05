@@ -15,6 +15,12 @@ keypoint prompts, hand refinement and the **Fast inference** checkbox keep worki
 Only the **dinov3** checkpoint is supported (`FBXIFY_MODEL=dinov3` / `--model dinov3`); the ViT-H
 checkpoint uses a different encoder.
 
+In the [model catalogue](../../README.md#model-catalogue) these are the encoder entries
+`embedl_int8_trt` and `embedl_int8_pt2` (shipped disabled, pinned to a Hugging Face revision with
+sha256 for every file). Enable one in your `models.json` overlay and it is fetched at start-up and
+offered in the **Encoder** dropdown; `--encoder embedl_int8_trt` / `FBXIFY_ENCODER` and the legacy
+`--quantized_backbone trt` / `FBXIFY_QUANTIZED_BACKBONE=trt` all select the same entry.
+
 ## 1. Get access
 
 Both repos are gated. Log into Hugging Face and accept the licences on:

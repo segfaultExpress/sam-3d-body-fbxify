@@ -40,6 +40,20 @@ class CancelledError(Exception):
 QUANTIZED_BACKBONE_CHOICES = ("none", "pt2", "trt")
 
 
+def _free_gpu():
+    """Release freed tensors back to the driver so the next model fits (ComfyUI-style flush)."""
+    import gc
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.empty_cache()
+        try:
+            torch.cuda.ipc_collect()
+        except Exception:
+            pass
+
+
 def normalize_quantized_mode(value) -> Optional[str]:
     """Map None/""/"0"/"none"/"off" -> None, else validate "pt2"/"trt"."""
     if value is None:
@@ -91,55 +105,94 @@ class PoseEstimationManager:
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         print(f"Loading SAM 3D Body on {self.device}...")
-        
+
+        # Swapping models (select) and running jobs share this lock: one resident set of
+        # weights at a time, never swapped under a running job.
+        self.swap_lock = threading.RLock()
+        self.catalog = None
+        # Catalogue names of what is loaded (None when built from raw paths).
+        self.selection: Dict[str, Optional[str]] = {"body_model": None, "encoder": None, "detector": None}
+        self._cancel_event = threading.Event()
+        self._lod_faces_cache: Dict[int, np.ndarray] = {}
+        self._lod_faces_initialized = False
+        self.estimator = None
+        self.precision = "fp32"
+        self._requested_precision = precision
+
         self.quantized_backbone = normalize_quantized_mode(quantized_backbone)
+        self.quantized_dir = quantized_dir
+        self.checkpoint_path = checkpoint_path
+        self.mhr_path = mhr_path
+        model, cfg = self._load_body(checkpoint_path, mhr_path, self.quantized_backbone, quantized_dir)
+        self.cfg = cfg
+
+        human_detector = None
+        if detector_name:
+            detector_path = detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
+            human_detector = self._load_detector(detector_name, path=detector_path)
+        fov_estimator = self._load_fov(fov_name, fov_path)
+
+        self._build_estimator(model, cfg, human_detector, fov_estimator)
+
+    # ------------------------------------------------------------------ loading pieces
+
+    def _load_body(self, checkpoint_path, mhr_path, quantized_mode, quantized_dir):
+        """Load the SAM 3D Body checkpoint and optionally swap in the embedl INT8 encoder."""
         model, cfg = load_sam_3d_body(
             checkpoint_path=checkpoint_path,
             device=self.device,
             mhr_path=mhr_path,
             # The INT8 encoder replaces the checkpoint's backbone, so its weights need not load.
-            require_backbone_weights=not self.quantized_backbone,
+            require_backbone_weights=not quantized_mode,
         )
-
         self.quantized_dir = None
-        if self.quantized_backbone:
+        if quantized_mode:
             from fbxify.checkpoint_download import download_embedl_if_missing, embedl_quantized_dir
             from sam_3d_body.models.backbones.embedl_int8 import swap_in_quantized_backbone
 
             self.quantized_dir = quantized_dir or embedl_quantized_dir()
-            if not download_embedl_if_missing(self.quantized_backbone, self.quantized_dir):
+            if not download_embedl_if_missing(quantized_mode, self.quantized_dir):
+                del model
+                _free_gpu()
                 raise FileNotFoundError(
-                    f"embedl INT8 encoder files for mode {self.quantized_backbone!r} not found in "
+                    f"embedl INT8 encoder files for mode {quantized_mode!r} not found in "
                     f"{self.quantized_dir}. See fbxify/docker/Quantized.md."
                 )
-            swap_in_quantized_backbone(model, self.quantized_dir, self.quantized_backbone)
+            swap_in_quantized_backbone(model, self.quantized_dir, quantized_mode)
+        self.quantized_backbone = quantized_mode
+        self.checkpoint_path = checkpoint_path
+        self.mhr_path = mhr_path
+        return model, cfg
 
-        self.cfg = cfg
-        
-        # Initialize human detector if requested
-        human_detector = None
-        if detector_name:
-            detector_path = detector_path or os.environ.get("SAM3D_DETECTOR_PATH", "")
-            try:
-                from tools.build_detector import HumanDetector
-                human_detector = HumanDetector(name=detector_name, device=self.device, path=detector_path)
-                print(f"Human detector '{detector_name}' loaded successfully.")
-            except Exception as e:
-                print(f"Warning: Failed to load human detector '{detector_name}': {e}")
-                print("Continuing without human detector.")
-        
-        # Initialize FOV estimator if requested
-        fov_estimator = None
-        if fov_name:
-            fov_path = fov_path or os.environ.get("SAM3D_FOV_PATH", "")
-            try:
-                from tools.build_fov_estimator import FOVEstimator
-                fov_estimator = FOVEstimator(name=fov_name, device=self.device, path=fov_path)
-                print(f"FOV estimator '{fov_name}' loaded successfully.")
-            except Exception as e:
-                print(f"Warning: Failed to load FOV estimator '{fov_name}': {e}")
-                print("Continuing without FOV estimator (will use default FOV).")
-        
+    def _load_detector(self, detector_name, **kwargs):
+        """Load a human detector; returns None (and keeps going) when it fails."""
+        if not detector_name:
+            return None
+        try:
+            from tools.build_detector import HumanDetector
+            human_detector = HumanDetector(name=detector_name, device=self.device, **kwargs)
+            print(f"Human detector '{detector_name}' loaded successfully.")
+            return human_detector
+        except Exception as e:
+            print(f"Warning: Failed to load human detector '{detector_name}': {e}")
+            print("Continuing without human detector.")
+            return None
+
+    def _load_fov(self, fov_name, fov_path):
+        if not fov_name:
+            return None
+        fov_path = fov_path or os.environ.get("SAM3D_FOV_PATH", "")
+        try:
+            from tools.build_fov_estimator import FOVEstimator
+            fov_estimator = FOVEstimator(name=fov_name, device=self.device, path=fov_path)
+            print(f"FOV estimator '{fov_name}' loaded successfully.")
+            return fov_estimator
+        except Exception as e:
+            print(f"Warning: Failed to load FOV estimator '{fov_name}': {e}")
+            print("Continuing without FOV estimator (will use default FOV).")
+            return None
+
+    def _build_estimator(self, model, cfg, human_detector, fov_estimator):
         self.estimator = SAM3DBodyEstimator(
             sam_3d_body_model=model,
             model_cfg=cfg,
@@ -147,13 +200,136 @@ class PoseEstimationManager:
             human_segmentor=None,
             fov_estimator=fov_estimator,
         )
-
         self.precision = "fp32"
-        self.set_inference_options(precision=precision)
+        self.set_inference_options(precision=self._requested_precision)
         self.estimator.skip_keypoint_prompt = False
-        self._cancel_event = threading.Event()
-        self._lod_faces_cache: Dict[int, np.ndarray] = {}
+        self._lod_faces_cache = {}
         self._lod_faces_initialized = False
+
+    # ------------------------------------------------------------------ catalogue API
+
+    @classmethod
+    def from_catalog(cls, catalog, body_model=None, encoder=None, detector=None, device=None,
+                     fov_name="moge2", fov_path=None, precision="fp32"):
+        """Build a manager from catalogue names (None -> the section default).
+
+        ``detector=""`` loads no detector. Raises CatalogError for unknown or incompatible names.
+        """
+        body_entry, checkpoint_path, mhr_path = catalog.resolve_body(body_model)
+        enc_entry, quantized_mode, quantized_dir = catalog.resolve_encoder(encoder, body=body_entry.name)
+        det_entry, det_kwargs = (None, {})
+        if detector is None or str(detector).strip() != "":
+            det_entry, det_kwargs = catalog.resolve_detector(detector)
+        manager = cls(
+            checkpoint_path=checkpoint_path,
+            mhr_path=mhr_path,
+            device=device,
+            detector_name=None,
+            fov_name=fov_name,
+            fov_path=fov_path,
+            precision=precision,
+            quantized_backbone=quantized_mode,
+            quantized_dir=quantized_dir,
+        )
+        manager.catalog = catalog
+        if det_entry is not None:
+            manager.estimator.detector = manager._load_detector(det_entry.type, **det_kwargs)
+        manager.selection = {
+            "body_model": body_entry.name,
+            "encoder": enc_entry.name,
+            "detector": det_entry.name if (det_entry is not None and manager.estimator.detector is not None) else None,
+        }
+        return manager
+
+    def loaded_selection(self) -> Dict[str, Optional[str]]:
+        return dict(self.selection)
+
+    def select(self, body_model=None, encoder=None, detector=None) -> Dict[str, Optional[str]]:
+        """Swap to other catalogue entries, freeing the old ones first (one resident set at a time).
+
+        Arguments left as None keep the current choice. Body model or encoder changes rebuild
+        SAM 3D Body; a detector change only reloads the detector. Returns the new selection.
+        """
+        if self.catalog is None:
+            raise RuntimeError("This manager was built from raw paths; runtime model swapping needs a catalogue.")
+        want_body = self.selection["body_model"] if body_model in (None, "") else str(body_model)
+        want_enc = self.selection["encoder"] if encoder in (None, "") else str(encoder)
+        want_det = self.selection["detector"] if detector is None else (str(detector) or None)
+
+        body_entry, checkpoint_path, mhr_path = self.catalog.resolve_body(want_body)
+        enc_entry, quantized_mode, quantized_dir = self.catalog.resolve_encoder(want_enc, body=body_entry.name)
+        det_entry, det_kwargs = (None, {})
+        if want_det:
+            det_entry, det_kwargs = self.catalog.resolve_detector(want_det)
+        if not body_entry.is_ready():
+            raise FileNotFoundError(f"body model {body_entry.name!r} is {body_entry.status()}; fetch it first")
+        if not enc_entry.is_ready():
+            raise FileNotFoundError(f"encoder {enc_entry.name!r} is {enc_entry.status()}; fetch it first")
+        if det_entry is not None and not det_entry.is_ready() and det_entry.type != "detectron2_vitdet":
+            raise FileNotFoundError(f"detector {det_entry.name!r} is {det_entry.status()}; fetch it first")
+
+        with self.swap_lock:
+            body_changed = body_entry.name != self.selection["body_model"] or enc_entry.name != self.selection["encoder"]
+            det_changed = (det_entry.name if det_entry else None) != self.selection["detector"]
+            if not body_changed and not det_changed:
+                return self.loaded_selection()
+
+            skip_kp = bool(getattr(self.estimator, "skip_keypoint_prompt", False))
+            self._requested_precision = self.precision
+            detector_obj = self.estimator.detector
+            fov_estimator = self.estimator.fov_estimator
+
+            if det_changed:
+                print(f"Swapping detector {self.selection['detector']!r} -> {det_entry.name if det_entry else None!r}", flush=True)
+                self._release_detector(detector_obj)
+                detector_obj = None
+                self.estimator.detector = None
+                self.selection["detector"] = None
+
+            if body_changed:
+                print(f"Swapping body model/encoder {self.selection['body_model']!r}/{self.selection['encoder']!r} "
+                      f"-> {body_entry.name!r}/{enc_entry.name!r}", flush=True)
+                self._release_body()
+                try:
+                    model, cfg = self._load_body(checkpoint_path, mhr_path, quantized_mode, quantized_dir)
+                except Exception:
+                    self.selection["body_model"] = self.selection["encoder"] = None
+                    raise
+                self.cfg = cfg
+                self._build_estimator(model, cfg, detector_obj, fov_estimator)
+                self.estimator.skip_keypoint_prompt = skip_kp
+                self.selection["body_model"] = body_entry.name
+                self.selection["encoder"] = enc_entry.name
+
+            if det_changed and det_entry is not None:
+                self.estimator.detector = self._load_detector(det_entry.type, **det_kwargs)
+                self.selection["detector"] = det_entry.name if self.estimator.detector is not None else None
+            return self.loaded_selection()
+
+    def _release_body(self):
+        """Drop SAM 3D Body (and an INT8 encoder runner) and flush the CUDA caching allocator."""
+        est = self.estimator
+        if est is None:
+            return
+        model = est.model
+        backbone = getattr(model, "backbone", None)
+        if hasattr(backbone, "close"):
+            try:
+                backbone.close()
+            except Exception:
+                pass
+        est.model = None
+        self.estimator = None
+        del est, backbone, model
+        _free_gpu()
+
+    def _release_detector(self, detector_obj):
+        if detector_obj is None:
+            return
+        if hasattr(detector_obj, "release"):
+            detector_obj.release()
+        del detector_obj
+        _free_gpu()
 
     def run_detection_on_frames(
         self,

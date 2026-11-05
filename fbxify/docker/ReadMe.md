@@ -121,6 +121,7 @@ docker run --gpus all --shm-size=8g -p 8000:8000 \
 - **Persistent volume** — Create a disk/NFS, upload checkpoints once, attach the same volume to every worker instance (GCP persistent disk, AWS EBS, Azure Disk, etc.).
 - **Bake into image** — Add a Dockerfile stage that copies checkpoints into the image. Easiest but large images and no reuse across versions.
 - **HuggingFace auto-download** — If checkpoints are missing and `HF_TOKEN` is set, the worker will attempt to download from [facebook/sam-3d-body-vith](https://huggingface.co/facebook/sam-3d-body-vith) or [facebook/sam-3d-body-dinov3](https://huggingface.co/facebook/sam-3d-body-dinov3) into `CHECKPOINTS_DIR`. Request access on the HuggingFace repos first. **The checkpoints volume must be writable** (do not use `:ro` on the mount) for auto-download to succeed.
+- **What gets downloaded is decided by the model catalogue** (`fbxify/models.json`, overlaid with `$CHECKPOINTS_DIR/models.json` or `FBXIFY_MODELS_JSON`): the entrypoint runs `python -m fbxify.model_catalog fetch`, which fetches only entries marked `"enabled": true`, verifies sha256/size for the shipped ones and never touches `"local"` entries that already sit on your mount. `GET /models` shows what is present and loaded. See the README section "Model catalogue" for adding your own detectors / pose variants.
 
 **Cache (ViTDet, Hugging Face, MHR assets):** To avoid re-downloading on each worker start, mount a persistent volume for:
 
