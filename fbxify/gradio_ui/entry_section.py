@@ -20,12 +20,22 @@ TRACKING_MODE_INFERENCE_BBOX = "inference_bbox"
 
 MODEL_SECTIONS = (("body_model", "body_models"), ("encoder", "encoders"), ("detector", "detectors"))
 
+# Statuses of enabled entries whose files are not on disk; shown in red in the dropdowns.
+NOT_READY_STATUSES = ("missing", "size-mismatch")
+
+# Pass to gr.Blocks(css=...). Gradio renders each option as
+# <li data-testid="dropdown-option" aria-label="<display text>">, so the status suffix is the hook.
+MODEL_DROPDOWN_CSS = "\n".join(
+    f'li[data-testid="dropdown-option"][aria-label$="[{status}]"] {{ color: var(--error-text-color, #d32f2f); }}'
+    for status in NOT_READY_STATUSES
+)
+
 
 def model_dropdown_choices(models: Dict[str, Any] | None, section: str) -> Tuple[list, Any]:
     """(choices, value) for one model dropdown from a GET /models style payload.
 
-    Only enabled entries are offered; entries whose files are not on disk are labelled so the
-    user knows a fetch is needed. The value is what is loaded, else the catalogue default.
+    Only enabled entries are offered; entries whose files are not on disk get a "[status]" suffix
+    (styled red by MODEL_DROPDOWN_CSS). The value is what is loaded, else the catalogue default.
     """
     if not models:
         return [], None
@@ -36,7 +46,7 @@ def model_dropdown_choices(models: Dict[str, Any] | None, section: str) -> Tuple
             continue
         label = entry.get("display_name") or entry["name"]
         status = entry.get("status", "")
-        if status not in ("ready", "ready-unverified", "disabled"):
+        if status in NOT_READY_STATUSES:
             label = f"{label} [{status}]"
         choices.append((label, entry["name"]))
     names = [c[1] for c in choices]
@@ -78,7 +88,6 @@ def create_entry_section(translator: Translator, models: Dict[str, Any] | None =
                 label=translator.t(f"ui.{key}"),
                 choices=choices,
                 value=value,
-                info=translator.t(f"ui.{key}_info"),
                 allow_custom_value=True,
                 interactive=True,
             )
@@ -242,9 +251,9 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
     t = Translator(lang)
     return (
         gr.update(label=t.t("ui.input_file")),  # input_file
-        gr.update(label=t.t("ui.body_model"), info=t.t("ui.body_model_info")),  # body_model
-        gr.update(label=t.t("ui.encoder"), info=t.t("ui.encoder_info")),  # encoder
-        gr.update(label=t.t("ui.detector"), info=t.t("ui.detector_info")),  # detector
+        gr.update(label=t.t("ui.body_model")),  # body_model
+        gr.update(label=t.t("ui.encoder")),  # encoder
+        gr.update(label=t.t("ui.detector")),  # detector
         gr.update(label=t.t("ui.tracking.mode_label"), info=t.t("ui.tracking.mode_info")),  # tracking_mode
         gr.update(label=t.t("ui.bbox_file")),  # bbox_file
         gr.update(label=t.t("ui.num_people")),  # num_people

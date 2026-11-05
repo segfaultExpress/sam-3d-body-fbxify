@@ -311,10 +311,32 @@ def test_backend_and_ui_wire_the_dropdowns():
     assert "entry_components['body_model'], entry_components['encoder'], entry_components['detector']," in app
     assert "body_model=body_model,\n                encoder=encoder,\n                detector=detector," in app
     assert "backend.list_models()" in app
+    assert "css=MODEL_DROPDOWN_CSS" in app  # not-ready entries are shown in red, no helper text
     for lang in ("en", "es", "fr", "ja"):
         data = json.loads(_read(f"fbxify/i18n/{lang}.json"))
-        for key in ("body_model", "body_model_info", "encoder", "encoder_info", "detector", "detector_info"):
+        for key in ("body_model", "encoder", "detector"):
             assert key in data["ui"], (lang, key)
+            assert f"{key}_info" not in data["ui"], (lang, key)
+
+
+def test_model_dropdown_choices_mark_only_not_ready_entries():
+    pytest.importorskip("gradio")
+    from fbxify.gradio_ui import entry_section as es
+
+    payload = {
+        "detectors": [
+            {"name": "vitdet", "display_name": "ViTDet", "enabled": True, "status": "ready"},
+            {"name": "mine", "display_name": "Mine", "enabled": True, "status": "ready-unverified"},
+            {"name": "bad", "display_name": "Bad", "enabled": True, "status": "missing"},
+            {"name": "off", "display_name": "Off", "enabled": False, "status": "disabled"},
+        ],
+        "loaded": {"detector": "vitdet"},
+        "defaults": {"detector": "vitdet"},
+    }
+    choices, value = es.model_dropdown_choices(payload, "detectors")
+    assert choices == [("ViTDet", "vitdet"), ("Mine", "mine"), ("Bad [missing]", "bad")]
+    assert value == "vitdet"
+    assert '[aria-label$="[missing]"]' in es.MODEL_DROPDOWN_CSS
 
 
 def test_detector_registry_has_opt_in_ultralytics():

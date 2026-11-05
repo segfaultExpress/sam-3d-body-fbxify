@@ -12,6 +12,7 @@ from fbxify.i18n import Translator, DEFAULT_LANGUAGE
 from fbxify.utils import _is_video_path
 from fbxify.gradio_ui.header_section import create_header_section, update_header_language
 from fbxify.gradio_ui.entry_section import (
+    MODEL_DROPDOWN_CSS,
     toggle_tracking_inputs,
     toggle_fov_inputs,
     update_entry_language,
@@ -407,7 +408,7 @@ def create_app(backend):
         return DEFAULT_LANGUAGE
 
     # Create UI sections
-    with gr.Blocks(title=translator.t("app.title")) as app:
+    with gr.Blocks(title=translator.t("app.title"), css=MODEL_DROPDOWN_CSS) as app:
         # Header section (now returns heading_md, description_md, tabs, lang_selector)
         heading_md, description_md, header_tabs, lang_selector = create_header_section(translator)
 
