@@ -62,4 +62,11 @@ link_mhr_runtime_assets() {
 }
 link_mhr_runtime_assets "/opt/venv/lib/python3.12/site-packages/assets" "$CACHE_DIR/mhr_assets"
 
+# Fetch only the models enabled in the catalogue (see worker-entrypoint.sh). Non-fatal.
+# FBXIFY_MODELS_FETCHED stops a chained worker-entrypoint.sh from repeating it.
+if [ "${FBXIFY_SKIP_MODEL_FETCH:-0}" != "1" ] && [ "${FBXIFY_MODELS_FETCHED:-0}" != "1" ]; then
+  python -m fbxify.model_catalog fetch || echo "model_catalog: some enabled models are missing (see above)"
+  export FBXIFY_MODELS_FETCHED=1
+fi
+
 exec "$@"

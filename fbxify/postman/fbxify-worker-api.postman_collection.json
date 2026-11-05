@@ -1,7 +1,7 @@
 {
   "info": {
     "name": "Fbxify Worker API",
-    "description": "Test the fbxify worker API (pose, FBX, detection, tracking, mounts). Set `base_url` in collection or environment (e.g. http://localhost:8000). Optional: set `api_key` if FBXIFY_SHARED_SECRET is configured.",
+    "description": "Test the fbxify worker API (pose, FBX, detection, tracking, mounts, model catalogue). Set `base_url` in collection or environment (e.g. http://localhost:8000). Optional: set `api_key` if FBXIFY_SHARED_SECRET is configured.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -21,8 +21,58 @@
         "method": "GET",
         "header": [],
         "url": "{{base_url}}/health",
-        "description": "Readiness. 200 and ready=true means MHR assets and SAM 3D Body are loaded. 503 means do not submit pose jobs. No auth required."
+        "description": "Readiness. 200 and ready=true means MHR assets and SAM 3D Body are loaded. 503 means do not submit pose jobs. The `models` object reports the loaded body_model / encoder / detector names. No auth required."
       }
+    },
+    {
+      "name": "Models",
+      "description": "Model catalogue (fbxify/models.json plus the user overlay). Pick detectors, encoders and body models by catalogue name; the worker keeps one of each resident and swaps them on demand.",
+      "item": [
+        {
+          "name": "List Models",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+              { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+            ],
+            "url": "{{base_url}}/models",
+            "description": "Catalogue entries grouped as detectors / encoders / body_models, each with display_name, type, enabled, default, licence, source kind and status (ready, missing, size-mismatch, ready-unverified, disabled). Also returns `loaded` (what is resident now) and `defaults`. Only names are exposed, never paths. GET /api/models is an alias."
+          }
+        },
+        {
+          "name": "Select Models",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+              { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+            ],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "body_model", "value": "vith", "type": "text", "description": "Catalogue name from body_models (e.g. vith, dinov3). Omit to keep the current one." },
+                { "key": "encoder", "value": "fp32", "type": "text", "description": "Catalogue name from encoders (e.g. fp32, embedl_int8_trt). Some encoders require a specific body model." },
+                { "key": "detector", "value": "vitdet", "type": "text", "description": "Catalogue name from detectors (e.g. vitdet). Omit to keep the current one." }
+              ]
+            },
+            "url": "{{base_url}}/models/select",
+            "description": "Swap the resident models now. The previous weights are released and the CUDA cache flushed before loading. Returns the new `loaded` set. 400 for unknown, disabled, not-yet-fetched or incompatible names; 409 while a job holds the GPU; 503 if the worker is not ready."
+          }
+        },
+        {
+          "name": "Fetch Models",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{api_key}}", "disabled": true },
+              { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
+            ],
+            "url": "{{base_url}}/models/fetch",
+            "description": "Re-read the catalogue and download every enabled entry that is still missing (blocking; large checkpoints take minutes). Local-mount entries are only checked, never downloaded. Use after editing the models.json overlay, then List Models to confirm status."
+          }
+        }
+      ]
     },
     {
       "name": "Live",
@@ -121,11 +171,14 @@
             { "key": "output_tracking_bbox", "value": "false", "type": "text" },
             { "key": "frame_batch_size", "value": "1", "type": "text" },
             { "key": "detection_batch_size", "value": "1", "type": "text" },
-            { "key": "lang", "value": "en", "type": "text" }
+            { "key": "lang", "value": "en", "type": "text" },
+            { "key": "body_model", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (see Models > List Models). Swaps before the job runs; omit to use what is loaded." },
+            { "key": "encoder", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. fp32, embedl_int8_trt)." },
+            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. vitdet)." }
           ]
         },
         "url": "{{base_url}}/jobs/pose",
-        "description": "Submit image/video for pose estimation. Provide either input_file (upload) or input_mount_id (from POST /mount), not both. Returns job_id. Set fast_inference=true to skip the second body-decoder pass."
+        "description": "Submit image/video for pose estimation. Provide either input_file (upload) or input_mount_id (from POST /mount), not both. Returns job_id. Set fast_inference=true to skip the second body-decoder pass. Optional body_model / encoder / detector pick catalogue entries by name (400 if unknown, disabled or incompatible)."
       }
     },
     {
@@ -150,7 +203,10 @@
             { "key": "output_tracking_bbox", "value": "false", "type": "text" },
             { "key": "frame_batch_size", "value": "1", "type": "text" },
             { "key": "detection_batch_size", "value": "1", "type": "text" },
-            { "key": "lang", "value": "en", "type": "text" }
+            { "key": "lang", "value": "en", "type": "text" },
+            { "key": "body_model", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (see Models > List Models)." },
+            { "key": "encoder", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. fp32, embedl_int8_trt)." },
+            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional catalogue name (e.g. vitdet)." }
           ]
         },
         "url": "{{base_url}}/jobs/pose",
@@ -246,11 +302,12 @@
           "mode": "formdata",
           "formdata": [
             { "key": "input_file", "type": "file", "src": "", "description": "Image or video (required)" },
-            { "key": "detection_batch_size", "value": "1", "type": "text" }
+            { "key": "detection_batch_size", "value": "1", "type": "text" },
+            { "key": "detector", "value": "", "type": "text", "disabled": true, "description": "Optional detector catalogue name (e.g. vitdet). Omit to use what is loaded." }
           ]
         },
         "url": "{{base_url}}/jobs/detection",
-        "description": "Run human detection only. Returns job_id; output includes bbox CSV."
+        "description": "Run human detection only. Returns job_id; output includes bbox CSV. Optional detector picks a catalogue entry by name."
       }
     },
     {
@@ -373,7 +430,7 @@
           { "key": "X-API-Key", "value": "{{api_key}}", "disabled": true }
         ],
         "url": "{{base_url}}/reload",
-        "description": "Reload models (e.g. after uploading checkpoints via SSH). Clears cached managers and reinitializes. Returns 503 if checkpoints still missing."
+        "description": "Reload models (e.g. after uploading checkpoints via SSH). Releases the resident models, re-reads the catalogue and reinitializes with the default / env selection. Returns 503 if checkpoints still missing. To change which models are loaded without a full reset, use Models > Select Models."
       }
     }
   ]

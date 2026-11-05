@@ -38,13 +38,23 @@ services:
       - ${CHECKPOINTS_DIR:-./checkpoints}:${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}:ro
       # Optional: persistent caches (faster restarts, avoid re-downloads)
       - ${CACHE_DIR:-./cache}/videt_checkpoint:/root/.torch/iopath_cache/detectron2/ViTDet/COCO/cascade_mask_rcnn_vitdet_h/f328730692
+      # Same folder at the path the model catalogue uses (detectors.vitdet local_dir), so the
+      # ViTDet weights are downloaded once and shared with detectron2's cache.
+      - ${CACHE_DIR:-./cache}/videt_checkpoint:/fbxify/cache/videt_checkpoint
       - ${CACHE_DIR:-./cache}/hf_cache:/root/.cache/huggingface
       - ${CACHE_DIR:-./cache}/mhr_assets:/fbxify/cache/mhr_assets
     environment:
       - CHECKPOINTS_DIR=${CHECKPOINTS_DIR_CONTAINER:-/fbxify/checkpoints}
       - CACHE_DIR=${CACHE_DIR_CONTAINER:-/fbxify/cache}
+      # Initial selection by catalogue name (fbxify/models.json); unset = catalogue defaults.
       - FBXIFY_MODEL=${FBXIFY_MODEL:-vith}
+      - FBXIFY_ENCODER=${FBXIFY_ENCODER:-}
+      - FBXIFY_DETECTOR=${FBXIFY_DETECTOR:-}
+      # Your own models.json overlay (default: $CHECKPOINTS_DIR/models.json when present).
+      - FBXIFY_MODELS_JSON=${FBXIFY_MODELS_JSON:-}
       - FBXIFY_FAST_INFERENCE=${FBXIFY_FAST_INFERENCE:-0}
+      # Legacy alias for FBXIFY_ENCODER: none | pt2 | trt (pt2/trt need dinov3 + the quantized image).
+      - FBXIFY_QUANTIZED_BACKBONE=${FBXIFY_QUANTIZED_BACKBONE:-none}
       - FBXIFY_SHARED_SECRET=${FBXIFY_SHARED_SECRET}
       - HF_TOKEN=${HF_TOKEN}
     ports:

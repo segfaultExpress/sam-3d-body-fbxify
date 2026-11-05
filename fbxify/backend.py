@@ -101,12 +101,46 @@ class CancelledError(Exception):
     pass
 
 
+def _clean_model_names(body_model: Any, encoder: Any, detector: Any) -> Dict[str, str]:
+    """Keep only non-empty catalogue names (dropdown values); never paths."""
+    out: Dict[str, str] = {}
+    for key, value in (("body_model", body_model), ("encoder", encoder), ("detector", detector)):
+        if isinstance(value, (list, tuple)):
+            value = value[0] if value else None
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            out[key] = text
+    return out
+
+
 class LocalBackend:
     """Backend that delegates to FbxifyManager (in-process)."""
 
     def __init__(self, manager: "FbxifyManager", tracking_manager: "TrackingManager"):
         self.manager = manager
         self.tracking_manager = tracking_manager
+
+    def list_models(self) -> Dict[str, Any]:
+        """Model catalogue plus what is loaded, same shape as the worker's GET /models."""
+        from fbxify.model_catalog import load_catalog
+
+        est = self.manager.estimation_manager
+        catalog = est.catalog or load_catalog()
+        payload = catalog.describe(loaded=est.loaded_selection())
+        payload["ready"] = True
+        payload["defaults"] = {
+            "body_model": catalog.default("body_models").name,
+            "encoder": catalog.default("encoders").name,
+            "detector": catalog.default("detectors").name,
+        }
+        return payload
+
+    def _select_models(self, **names: Any) -> None:
+        wanted = _clean_model_names(names.get("body_model"), names.get("encoder"), names.get("detector"))
+        if wanted:
+            self.manager.estimation_manager.select(**wanted)
 
     def run_pose_estimation(
         self,
@@ -126,6 +160,9 @@ class LocalBackend:
         lang: str,
         progress_callback: Optional[callable] = None,
         fast_inference: Any = False,
+        body_model: Any = None,
+        encoder: Any = None,
+        detector: Any = None,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         from fbxify.pose_estimation_manager import CancelledError as _CancelledError
         from fbxify.utils import render_tracking_bbox_overlay, export_mot_bboxes as write_mot_bboxes, _is_video_path
@@ -134,6 +171,8 @@ class LocalBackend:
 
         translator = Translator(lang)
         temp_dir = None
+        swap_lock = self.manager.estimation_manager.swap_lock
+        lock_held = False
 
         def _extract_first_json_path(files: List) -> Optional[str]:
             if files is None:
@@ -192,6 +231,12 @@ class LocalBackend:
             else:
                 frame_paths = [file_path]
                 temp_dir = None
+
+            swap_lock.acquire()
+            lock_held = True
+            if progress_callback:
+                progress_callback(0.0, "Selecting models...")
+            self._select_models(body_model=body_model, encoder=encoder, detector=detector)
 
             fov_file_path = fov_file.name if fov_file else None
             self.manager.set_camera_intrinsics(fov_method, fov_file_path, frame_paths, sample_number)
@@ -268,6 +313,8 @@ class LocalBackend:
         except Exception as e:
             raise
         finally:
+            if lock_held:
+                swap_lock.release()
             if temp_dir and os.path.exists(temp_dir):
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
@@ -400,6 +447,7 @@ class LocalBackend:
         input_file: Any,
         detection_batch_size: Any,
         progress_callback: Optional[callable] = None,
+        detector: Any = None,
     ) -> Optional[str]:
         if input_file is None:
             return None
@@ -418,9 +466,11 @@ class LocalBackend:
             output_dir = tempfile.gettempdir()
             mot_path = os.path.join(output_dir, f"detection_{output_id}.txt")
             batch_size = int(detection_batch_size) if detection_batch_size else 1
-            self.manager.estimation_manager.run_detection_only(
-                frame_paths, mot_path, progress_callback=progress_callback, detection_batch_size=batch_size
-            )
+            with self.manager.estimation_manager.swap_lock:
+                self._select_models(detector=detector)
+                self.manager.estimation_manager.run_detection_only(
+                    frame_paths, mot_path, progress_callback=progress_callback, detection_batch_size=batch_size
+                )
             return mot_path
         finally:
             if temp_dir and os.path.isdir(temp_dir):
@@ -496,6 +546,14 @@ class RemoteBackend:
             return {}
         return {"Authorization": f"Bearer {self.api_key}"}
 
+    def list_models(self) -> Dict[str, Any]:
+        """GET /models on the worker (catalogue + loaded selection). Raises on HTTP errors."""
+        import requests
+
+        r = requests.get(f"{self.base_url}/models", headers=self._headers(), timeout=30)
+        r.raise_for_status()
+        return r.json()
+
     def run_pose_estimation(
         self,
         input_file: Any,
@@ -515,6 +573,9 @@ class RemoteBackend:
         progress_callback: Optional[callable] = None,
         input_mount_id: Optional[str] = None,
         fast_inference: Any = False,
+        body_model: Any = None,
+        encoder: Any = None,
+        detector: Any = None,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         import requests
         import gradio as gr
@@ -545,6 +606,7 @@ class RemoteBackend:
                 "lang": lang,
                 "fast_inference": "true" if fast_inference else "false",
             }
+            payload.update(_clean_model_names(body_model, encoder, detector))
             if input_mount_id:
                 payload["input_mount_id"] = input_mount_id
             if tracking_config is not None:
@@ -738,17 +800,20 @@ class RemoteBackend:
         input_file: Any,
         detection_batch_size: Any,
         progress_callback: Optional[callable] = None,
+        detector: Any = None,
     ) -> Optional[str]:
         import requests
 
         if not input_file:
             return None
         file_path = input_file.name if hasattr(input_file, "name") else input_file
+        data: Dict[str, Any] = {"detection_batch_size": int(detection_batch_size or 1)}
+        data.update(_clean_model_names(None, None, detector))
         with open(file_path, "rb") as f:
             files = {"input_file": (os.path.basename(file_path), f)}
             r = requests.post(
                 f"{self.base_url}/jobs/detection",
-                data={"detection_batch_size": int(detection_batch_size or 1)},
+                data=data,
                 files=files,
                 headers=self._headers(),
                 timeout=300,

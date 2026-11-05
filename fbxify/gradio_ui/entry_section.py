@@ -4,6 +4,8 @@ Gradio UI components for entry section.
 This module provides UI components for input controls including
 file upload, bbox options, FOV options, and precision selection.
 """
+from __future__ import annotations
+
 import gradio as gr
 from typing import Dict, Any, Tuple
 from fbxify.i18n import Translator
@@ -16,12 +18,52 @@ TRACKING_MODE_INFERENCE = "inference"
 TRACKING_MODE_INFERENCE_BBOX = "inference_bbox"
 
 
-def create_entry_section(translator: Translator) -> Dict[str, Any]:
+MODEL_SECTIONS = (("body_model", "body_models"), ("encoder", "encoders"), ("detector", "detectors"))
+
+# Statuses of enabled entries whose files are not on disk; shown in red in the dropdowns.
+NOT_READY_STATUSES = ("missing", "size-mismatch")
+
+# Pass to gr.Blocks(css=...). Gradio renders each option as
+# <li data-testid="dropdown-option" aria-label="<display text>">, so the status suffix is the hook.
+MODEL_DROPDOWN_CSS = "\n".join(
+    f'li[data-testid="dropdown-option"][aria-label$="[{status}]"] {{ color: var(--error-text-color, #d32f2f); }}'
+    for status in NOT_READY_STATUSES
+)
+
+
+def model_dropdown_choices(models: Dict[str, Any] | None, section: str) -> Tuple[list, Any]:
+    """(choices, value) for one model dropdown from a GET /models style payload.
+
+    Only enabled entries are offered; entries whose files are not on disk get a "[status]" suffix
+    (styled red by MODEL_DROPDOWN_CSS). The value is what is loaded, else the catalogue default.
+    """
+    if not models:
+        return [], None
+    key = {"body_models": "body_model", "encoders": "encoder", "detectors": "detector"}[section]
+    choices = []
+    for entry in models.get(section, []) or []:
+        if not entry.get("enabled", False):
+            continue
+        label = entry.get("display_name") or entry["name"]
+        status = entry.get("status", "")
+        if status in NOT_READY_STATUSES:
+            label = f"{label} [{status}]"
+        choices.append((label, entry["name"]))
+    names = [c[1] for c in choices]
+    loaded = (models.get("loaded") or {}).get(key)
+    default = (models.get("defaults") or {}).get(key)
+    value = loaded if loaded in names else (default if default in names else (names[0] if names else None))
+    return choices, value
+
+
+def create_entry_section(translator: Translator, models: Dict[str, Any] | None = None) -> Dict[str, Any]:
     """
     Create the entry section UI components.
     
     Args:
         translator: Translator instance for i18n
+        models: optional model catalogue payload (backend.list_models()) feeding the
+            body-model / encoder / detector dropdowns
         
     Returns:
         Dictionary of component names to Gradio components
@@ -37,6 +79,18 @@ def create_entry_section(translator: Translator) -> Dict[str, Any]:
     # Estimation Options section header
     with gr.Group():
         gr.Markdown(f"## {translator.t('ui.estimation_options_title')}")
+
+    # Model selection (from the model catalogue; swapping frees the previous model first)
+    with gr.Row():
+        for key, section in MODEL_SECTIONS:
+            choices, value = model_dropdown_choices(models, section)
+            components[key] = gr.Dropdown(
+                label=translator.t(f"ui.{key}"),
+                choices=choices,
+                value=value,
+                allow_custom_value=True,
+                interactive=True,
+            )
     
     # Tracking options
     components['tracking_mode'] = gr.Dropdown(
@@ -197,6 +251,9 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
     t = Translator(lang)
     return (
         gr.update(label=t.t("ui.input_file")),  # input_file
+        gr.update(label=t.t("ui.body_model")),  # body_model
+        gr.update(label=t.t("ui.encoder")),  # encoder
+        gr.update(label=t.t("ui.detector")),  # detector
         gr.update(label=t.t("ui.tracking.mode_label"), info=t.t("ui.tracking.mode_info")),  # tracking_mode
         gr.update(label=t.t("ui.bbox_file")),  # bbox_file
         gr.update(label=t.t("ui.num_people")),  # num_people

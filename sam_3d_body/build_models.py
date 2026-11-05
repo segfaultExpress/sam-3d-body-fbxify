@@ -7,7 +7,17 @@ from .utils.config import get_config
 from .utils.checkpoint import load_state_dict
 
 
-def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: str = ""):
+def load_sam_3d_body(
+    checkpoint_path: str = "",
+    device: str = "cuda",
+    mhr_path: str = "",
+    require_backbone_weights: bool = True,
+):
+    """Build SAM3DBody from ``model_config.yaml`` next to ``checkpoint_path`` and load it.
+
+    ``require_backbone_weights=False`` skips the encoder-coverage check; use it only when
+    the backbone is replaced right after loading (e.g. the embedl INT8 encoder).
+    """
     print("Loading SAM 3D Body model...")
     
     # Check the current directory, and if not present check the parent dir.
@@ -34,10 +44,34 @@ def load_sam_3d_body(checkpoint_path: str = "", device: str = "cuda", mhr_path: 
     else:
         state_dict = checkpoint
     load_state_dict(model, state_dict, strict=False)
+    if require_backbone_weights:
+        _assert_backbone_weights_loaded(model, state_dict, checkpoint_path, model_cfg)
 
     model = model.to(device)
     model.eval()
     return model, model_cfg
+
+
+def _assert_backbone_weights_loaded(model, state_dict, checkpoint_path, model_cfg):
+    """Fail loudly if the checkpoint does not cover the image encoder.
+
+    ``load_state_dict(strict=False)`` only logs a warning when keys are missing, so a
+    checkpoint built for a different backbone (e.g. the ViT-H ``model.ckpt`` placed in
+    the ``sam-3d-body-dinov3`` folder) silently leaves the whole DINOv3 encoder at its
+    random initialisation. Every process then produces different, meaningless poses.
+    """
+    backbone_keys = [k for k in model.backbone.state_dict().keys()]
+    if not backbone_keys:
+        return
+    missing = [k for k in backbone_keys if f"backbone.{k}" not in state_dict]
+    if len(missing) * 2 > len(backbone_keys):
+        raise RuntimeError(
+            f"{len(missing)}/{len(backbone_keys)} backbone tensors are missing from "
+            f"{checkpoint_path} (backbone type {model_cfg.MODEL.BACKBONE.TYPE!r}); the image "
+            "encoder would run with random weights. The checkpoint does not belong to this "
+            "model_config.yaml - re-download the matching model.ckpt "
+            "(facebook/sam-3d-body-dinov3 is ~2.1 GB, facebook/sam-3d-body-vith ~1.7 GB)."
+        )
 
 
 def _hf_download(repo_id):

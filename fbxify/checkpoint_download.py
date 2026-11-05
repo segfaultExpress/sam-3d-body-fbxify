@@ -60,6 +60,64 @@ def download_checkpoints_if_missing(model: str, checkpoints_dir: str) -> bool:
         return False
 
 
+EMBEDL_REPO_ID = "embedl/sam-3d-body"
+EMBEDL_DIRNAME = "embedl-sam-3d-body"
+# Files needed per quantized-backbone mode. sam3dbody_faces.npy is tiny and handy for rendering.
+EMBEDL_FILES = {
+    "pt2": ["embedl_sam3dbody_int8.pt2", "sam3dbody_faces.npy"],
+    "trt": ["embedl_sam3dbody_int8.onnx", "embedl_sam3dbody_int8.onnx.data", "sam3dbody_faces.npy"],
+}
+
+
+def embedl_quantized_dir(checkpoints_dir: str | None = None) -> str:
+    """Default location of the embedl INT8 encoder files: CHECKPOINTS_DIR/embedl-sam-3d-body."""
+    explicit = os.environ.get("FBXIFY_QUANTIZED_DIR", "").strip()
+    if explicit:
+        return explicit
+    base = (checkpoints_dir or os.environ.get("CHECKPOINTS_DIR", "/fbxify/checkpoints")).rstrip("/")
+    return os.path.join(base, EMBEDL_DIRNAME)
+
+
+def download_embedl_if_missing(mode: str, quantized_dir: str) -> bool:
+    """
+    Download the embedl INT8 encoder files for ``mode`` ("pt2" or "trt") into quantized_dir
+    when missing and HF_TOKEN is set. The repo is gated: accept the licence on
+    https://huggingface.co/embedl/sam-3d-body (and facebook/sam-3d-body-dinov3) first.
+    Returns True if the files are now present.
+    """
+    files = EMBEDL_FILES.get(mode)
+    if not files:
+        print(f"checkpoint_download: unknown quantized mode {mode!r}", flush=True)
+        return False
+    missing = [f for f in files if not os.path.exists(os.path.join(quantized_dir, f))]
+    if not missing:
+        return True
+
+    hf_token = os.environ.get("HF_TOKEN")
+    if not hf_token:
+        print(
+            f"Quantized encoder files missing in {quantized_dir}: {missing}. "
+            "Set HF_TOKEN (with access to embedl/sam-3d-body) to download automatically.",
+            flush=True,
+        )
+        return False
+    try:
+        from huggingface_hub import hf_hub_download
+
+        os.makedirs(quantized_dir, exist_ok=True)
+        for name in missing:
+            print(f"Downloading {EMBEDL_REPO_ID}/{name} -> {quantized_dir}", flush=True)
+            hf_hub_download(repo_id=EMBEDL_REPO_ID, filename=name, local_dir=quantized_dir, token=hf_token)
+        still_missing = [f for f in files if not os.path.exists(os.path.join(quantized_dir, f))]
+        if still_missing:
+            print(f"Download completed but files still missing: {still_missing}", flush=True)
+            return False
+        return True
+    except Exception as e:
+        print(f"Failed to download {EMBEDL_REPO_ID}: {e}", flush=True)
+        return False
+
+
 # Official v1.0.1 release asset. v1.0.0/assets.zip returns HTTP 404.
 # Digest and size are from https://api.github.com/repos/facebookresearch/MHR/releases/tags/v1.0.1
 # lod1.fbx inside that archive matches the previously working local mesh byte for byte.
