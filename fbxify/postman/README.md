@@ -4,7 +4,7 @@ Use these files to test the fbxify worker API against any base URL (e.g. `http:/
 
 ## Files
 
-- **fbxify-worker-api.postman_collection.json** – Collection of requests (health, mounts, pose, FBX, detection, tracking, job status, download, cancel, cleanup, storage, reload).
+- **fbxify-worker-api.postman_collection.json** – Collection of requests (health, models, mounts, pose, FBX, detection, tracking, job status, download, cancel, cleanup, storage, reload).
 - **fbxify-worker.postman_environment.json** – Environment with variables: `base_url`, `api_key`, `job_id`, `filename`, `mount_id`.
 
 ## Setup
@@ -42,3 +42,13 @@ For iterative workflows where you run the same large file through multiple jobs 
 4. **Delete Mount** – Use **Delete Mount** to remove a single mount, or run **Cleanup Temp** with `unmount_all=true` to remove all mounts at once.
 
 Mounts persist across cleanup runs (unless `unmount_all=true` is set) and survive worker restarts. They are stored outside the temp directory.
+
+## Models (catalogue)
+
+The worker keeps one bbox detector, one image encoder and one SAM 3D Body checkpoint resident, chosen from `fbxify/models.json` plus your overlay (see the "Model catalogue" section of the top-level README). The **Models** folder covers it:
+
+1. **List Models** – GET `{{base_url}}/models`. Shows every enabled entry with its fetch `status`, plus `loaded` (what is resident) and `defaults`. `GET /health` also reports `models`.
+2. **Select Models** – POST `body_model` / `encoder` / `detector` catalogue names to swap now; the previous weights are freed and the CUDA cache flushed first. `409` while a job is running.
+3. **Fetch Models** – POST to download any enabled entries that are still missing (after editing the overlay). Local-mount entries are only checked.
+
+The same `body_model` / `encoder` / `detector` fields are present (disabled by default) on **Create Pose Job** and `detector` on **Create Detection Job**; enabling them swaps for that job. Only catalogue names are accepted; paths, disabled entries and incompatible combinations (e.g. an INT8 encoder with a body model it was not exported for) return `400`.
