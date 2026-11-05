@@ -180,10 +180,64 @@ What each `type` expects on disk:
 
 A detector architecture that is neither detectron2 nor Ultralytics needs a loader/runner pair
 registered with `tools.build_detector.register_detector_type(name, loader, runner, batch_runner)`;
-the runner must return xyxy boxes sorted like `run_detectron2_vitdet`. Then reference that `name` as the
-entry's `type`.
+the runner must return xyxy boxes sorted like `run_detectron2_vitdet`. Accept a `return_scores=True`
+keyword and return `(boxes, scores)` if you want the confidence modes below to see your detector's
+scores; without it the boxes have no confidence and the modes fall back as described. Then reference
+that `name` as the entry's `type`.
 
 Check what the catalogue sees with `python -m fbxify.model_catalog list --all` (add `--json` for scripts).
+
+## Choosing who gets posed
+
+Posing is the expensive step, so the tracking mode decides which boxes in each frame are posed.
+`tracking_mode` is the same value in the GUI, `--tracking_mode` on the CLIs and the form field on
+`POST /jobs/pose`.
+
+| Mode | Keeps per frame | Needs |
+|---|---|---|
+| `count` (Closest N People) | the N tallest boxes | `num_people` |
+| `confidence_top` (Highest Confidence N People) | the N boxes with the highest confidence | `num_people` |
+| `confidence_filter` (Filter Confidence N People) | every box at or above the threshold | `min_confidence` (0–1, default 0.5) |
+| `bbox` | every box in the bbox file, with the file's ids | bbox file |
+| `inference`, `inference_bbox` | every detected box, ids assigned by the tracker | optional bbox file |
+
+Where the confidence comes from:
+
+- **Your own bbox file.** MOTChallenge rows `frame,id,x,y,w,h,conf[,x,y,z]`; the seventh column is
+  the confidence. `-1` (or a blank) means unknown. Give the three selector modes a bbox file and they
+  select from your boxes instead of running the detector, so a box list from your own tracker or a
+  manual annotation drives which people get posed.
+- **The detector.** Without a bbox file the person detector runs and its per-box score is the
+  confidence. Detection results exported as MOT carry that score in the conf column (`-1` when the
+  detector gave none).
+
+A box without a confidence never breaks a run: it sorts after every scored box in
+`confidence_top`, and is dropped by `confidence_filter`. If no box in a frame has a confidence,
+`confidence_top` behaves like `count` for that frame and `confidence_filter` keeps the frame as is.
+Boxes keep their ids and world coordinates through selection.
+
+Note what the number means. A stock person detector's score is "how sure am I this is a person",
+not "how important is this person": in a crowd the ranking says nothing about who the dancers are.
+Use `confidence_top` to trust a detector you have tuned, or hand in a bbox file whose conf column
+encodes your own ranking (for example `1.0` for the performers and `0.1` for the audience).
+
+API example, three people with your own confidence-ranked boxes:
+
+```bash
+curl -X POST http://localhost:8000/jobs/pose \
+  -F "input_file=@clip.mp4" -F "bbox_file=@boxes.txt" \
+  -F "tracking_mode=confidence_top" -F "num_people=3"
+```
+
+The same with the detector's scores and a threshold:
+
+```bash
+curl -X POST http://localhost:8000/jobs/pose \
+  -F "input_file=@clip.mp4" -F "tracking_mode=confidence_filter" -F "min_confidence=0.7"
+```
+
+`count` now keeps the N tallest boxes when a detector is loaded; earlier releases posed every
+detected person in that mode and only used N when no detector was available.
 
 ### Adding Custom Rigs
 

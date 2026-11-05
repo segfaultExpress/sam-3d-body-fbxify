@@ -40,6 +40,27 @@ class CancelledError(Exception):
 QUANTIZED_BACKBONE_CHOICES = ("none", "pt2", "trt")
 
 
+def _boxes_to_tuples(boxes_xyxy, scores=None) -> List[Tuple]:
+    """Detector output -> bbox tuples (person_id, x, y, w, h, conf, x_world, y_world, z_world).
+
+    conf is the detector's score for the box, or -1 (the MOT "not provided" value) when the
+    detector type reports none. The confidence-based tracking modes read it.
+    """
+    from fbxify.box_selection import NO_CONFIDENCE
+
+    if boxes_xyxy is None or _safe_len(boxes_xyxy) == 0:
+        return []
+    tuples_list = []
+    for person_id, box in enumerate(boxes_xyxy):
+        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
+        conf = NO_CONFIDENCE
+        if scores is not None and person_id < len(scores):
+            s = float(scores[person_id])
+            conf = s if np.isfinite(s) else NO_CONFIDENCE
+        tuples_list.append((person_id, x1, y1, x2 - x1, y2 - y1, conf, -1, -1, -1))
+    return tuples_list
+
+
 def _free_gpu():
     """Release freed tensors back to the driver so the next model fits (ComfyUI-style flush)."""
     import gc
@@ -389,7 +410,7 @@ class PoseEstimationManager:
                     if progress_callback:
                         progress_callback(chunk_end / n_frames, f"Detecting frame {chunk_end}/{n_frames}")
                     continue
-                boxes_list = detector.run_human_detection_batch(
+                scored_list = detector.run_human_detection_batch_scored(
                     images,
                     det_cat_id=0,
                     bbox_thr=0.5,
@@ -398,16 +419,8 @@ class PoseEstimationManager:
                 )
                 for idx, frame_index_0 in enumerate(valid_indices):
                     frame_1based = frame_index_0 + 1
-                    boxes_xyxy = boxes_list[idx] if idx < len(boxes_list) else np.empty((0, 4))
-                    if _safe_len(boxes_xyxy) == 0:
-                        bbox_dict[frame_1based] = []
-                        continue
-                    tuples_list = []
-                    for person_id, box in enumerate(boxes_xyxy):
-                        x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
-                        w, h = x2 - x1, y2 - y1
-                        tuples_list.append((person_id, x1, y1, w, h, 1.0, -1, -1, -1))
-                    bbox_dict[frame_1based] = tuples_list
+                    boxes_xyxy, scores = scored_list[idx] if idx < len(scored_list) else (np.empty((0, 4)), None)
+                    bbox_dict[frame_1based] = _boxes_to_tuples(boxes_xyxy, scores)
                 tqdm_bar.update(len(paths_chunk))
                 if progress_callback:
                     progress_callback(chunk_end / n_frames, f"Detecting frame {chunk_end}/{n_frames}")
@@ -420,23 +433,14 @@ class PoseEstimationManager:
                 img = cv2.imread(frame_path)
                 if img is None:
                     continue
-                boxes_xyxy = detector.run_human_detection(
+                boxes_xyxy, scores = detector.run_human_detection_scored(
                     img,
                     det_cat_id=0,
                     bbox_thr=0.5,
                     nms_thr=0.3,
                     default_to_full_image=False,
                 )
-                frame_1based = frame_index + 1
-                if _safe_len(boxes_xyxy) == 0:
-                    bbox_dict[frame_1based] = []
-                    continue
-                tuples_list = []
-                for person_id, box in enumerate(boxes_xyxy):
-                    x1, y1, x2, y2 = float(box[0]), float(box[1]), float(box[2]), float(box[3])
-                    w, h = x2 - x1, y2 - y1
-                    tuples_list.append((person_id, x1, y1, w, h, 1.0, -1, -1, -1))
-                bbox_dict[frame_1based] = tuples_list
+                bbox_dict[frame_index + 1] = _boxes_to_tuples(boxes_xyxy, scores)
 
         tqdm_bar.close()
 
@@ -769,7 +773,9 @@ class PoseEstimationManager:
                            missing_bbox_behavior: str = "Run Detection",
                            lang: str = DEFAULT_LANGUAGE,
                            frame_batch_size: Optional[int] = None,
-                           detection_batch_size: Optional[int] = 1) -> Dict[str, Dict[str, Any]]:
+                           detection_batch_size: Optional[int] = 1,
+                           selection_mode: Optional[str] = None,
+                           min_confidence: Optional[float] = None) -> Dict[str, Dict[str, Any]]:
         """
         Estimate poses for all frames.
 
@@ -785,11 +791,18 @@ class PoseEstimationManager:
             frame_batch_size: If set to an integer > 1, run pose model once per this many frames
                               (batched body forward, then hand refinement per frame). Default None = 1 (current behavior).
             detection_batch_size: When no bbox file and Run Detection, number of images per detector batch (1 = per-frame).
+            selection_mode: Which boxes of each frame get posed (the job's tracking_mode): "count" keeps the
+                            num_people tallest, "confidence_top" the num_people most confident,
+                            "confidence_filter" those at or above min_confidence; other modes pose every box.
+                            See fbxify.box_selection.
+            min_confidence: Threshold for "confidence_filter".
 
         Returns:
             Dictionary in format: {frame_X: {person_id: estimation_data}}
             If no people detected in a frame, frame_X will be an empty dict but present.
         """
+        from fbxify.box_selection import SELECTING_MODES, select_boxes_per_frame, selection_summary
+
         estimation_results = {}
         translator = Translator(lang)
         use_batching = frame_batch_size is not None and frame_batch_size > 1
@@ -803,6 +816,13 @@ class PoseEstimationManager:
                 progress_callback=progress_callback,
                 output_mot_path=None,
             )
+
+        # Select who gets posed (the expensive step) before any pose work.
+        if bbox_dict is not None and selection_mode in SELECTING_MODES:
+            selected = select_boxes_per_frame(bbox_dict, selection_mode, num_people=num_people, min_confidence=min_confidence)
+            before, after = selection_summary(bbox_dict, selected)
+            print(f"Box selection '{selection_mode}': posing {after} of {before} boxes over {len(selected)} frames", flush=True)
+            bbox_dict = selected
 
         if use_batching:
             self._estimate_all_frames_batched(

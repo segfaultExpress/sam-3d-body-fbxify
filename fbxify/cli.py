@@ -48,8 +48,17 @@ def parse_args():
         "--tracking_mode",
         type=str,
         default="count",
-        choices=["bbox", "count", "inference", "inference_bbox"],
-        help="Tracking mode: bbox (use bbox file), count (N people), inference (tracklets), inference_bbox (bbox file + tracklets) (default: count)"
+        choices=["bbox", "count", "inference", "inference_bbox", "confidence_top", "confidence_filter"],
+        help="Tracking mode: bbox (use bbox file), count (N tallest people), inference (tracklets), "
+             "inference_bbox (bbox file + tracklets), confidence_top (N most confident boxes), "
+             "confidence_filter (boxes at or above --min_confidence). The confidence modes read the bbox "
+             "file's conf column when --bbox_file is given, else the detector's scores. (default: count)"
+    )
+    parser.add_argument(
+        "--min_confidence",
+        type=float,
+        default=0.5,
+        help="Threshold for --tracking_mode confidence_filter (default: 0.5)"
     )
     parser.add_argument(
         "--tracking_config",
@@ -295,14 +304,26 @@ def main():
         print(f"Processing {len(frame_paths)} frame(s)...")
         
         # Prepare bboxes / tracking mode
+        from fbxify.box_selection import COUNT_MODES, SELECTING_MODES
+
         tracking_mode = args.tracking_mode
-        if tracking_mode != "bbox" and args.bbox_file:
+        if tracking_mode not in ("bbox", "inference_bbox") and tracking_mode not in SELECTING_MODES and args.bbox_file:
             print("Info: bbox file provided, switching tracking_mode to bbox")
             tracking_mode = "bbox"
 
         bbox_dict = None
         num_people = args.num_people
-        if tracking_mode == "bbox":
+        if tracking_mode in SELECTING_MODES:
+            # Selector modes: an optional bbox file supplies boxes (and confidences); N comes from --num_people.
+            if args.bbox_file:
+                print("Loading bounding boxes...")
+                bbox_dict = manager.prepare_bboxes(args.bbox_file)
+            if tracking_mode in COUNT_MODES and num_people <= 0:
+                print("Error: --num_people must be greater than 0")
+                sys.exit(1)
+            if tracking_mode not in COUNT_MODES:
+                num_people = None
+        elif tracking_mode == "bbox":
             if not args.bbox_file:
                 print("Error: --bbox_file is required when --tracking_mode is bbox")
                 sys.exit(1)
@@ -320,64 +341,66 @@ def main():
             if num_people <= 0:
                 print("Error: --num_people must be greater than 0")
                 sys.exit(1)
-            
-            # Set camera intrinsics
-            if args.fov_method != "Default":
-                print(f"Setting camera intrinsics (method: {args.fov_method})...")
-                fov_file_path = args.fov_file if args.fov_method == "File" else None
-                manager.set_camera_intrinsics(
-                    args.fov_method,
-                    fov_file_path,
-                    frame_paths,
-                    args.sample_number
-                )
-            
-            # Process frames (tqdm used internally for progress)
-            process_result = manager.process_frames(
+
+        # Set camera intrinsics
+        if args.fov_method != "Default":
+            print(f"Setting camera intrinsics (method: {args.fov_method})...")
+            fov_file_path = args.fov_file if args.fov_method == "File" else None
+            manager.set_camera_intrinsics(
+                args.fov_method,
+                fov_file_path,
                 frame_paths,
-                args.profile,
-                num_people,
-                bbox_dict,
-                args.use_root_motion,
-                fps,
-                None,
-                save_estimation_json=args.save_estimation_json,
-                missing_bbox_behavior=args.missing_bbox_behavior,
-                frame_batch_size=args.frame_batch_size,
-                detection_batch_size=args.detection_batch_size,
+                args.sample_number
             )
-            
-            # Print estimation JSON path if saved
-            if args.save_estimation_json:
-                print(f"Estimation results saved to: {args.save_estimation_json}")
-            
-            # Export FBX files
-            print("Exporting FBX files...")
-            fbx_paths = manager.export_fbx_files(
-                process_result.profile_name,
-                process_result.joint_to_bone_mappings,
-                process_result.root_motions,
-                process_result.frame_paths,
-                process_result.fps,
-                None,
-                height_offset=getattr(process_result, "height_offset", 0.0)
-            )
-            
-            # Move files to output directory if specified
-            if args.output_dir:
-                os.makedirs(args.output_dir, exist_ok=True)
-                moved_paths = []
-                for fbx_path in fbx_paths:
-                    filename = os.path.basename(fbx_path)
-                    dest_path = os.path.join(args.output_dir, filename)
-                    shutil.copy2(fbx_path, dest_path)
-                    moved_paths.append(dest_path)
-                fbx_paths = moved_paths
-            
-            print(f"Exported {len(fbx_paths)} FBX file(s):")
+
+        # Process frames (tqdm used internally for progress)
+        process_result = manager.process_frames(
+            frame_paths,
+            args.profile,
+            num_people,
+            bbox_dict,
+            args.use_root_motion,
+            fps,
+            None,
+            save_estimation_json=args.save_estimation_json,
+            missing_bbox_behavior=args.missing_bbox_behavior,
+            frame_batch_size=args.frame_batch_size,
+            detection_batch_size=args.detection_batch_size,
+            tracking_mode=tracking_mode,
+            min_confidence=args.min_confidence,
+        )
+
+        # Print estimation JSON path if saved
+        if args.save_estimation_json:
+            print(f"Estimation results saved to: {args.save_estimation_json}")
+
+        # Export FBX files
+        print("Exporting FBX files...")
+        fbx_paths = manager.export_fbx_files(
+            process_result.profile_name,
+            process_result.joint_to_bone_mappings,
+            process_result.root_motions,
+            process_result.frame_paths,
+            process_result.fps,
+            None,
+            height_offset=getattr(process_result, "height_offset", 0.0)
+        )
+
+        # Move files to output directory if specified
+        if args.output_dir:
+            os.makedirs(args.output_dir, exist_ok=True)
+            moved_paths = []
             for fbx_path in fbx_paths:
-                print(f"  - {fbx_path}")
-        
+                filename = os.path.basename(fbx_path)
+                dest_path = os.path.join(args.output_dir, filename)
+                shutil.copy2(fbx_path, dest_path)
+                moved_paths.append(dest_path)
+            fbx_paths = moved_paths
+
+        print(f"Exported {len(fbx_paths)} FBX file(s):")
+        for fbx_path in fbx_paths:
+            print(f"  - {fbx_path}")
+
     except Exception as e:
         print(f"Error: {e}")
         import traceback

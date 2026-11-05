@@ -32,6 +32,7 @@
     "use_bbox": "👥 Usar Archivo BBOX",
     "bbox_file": "📁 Archivo BBOX",
     "num_people": "👥 Número de Personas",
+    "min_confidence": "🎚️ Confianza mínima",
     "missing_bbox_behavior": "En Fotograma Faltante",
     "missing_bbox_behavior_info": "Qué hacer cuando faltan datos de bbox para un fotograma: Ejecutar Detección (usar num_people para detectar) u Omitir Fotograma (omitir estimación de pose para ese fotograma)",
     "tracking": {
@@ -41,6 +42,8 @@
       "mode_count": "Las N personas más cercanas",
       "mode_inference": "Tracking por inferencia",
       "mode_inference_bbox": "Tracking por inferencia + Archivo BBOX",
+      "mode_confidence_top": "N personas con mayor confianza",
+      "mode_confidence_filter": "Filtrar personas por confianza",
       "config_title": "Configuración de tracking por inferencia",
       "enabled": "Habilitar tracking",
       "enabled_info": "Activa o desactiva el tracking (solo en modo Tracking por inferencia)",

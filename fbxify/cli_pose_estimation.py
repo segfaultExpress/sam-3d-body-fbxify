@@ -54,8 +54,16 @@ def parse_args():
         "--tracking_mode",
         type=str,
         default="count",
-        choices=["bbox", "count", "inference", "inference_bbox"],
-        help="Tracking mode (default: count)",
+        choices=["bbox", "count", "inference", "inference_bbox", "confidence_top", "confidence_filter"],
+        help="Tracking mode: bbox, count (N tallest), inference, inference_bbox, confidence_top (N most "
+             "confident boxes), confidence_filter (boxes at or above --min_confidence). The confidence modes "
+             "read the bbox file's conf column when --bbox_file is given, else the detector's scores. (default: count)",
+    )
+    parser.add_argument(
+        "--min_confidence",
+        type=float,
+        default=0.5,
+        help="Threshold for --tracking_mode confidence_filter (default: 0.5)",
     )
     parser.add_argument(
         "--tracking_config",
@@ -169,8 +177,10 @@ def main():
 
         print(f"Processing {len(frame_paths)} frame(s)...")
 
+        from fbxify.box_selection import COUNT_MODES, SELECTING_MODES
+
         tracking_mode = args.tracking_mode
-        if tracking_mode != "bbox" and args.bbox_file:
+        if tracking_mode not in ("bbox", "inference_bbox") and tracking_mode not in SELECTING_MODES and args.bbox_file:
             print("Info: bbox file provided, switching tracking_mode to bbox")
             tracking_mode = "bbox"
 
@@ -184,7 +194,17 @@ def main():
 
         bbox_dict = None
         num_people = args.num_people
-        if tracking_mode == "bbox":
+        if tracking_mode in SELECTING_MODES:
+            # Selector modes: an optional bbox file supplies boxes (and confidences); N comes from --num_people.
+            if args.bbox_file:
+                print("Loading bounding boxes...")
+                bbox_dict = manager.prepare_bboxes(args.bbox_file)
+            if tracking_mode in COUNT_MODES and num_people <= 0:
+                print("Error: --num_people must be greater than 0")
+                sys.exit(1)
+            if tracking_mode not in COUNT_MODES:
+                num_people = None
+        elif tracking_mode == "bbox":
             if not args.bbox_file:
                 print("Error: --bbox_file is required when --tracking_mode is bbox")
                 sys.exit(1)
@@ -201,15 +221,15 @@ def main():
             if num_people <= 0:
                 print("Error: --num_people must be greater than 0")
                 sys.exit(1)
-            if args.fov_method != "Default":
-                print(f"Setting camera intrinsics (method: {args.fov_method})...")
-                fov_file_path = args.fov_file if args.fov_method == "File" else None
-                manager.set_camera_intrinsics(
-                    args.fov_method,
-                    fov_file_path,
-                    frame_paths,
-                    args.sample_number,
-                )
+        if args.fov_method != "Default":
+            print(f"Setting camera intrinsics (method: {args.fov_method})...")
+            fov_file_path = args.fov_file if args.fov_method == "File" else None
+            manager.set_camera_intrinsics(
+                args.fov_method,
+                fov_file_path,
+                frame_paths,
+                args.sample_number,
+            )
 
         manager.run_pose_estimation_only(
             frame_paths,
@@ -223,6 +243,7 @@ def main():
             detection_batch_size=args.detection_batch_size,
             tracking_mode=tracking_mode,
             tracking_config=tracking_config,
+            min_confidence=args.min_confidence,
         )
         print(f"Estimation results saved to: {args.estimation_json}")
     except Exception as e:

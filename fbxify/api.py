@@ -287,6 +287,18 @@ def _require_ready() -> None:
         raise HTTPException(status_code=503, detail="Worker is not ready: " + " ".join(blockers))
 
 
+def _validate_tracking_mode(tracking_mode: str, num_people: int, min_confidence: float) -> None:
+    """400 for an unknown tracking_mode or an unusable N / threshold, before a job is queued."""
+    from fbxify.box_selection import ALL_MODES, COUNT_MODES, MODE_CONFIDENCE_FILTER
+
+    if tracking_mode not in ALL_MODES:
+        raise HTTPException(status_code=400, detail=f"tracking_mode must be one of {', '.join(ALL_MODES)}")
+    if tracking_mode in COUNT_MODES and int(num_people) <= 0:
+        raise HTTPException(status_code=400, detail=f"num_people must be > 0 for tracking_mode {tracking_mode!r}")
+    if tracking_mode == MODE_CONFIDENCE_FILTER and not (0.0 <= float(min_confidence) <= 1.0):
+        raise HTTPException(status_code=400, detail="min_confidence must be between 0 and 1")
+
+
 def _validate_model_names(**names: Optional[str]) -> None:
     """400 for unknown catalogue names before a job is queued. Only names are accepted, never paths."""
     from fbxify.model_catalog import CatalogError
@@ -377,14 +389,20 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
             precision=precision, skip_keypoint_prompt=skip_keypoint_prompt
         )
 
+        from fbxify.box_selection import COUNT_MODES, SELECTING_MODES
+
+        tracking_mode = params.get("tracking_mode", "count")
+        min_confidence = params.get("min_confidence")
         bbox_dict = None
         if bbox_path:
             bbox_dict = manager.prepare_bboxes(bbox_path)
+        if tracking_mode in SELECTING_MODES:
+            # The selector decides who gets posed; N comes from the request even with a bbox file.
+            num_people = int(params.get("num_people", 1)) if tracking_mode in COUNT_MODES else None
+        elif bbox_dict is not None:
             num_people = len(set(b[0] for bboxes in bbox_dict.values() for b in bboxes if len(b) > 0))
         else:
             num_people = int(params.get("num_people", 1))
-
-        tracking_mode = params.get("tracking_mode", "count")
         tracking_config = None
         if params.get("tracking_config"):
             try:
@@ -415,6 +433,8 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
             lang=params.get("lang", "en"),
             frame_batch_size=int(params.get("frame_batch_size", 1)) or None,
             detection_batch_size=int(params.get("detection_batch_size", 1)) or 1,
+            selection_mode=tracking_mode,
+            min_confidence=min_confidence,
         )
 
         tracking_metadata = None
@@ -868,9 +888,11 @@ async def create_pose_job(
     body_model: Optional[str] = Form(None),
     encoder: Optional[str] = Form(None),
     detector: Optional[str] = Form(None),
+    min_confidence: float = Form(0.5),
 ):
     _require_ready()
     _validate_model_names(body_model=body_model, encoder=encoder, detector=detector)
+    _validate_tracking_mode(tracking_mode, num_people, min_confidence)
     job_id = uuid.uuid4().hex
     output_dir = tempfile.mkdtemp(prefix="fbxify_job_")
     with _jobs_lock:
@@ -920,6 +942,7 @@ async def create_pose_job(
         "body_model": body_model,
         "encoder": encoder,
         "detector": detector,
+        "min_confidence": min_confidence,
     }
 
     def run():
