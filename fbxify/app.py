@@ -20,6 +20,8 @@ from fbxify.gradio_ui.entry_section import (
     TRACKING_MODE_COUNT,
     TRACKING_MODE_INFERENCE,
     TRACKING_MODE_INFERENCE_BBOX,
+    TRACKING_MODE_CONFIDENCE_TOP,
+    TRACKING_MODE_CONFIDENCE_FILTER,
 )
 from fbxify.gradio_ui.tracking_section import (
     build_tracking_config_from_gui,
@@ -64,6 +66,7 @@ def create_app(backend):
         tracking_mode,
         bbox_file,
         num_people,
+        min_confidence,
         missing_bbox_behavior,
         fov_method,
         fov_file,
@@ -214,6 +217,7 @@ def create_app(backend):
                 body_model=body_model,
                 encoder=encoder,
                 detector=detector,
+                min_confidence=min_confidence,
             )
         except Exception as e:
             error_type = type(e).__name__
@@ -279,7 +283,7 @@ def create_app(backend):
 
     def build_pose_cli_command(tracking_mode, bbox_file, num_people, missing_bbox_behavior, fov_method,
                                fov_file, sample_number, precision, fast_inference, tracking_config_file, frame_batch_size, detection_batch_size,
-                               body_model=None, encoder=None, detector=None):
+                               body_model=None, encoder=None, detector=None, min_confidence=None):
         precision_map = {
             "FP32 (Full)": "fp32",
             "BF16 (Fast + Safer)": "bf16",
@@ -291,6 +295,8 @@ def create_app(backend):
             TRACKING_MODE_COUNT: "count",
             TRACKING_MODE_INFERENCE: "inference",
             TRACKING_MODE_INFERENCE_BBOX: "inference_bbox",
+            TRACKING_MODE_CONFIDENCE_TOP: "confidence_top",
+            TRACKING_MODE_CONFIDENCE_FILTER: "confidence_filter",
         }
         tracking_mode_value = tracking_mode_map.get(tracking_mode, "count")
 
@@ -313,6 +319,15 @@ def create_app(backend):
                 cmd_parts += ["--missing_bbox_behavior", _format_cli_arg(missing_bbox_behavior)]
             if tracking_config_file:
                 cmd_parts += ["--tracking_config", _format_cli_arg(tracking_config_file)]
+        elif tracking_mode_value in ("confidence_top", "confidence_filter"):
+            if bbox_file is not None:  # optional: the file's conf column instead of the detector's scores
+                cmd_parts += ["--bbox_file", "<BBOX_FILE>"]
+                if missing_bbox_behavior:
+                    cmd_parts += ["--missing_bbox_behavior", _format_cli_arg(missing_bbox_behavior)]
+            if tracking_mode_value == "confidence_top" and num_people is not None:
+                cmd_parts += ["--num_people", str(int(num_people))]
+            if tracking_mode_value == "confidence_filter" and min_confidence is not None:
+                cmd_parts += ["--min_confidence", str(float(min_confidence))]
         else:
             if num_people is not None:
                 cmd_parts += ["--num_people", str(int(num_people))]
@@ -487,7 +502,8 @@ def create_app(backend):
                 entry_components['input_file'],
                 entry_components['body_model'], entry_components['encoder'], entry_components['detector'],
                 entry_components['tracking_mode'], entry_components['bbox_file'],
-                entry_components['num_people'], entry_components['missing_bbox_behavior'], entry_components['fov_method'],
+                entry_components['num_people'], entry_components['min_confidence'],
+                entry_components['missing_bbox_behavior'], entry_components['fov_method'],
                 entry_components['fov_file'], entry_components['sample_number'],
                 entry_components['precision'],
                 entry_components['fast_inference'],
@@ -590,6 +606,7 @@ def create_app(backend):
                 entry_components['num_people'],
                 entry_components['missing_bbox_behavior'],
                 entry_components['tracking_group'],
+                entry_components['min_confidence'],
             ],
         )
         
@@ -863,6 +880,7 @@ def create_app(backend):
                 entry_components['tracking_mode'],
                 entry_components['bbox_file'],
                 entry_components['num_people'],
+                entry_components['min_confidence'],
                 entry_components['missing_bbox_behavior'],
                 entry_components['fov_method'],
                 entry_components['fov_file'],
@@ -1091,6 +1109,7 @@ def create_app(backend):
                 entry_components['body_model'],
                 entry_components['encoder'],
                 entry_components['detector'],
+                entry_components['min_confidence'],
             ],
             outputs=[pose_cli_components['pose_cli_command']]
         )

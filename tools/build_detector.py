@@ -15,8 +15,10 @@ VITDET_WEIGHTS_URL = (
 
 # Registry of detector types: name -> (loader, per-image runner, batch runner).
 # Loaders take (device, **kwargs) and return a model; runners take (model, img(s), **run_kwargs)
-# and return xyxy boxes sorted with np.lexsort like run_detectron2_vitdet. Register your own
-# with ``register_detector_type`` and reference the type name from fbxify/models.json.
+# and return xyxy boxes sorted with np.lexsort like run_detectron2_vitdet. A runner may also
+# accept ``return_scores=True`` and then return ``(boxes, scores)``; the confidence-based
+# tracking modes use those scores when no bbox file supplies them. Register your own with
+# ``register_detector_type`` and reference the type name from fbxify/models.json.
 DETECTOR_TYPES = {}
 
 
@@ -64,6 +66,31 @@ class HumanDetector:
     def run_human_detection(self, img, **kwargs):
         return self.detector_func(self.detector, img, **{**self.options, **kwargs})
 
+    def run_human_detection_scored(self, img, **kwargs):
+        """(boxes xyxy, scores or None). Scores are None for runners that do not report them."""
+        try:
+            out = self.detector_func(self.detector, img, return_scores=True, **{**self.options, **kwargs})
+        except TypeError:
+            return self.run_human_detection(img, **kwargs), None
+        return _split_scored(out)
+
+    def run_human_detection_batch_scored(self, list_of_images, **kwargs):
+        """List of (boxes, scores or None), one per image."""
+        if len(list_of_images) == 0:
+            return []
+        if len(list_of_images) == 1:
+            boxes, scores = self.run_human_detection_scored(list_of_images[0], **kwargs)
+            if boxes is None or len(boxes) == 0:
+                boxes = np.empty((0, 4), dtype=np.float32)
+            return [(boxes, scores)]
+        try:
+            outs = self.detector_func_batch(
+                self.detector, list_of_images, return_scores=True, **{**self.options, **kwargs}
+            )
+        except TypeError:
+            return [(b, None) for b in self.run_human_detection_batch(list_of_images, **kwargs)]
+        return [_split_scored(o) for o in outs]
+
     def release(self):
         """Drop the model so the caller can free GPU memory (gc + empty_cache)."""
         self.detector = None
@@ -92,12 +119,28 @@ class HumanDetector:
     """ BATCHING SUPPORT FOR FBXIFY """
 
 
-def _sort_boxes(boxes: np.ndarray) -> np.ndarray:
+def _split_scored(out):
+    """Normalise a runner result to (boxes, scores-or-None)."""
+    if isinstance(out, tuple) and len(out) == 2:
+        boxes, scores = out
+        return boxes, (None if scores is None else np.asarray(scores, dtype=np.float32).reshape(-1))
+    return out, None
+
+
+def _sort_boxes(boxes: np.ndarray, scores=None):
+    """Lexsort boxes (and their scores alongside) for a stable, provider-independent order."""
     boxes = np.asarray(boxes, dtype=np.float32).reshape(-1, 4)
+    scores = None if scores is None else np.asarray(scores, dtype=np.float32).reshape(-1)
     if len(boxes) == 0:
-        return boxes
+        return (boxes, np.empty((0,), dtype=np.float32)) if scores is not None else boxes
     order = np.lexsort((boxes[:, 3], boxes[:, 2], boxes[:, 1], boxes[:, 0]))
+    if scores is not None:
+        return boxes[order], scores[order]
     return boxes[order]
+
+
+def _with_scores(boxes, scores, return_scores):
+    return (boxes, scores) if return_scores else boxes
 
 
 # --------------------------------------------------------------------------- Ultralytics (opt in)
@@ -139,10 +182,11 @@ def _ultralytics_predict(model, imgs, det_cat_id, bbox_thr, nms_thr, imgsz, clas
     out = []
     for res in results:
         if res.boxes is None or len(res.boxes) == 0:
-            out.append(np.empty((0, 4), dtype=np.float32))
+            out.append((np.empty((0, 4), dtype=np.float32), np.empty((0,), dtype=np.float32)))
             continue
         xyxy = res.boxes.xyxy.detach().cpu().numpy().astype(np.float32)
-        out.append(_sort_boxes(xyxy))
+        conf = res.boxes.conf.detach().cpu().numpy().astype(np.float32)
+        out.append(_sort_boxes(xyxy, conf))
     return out
 
 
@@ -157,13 +201,15 @@ def run_ultralytics(
     classes=None,
     half: bool = False,
     max_det: int = 100,
+    return_scores: bool = False,
 ):
     """Same contract as run_detectron2_vitdet: BGR image in, sorted xyxy boxes out."""
     height, width = img.shape[:2]
-    boxes = _ultralytics_predict(detector, [img], det_cat_id, bbox_thr, nms_thr, imgsz, classes, half, max_det)[0]
+    boxes, scores = _ultralytics_predict(detector, [img], det_cat_id, bbox_thr, nms_thr, imgsz, classes, half, max_det)[0]
     if len(boxes) == 0 and default_to_full_image:
         boxes = np.array([[0, 0, width, height]], dtype=np.float32)
-    return boxes
+        scores = np.array([np.nan], dtype=np.float32)
+    return _with_scores(boxes, scores, return_scores)
 
 
 def run_ultralytics_batch(
@@ -177,16 +223,19 @@ def run_ultralytics_batch(
     classes=None,
     half: bool = False,
     max_det: int = 100,
+    return_scores: bool = False,
 ) -> List[np.ndarray]:
     if len(list_of_imgs) == 0:
         return []
-    boxes_list = _ultralytics_predict(detector, list(list_of_imgs), det_cat_id, bbox_thr, nms_thr, imgsz, classes, half, max_det)
-    if default_to_full_image:
-        for i, img in enumerate(list_of_imgs):
-            if len(boxes_list[i]) == 0:
-                h, w = img.shape[:2]
-                boxes_list[i] = np.array([[0, 0, w, h]], dtype=np.float32)
-    return boxes_list
+    scored = _ultralytics_predict(detector, list(list_of_imgs), det_cat_id, bbox_thr, nms_thr, imgsz, classes, half, max_det)
+    out = []
+    for i, (boxes, scores) in enumerate(scored):
+        if default_to_full_image and len(boxes) == 0:
+            h, w = list_of_imgs[i].shape[:2]
+            boxes = np.array([[0, 0, w, h]], dtype=np.float32)
+            scores = np.array([np.nan], dtype=np.float32)
+        out.append(_with_scores(boxes, scores, return_scores))
+    return out
 
 def load_detectron2_vitdet(path=""):
     """
@@ -231,6 +280,7 @@ def run_detectron2_vitdet(
     bbox_thr: float = 0.5,
     nms_thr: float = 0.3,
     default_to_full_image: bool = True,
+    return_scores: bool = False,
 ):
     import detectron2.data.transforms as T
 
@@ -253,15 +303,17 @@ def run_detectron2_vitdet(
     )
     if valid_idx.sum() == 0 and default_to_full_image:
         boxes = np.array([0, 0, width, height]).reshape(1, 4)
+        scores = np.array([np.nan], dtype=np.float32)  # not a detection: no confidence
     else:
         boxes = det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
+        scores = det_instances.scores[valid_idx].cpu().numpy()
 
     # Sort boxes to keep a consistent output order
     sorted_indices = np.lexsort(
         (boxes[:, 3], boxes[:, 2], boxes[:, 1], boxes[:, 0])
     )  # shape: [len(boxes),]
     boxes = boxes[sorted_indices]
-    return boxes
+    return _with_scores(boxes, scores[sorted_indices], return_scores)
 
 
 def run_detectron2_vitdet_batch(
@@ -271,6 +323,7 @@ def run_detectron2_vitdet_batch(
     bbox_thr: float = 0.5,
     nms_thr: float = 0.3,
     default_to_full_image: bool = False,
+    return_scores: bool = False,
 ) -> List[np.ndarray]:
     """
     Run ViTDet on a list of images in one forward pass.
@@ -312,13 +365,16 @@ def run_detectron2_vitdet_batch(
         width = inputs_list[i]["width"]
         if valid_idx.sum() == 0 and default_to_full_image:
             boxes = np.array([0, 0, width, height]).reshape(1, 4)
+            scores = np.array([np.nan], dtype=np.float32)
         elif valid_idx.sum() == 0:
             boxes = np.empty((0, 4), dtype=np.float32)
+            scores = np.empty((0,), dtype=np.float32)
         else:
             boxes = det_instances.pred_boxes.tensor[valid_idx].cpu().numpy()
+            scores = det_instances.scores[valid_idx].cpu().numpy()
         sorted_indices = np.lexsort(
             (boxes[:, 3], boxes[:, 2], boxes[:, 1], boxes[:, 0])
         )
         boxes = boxes[sorted_indices]
-        result.append(boxes)
+        result.append(_with_scores(boxes, scores[sorted_indices], return_scores))
     return result

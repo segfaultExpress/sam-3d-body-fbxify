@@ -279,6 +279,8 @@ class FbxifyManager:
         missing_bbox_behavior: str = "Run Detection",
         frame_batch_size: Optional[int] = None,
         detection_batch_size: Optional[int] = 1,
+        tracking_mode: Optional[str] = None,
+        min_confidence: Optional[float] = None,
     ) -> ProcessResult:
         """
         Run pose estimation on frames, then process results into FBX-ready data.
@@ -292,6 +294,8 @@ class FbxifyManager:
             missing_bbox_behavior=missing_bbox_behavior,
             frame_batch_size=frame_batch_size,
             detection_batch_size=detection_batch_size,
+            selection_mode=tracking_mode,
+            min_confidence=min_confidence,
         )
         json_path = save_estimation_json
         if not json_path:
@@ -331,6 +335,7 @@ class FbxifyManager:
         detection_batch_size: Optional[int] = 1,
         tracking_mode: Optional[str] = None,
         tracking_config: Optional[TrackingConfig] = None,
+        min_confidence: Optional[float] = None,
     ) -> None:
         """
         Run pose estimation on frames and save results to JSON only.
@@ -338,6 +343,7 @@ class FbxifyManager:
         Used by the pose-only CLI.
         When tracking_mode is inference/inference_bbox and tracking_config is set,
         runs inference tracking, remaps person IDs to track IDs, and saves with tracking metadata.
+        tracking_mode also picks the per-frame box selection (count / confidence_top / confidence_filter).
         """
         estimation_results = self.estimation_manager.estimate_all_frames(
             frame_paths,
@@ -347,6 +353,8 @@ class FbxifyManager:
             missing_bbox_behavior=missing_bbox_behavior,
             frame_batch_size=frame_batch_size,
             detection_batch_size=detection_batch_size,
+            selection_mode=tracking_mode,
+            min_confidence=min_confidence,
         )
         if tracking_mode in ("inference", "inference_bbox") and tracking_config is not None:
             mode_label = "Inference Tracking + BBOX File" if tracking_mode == "inference_bbox" else "Inference Tracking"

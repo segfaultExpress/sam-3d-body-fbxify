@@ -16,6 +16,9 @@ TRACKING_MODE_BBOX = "bbox"
 TRACKING_MODE_COUNT = "count"
 TRACKING_MODE_INFERENCE = "inference"
 TRACKING_MODE_INFERENCE_BBOX = "inference_bbox"
+# Confidence-based selection (see fbxify/box_selection.py and README "Choosing who gets posed").
+TRACKING_MODE_CONFIDENCE_TOP = "confidence_top"
+TRACKING_MODE_CONFIDENCE_FILTER = "confidence_filter"
 
 
 MODEL_SECTIONS = (("body_model", "body_models"), ("encoder", "encoders"), ("detector", "detectors"))
@@ -100,6 +103,8 @@ def create_entry_section(translator: Translator, models: Dict[str, Any] | None =
             (translator.t("ui.tracking.mode_count"), TRACKING_MODE_COUNT),
             (translator.t("ui.tracking.mode_inference"), TRACKING_MODE_INFERENCE),
             (translator.t("ui.tracking.mode_inference_bbox"), TRACKING_MODE_INFERENCE_BBOX),
+            (translator.t("ui.tracking.mode_confidence_top"), TRACKING_MODE_CONFIDENCE_TOP),
+            (translator.t("ui.tracking.mode_confidence_filter"), TRACKING_MODE_CONFIDENCE_FILTER),
         ],
         value=TRACKING_MODE_COUNT,
         info=translator.t("ui.tracking.mode_info")
@@ -116,6 +121,14 @@ def create_entry_section(translator: Translator, models: Dict[str, Any] | None =
             value=1,
             precision=0,
             visible=True
+        )
+        components['min_confidence'] = gr.Number(
+            label=translator.t("ui.min_confidence"),
+            value=0.5,
+            minimum=0.0,
+            maximum=1.0,
+            step=0.05,
+            visible=False,
         )
     
     # Missing bbox behavior option (only visible when use_bbox is checked)
@@ -188,25 +201,30 @@ def create_entry_section(translator: Translator, models: Dict[str, Any] | None =
     return components
 
 
-def toggle_tracking_inputs(tracking_mode_value: str) -> Tuple[Any, Any, Any, Any]:
+def toggle_tracking_inputs(tracking_mode_value: str) -> Tuple[Any, Any, Any, Any, Any]:
     """
-    Toggle visibility of bbox_file, num_people, missing_bbox_behavior, and tracking config.
-    - bbox_file + missing_bbox_behavior: visible for BBOX and Inference + BBOX File
-    - num_people: visible only for Count
-    - tracking_group: visible for Inference and Inference + BBOX File
+    Toggle visibility of bbox_file, num_people, missing_bbox_behavior, tracking config and min_confidence.
+    - bbox_file + missing_bbox_behavior: BBOX, Inference + BBOX File, and the two confidence modes
+      (where the file is optional: its conf column is used when given, else the detector's scores)
+    - num_people: Count and Highest Confidence N
+    - tracking_group: Inference and Inference + BBOX File
+    - min_confidence: Filter Confidence
     """
     if isinstance(tracking_mode_value, list):
         tracking_mode_value = tracking_mode_value[0] if tracking_mode_value else TRACKING_MODE_COUNT
     use_bbox = tracking_mode_value == TRACKING_MODE_BBOX
     use_inference_bbox = tracking_mode_value == TRACKING_MODE_INFERENCE_BBOX
-    use_count = tracking_mode_value == TRACKING_MODE_COUNT
+    use_confidence_top = tracking_mode_value == TRACKING_MODE_CONFIDENCE_TOP
+    use_confidence_filter = tracking_mode_value == TRACKING_MODE_CONFIDENCE_FILTER
+    use_count = tracking_mode_value == TRACKING_MODE_COUNT or use_confidence_top
     use_tracking = tracking_mode_value == TRACKING_MODE_INFERENCE or use_inference_bbox
-    show_bbox_panel = use_bbox or use_inference_bbox
+    show_bbox_panel = use_bbox or use_inference_bbox or use_confidence_top or use_confidence_filter
     return (
         gr.update(visible=show_bbox_panel),
         gr.update(visible=use_count),
         gr.update(visible=show_bbox_panel),
         gr.update(visible=use_tracking),
+        gr.update(visible=use_confidence_filter),
     )
 
 
@@ -257,6 +275,7 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.tracking.mode_label"), info=t.t("ui.tracking.mode_info")),  # tracking_mode
         gr.update(label=t.t("ui.bbox_file")),  # bbox_file
         gr.update(label=t.t("ui.num_people")),  # num_people
+        gr.update(label=t.t("ui.min_confidence")),  # min_confidence
         gr.update(label=t.t("ui.missing_bbox_behavior"), info=t.t("ui.missing_bbox_behavior_info")),  # missing_bbox_behavior
         gr.update(label=t.t("ui.fov_method"), info=t.t("ui.fov_method_info")),  # fov_method
         gr.update(label=t.t("ui.fov_file")),  # fov_file

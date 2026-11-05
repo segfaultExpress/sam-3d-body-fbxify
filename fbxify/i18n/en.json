@@ -32,6 +32,7 @@
     "use_bbox": "👥 Use BBOX File",
     "bbox_file": "📁 BBOX File",
     "num_people": "👥 Number of People",
+    "min_confidence": "🎚️ Minimum confidence",
     "missing_bbox_behavior": "On Missing Frame",
     "missing_bbox_behavior_info": "What to do when bbox data is missing for a frame: Run Detection (use num_people to detect) or Skip Frame (skip pose estimation for that frame)",
     "tracking": {
@@ -41,6 +42,8 @@
       "mode_count": "Closest N People",
       "mode_inference": "Inference Tracking",
       "mode_inference_bbox": "Inference Tracking + BBOX File",
+      "mode_confidence_top": "Highest Confidence N People",
+      "mode_confidence_filter": "Filter Confidence N People",
       "config_title": "Inference Tracking Config",
       "enabled": "Enable Tracking",
       "enabled_info": "Turn inference tracking on/off (only applies in Inference Tracking mode)",

@@ -32,6 +32,7 @@
     "use_bbox": "👥 人物を指定",
     "bbox_file": "📁 BBOXファイル",
     "num_people": "👥 人数",
+    "min_confidence": "🎚️ 最小信頼度",
     "missing_bbox_behavior": "欠落フレーム時",
     "missing_bbox_behavior_info": "フレームのbboxデータが欠落している場合の動作：検出を実行（num_peopleを使用して検出）またはフレームをスキップ（そのフレームのポーズ推定をスキップ）",
     "tracking": {
@@ -41,6 +42,8 @@
       "mode_count": "最も近いN人",
       "mode_inference": "推論トラッキング",
       "mode_inference_bbox": "推論トラッキング + BBOXファイル",
+      "mode_confidence_top": "信頼度上位 N 人",
+      "mode_confidence_filter": "信頼度でフィルタ",
       "config_title": "推論トラッキング設定",
       "enabled": "トラッキングを有効化",
       "enabled_info": "トラッキングのオン/オフ（推論トラッキング時のみ）",

@@ -163,8 +163,10 @@ class LocalBackend:
         body_model: Any = None,
         encoder: Any = None,
         detector: Any = None,
+        min_confidence: Any = None,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         from fbxify.pose_estimation_manager import CancelledError as _CancelledError
+        from fbxify.box_selection import COUNT_MODES, SELECTING_MODES
         from fbxify.utils import render_tracking_bbox_overlay, export_mot_bboxes as write_mot_bboxes, _is_video_path
         from fbxify.i18n import Translator
         import gradio as gr
@@ -203,22 +205,29 @@ class LocalBackend:
             if isinstance(tracking_mode, list):
                 tracking_mode = tracking_mode[0] if tracking_mode else TRACKING_MODE_COUNT
             use_bbox = tracking_mode == TRACKING_MODE_BBOX or tracking_mode == TRACKING_MODE_INFERENCE_BBOX
+            # The confidence modes read a bbox file when one is given (its conf column), else the detector.
+            optional_bbox = tracking_mode in SELECTING_MODES and bbox_file is not None
 
             if use_bbox and bbox_file is None:
                 raise ValueError(translator.t("errors.bbox_file_required"))
 
             bbox_dict = None
-            if use_bbox:
+            if use_bbox or optional_bbox:
                 bbox_dict = self.manager.prepare_bboxes(bbox_file.name)
+            if tracking_mode in SELECTING_MODES:
+                if tracking_mode in COUNT_MODES:
+                    if num_people is None or int(num_people) <= 0:
+                        raise ValueError(translator.t("errors.num_people_required"))
+                    num_people = int(num_people)
+                else:
+                    num_people = None
+            elif use_bbox:
                 unique_person_ids = set()
                 for bboxes in bbox_dict.values():
                     for bbox in bboxes:
                         if len(bbox) > 0:
                             unique_person_ids.add(bbox[0])
                 num_people = len(unique_person_ids) if unique_person_ids else 0
-            elif tracking_mode == TRACKING_MODE_COUNT:
-                if num_people <= 0:
-                    raise ValueError(translator.t("errors.num_people_required"))
             else:
                 num_people = None
 
@@ -265,10 +274,12 @@ class LocalBackend:
                 num_people=num_people,
                 bbox_dict=bbox_dict,
                 progress_callback=prog,
-                missing_bbox_behavior=missing_bbox_behavior if use_bbox else "Run Detection",
+                missing_bbox_behavior=missing_bbox_behavior if (use_bbox or optional_bbox) else "Run Detection",
                 lang=lang,
                 frame_batch_size=int(frame_batch_size) if frame_batch_size else None,
                 detection_batch_size=int(detection_batch_size) if detection_batch_size else 1,
+                selection_mode=tracking_mode,
+                min_confidence=float(min_confidence) if min_confidence is not None else None,
             )
 
             tracking_metadata = None
@@ -576,6 +587,7 @@ class RemoteBackend:
         body_model: Any = None,
         encoder: Any = None,
         detector: Any = None,
+        min_confidence: Any = None,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         import requests
         import gradio as gr
@@ -606,6 +618,8 @@ class RemoteBackend:
                 "lang": lang,
                 "fast_inference": "true" if fast_inference else "false",
             }
+            if min_confidence is not None:
+                payload["min_confidence"] = float(min_confidence)
             payload.update(_clean_model_names(body_model, encoder, detector))
             if input_mount_id:
                 payload["input_mount_id"] = input_mount_id
