@@ -126,6 +126,7 @@ class LocalBackend:
         lang: str,
         progress_callback: Optional[callable] = None,
         fast_inference: Any = False,
+        body_only: Any = False,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         from fbxify.pose_estimation_manager import CancelledError as _CancelledError
         from fbxify.utils import render_tracking_bbox_overlay, export_mot_bboxes as write_mot_bboxes, _is_video_path
@@ -205,6 +206,7 @@ class LocalBackend:
             self.manager.estimation_manager.set_inference_options(
                 precision=precision_value,
                 skip_keypoint_prompt=bool(fast_inference),
+                body_only=bool(body_only),
             )
 
             def prog(progress_value, description):
@@ -515,6 +517,7 @@ class RemoteBackend:
         progress_callback: Optional[callable] = None,
         input_mount_id: Optional[str] = None,
         fast_inference: Any = False,
+        body_only: Any = False,
     ) -> Tuple[Any, Any, Optional[str], Any, Any]:
         import requests
         import gradio as gr
@@ -544,6 +547,7 @@ class RemoteBackend:
                 "detection_batch_size": int(detection_batch_size) if detection_batch_size else 1,
                 "lang": lang,
                 "fast_inference": "true" if fast_inference else "false",
+                "body_only": "true" if body_only else "false",
             }
             if input_mount_id:
                 payload["input_mount_id"] = input_mount_id

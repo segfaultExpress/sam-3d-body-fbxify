@@ -269,8 +269,9 @@ def _run_pose_job(job_id: str, input_path: str, bbox_path: Optional[str], fov_pa
         ):
             skip_keypoint_prompt = True
             print("FBXIFY_FAST_INFERENCE is on: skipping the second body-decoder pass", flush=True)
+        body_only = bool(params.get("body_only", False))
         manager.estimation_manager.set_inference_options(
-            precision=precision, skip_keypoint_prompt=skip_keypoint_prompt
+            precision=precision, skip_keypoint_prompt=skip_keypoint_prompt, body_only=body_only
         )
 
         bbox_dict = None
@@ -746,6 +747,7 @@ async def create_pose_job(
     sample_number: int = Form(1),
     precision: str = Form("fp32"),
     fast_inference: bool = Form(False),
+    body_only: bool = Form(False),
     output_tracking_bbox: bool = Form(False),
     frame_batch_size: int = Form(1),
     detection_batch_size: int = Form(1),
@@ -794,6 +796,7 @@ async def create_pose_job(
         "sample_number": sample_number,
         "precision": precision,
         "fast_inference": fast_inference,
+        "body_only": body_only,
         "output_tracking_bbox": output_tracking_bbox,
         "frame_batch_size": frame_batch_size,
         "detection_batch_size": detection_batch_size,

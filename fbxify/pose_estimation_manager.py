@@ -112,6 +112,8 @@ class PoseEstimationManager:
         )
 
         self.precision = "fp32"
+        # "full" = body + hand decoders; "body" = body decoder only (no hand decoders).
+        self.inference_type = "full"
         self.set_inference_options(precision=precision)
         self.estimator.skip_keypoint_prompt = False
         self._cancel_event = threading.Event()
@@ -359,13 +361,22 @@ class PoseEstimationManager:
         self.cached_cam_int = torch.mean(cam_ints_stacked, dim=0)  # (1, 3, 3)
         print(f"Cached camera intrinsics (averaged of {average_of} images): {self.cached_cam_int}")
 
-    def set_inference_options(self, precision: str = "fp32", skip_keypoint_prompt: Optional[bool] = None):
+    def set_inference_options(
+        self,
+        precision: str = "fp32",
+        skip_keypoint_prompt: Optional[bool] = None,
+        body_only: Optional[bool] = None,
+    ):
         """
         Configure inference precision and optional Fast SAM 3D Body shortcuts.
 
         skip_keypoint_prompt: if True, skip the second body-decoder pass
         (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT). Hands are still estimated.
         None leaves the current setting unchanged.
+
+        body_only: if True, run the body decoder only (inference_type "body"):
+        no hand crops, no hand decoders, no wrist fusion. Hand pose comes from the
+        body decoder's own estimate. None leaves the current setting unchanged.
         """
         precision = (precision or "fp32").lower()
         if precision not in ["fp32", "bf16", "fp16"]:
@@ -382,6 +393,12 @@ class PoseEstimationManager:
             if new_val != prev:
                 state = "ON" if new_val else "OFF"
                 print(f"Fast inference skip_keypoint_prompt={state}")
+
+        if body_only is not None:
+            new_type = "body" if body_only else "full"
+            if new_type != self.inference_type:
+                self.inference_type = new_type
+                print(f"Body-only pose (no hand decoders): {'ON' if body_only else 'OFF'}")
 
     def _apply_precision(self, precision: str):
         model = self.estimator.model
@@ -660,7 +677,9 @@ class PoseEstimationManager:
                 })
             self.estimator.model.head_pose.lod = 1
             self.estimator.model.head_pose_hand.lod = 1
-            batch_result = self.estimator.process_batch_of_frames(frames_list, inference_type="full")
+            batch_result = self.estimator.process_batch_of_frames(
+                frames_list, inference_type=self.inference_type
+            )
             for k, (frame_index, _path, _bboxes_np, ids, bboxes_orig) in enumerate(chunk):
                 all_out_k = batch_result[k] if k < len(batch_result) else []
                 frame_results = {}
@@ -747,7 +766,12 @@ class PoseEstimationManager:
         self.estimator.model.head_pose.lod = 1
         self.estimator.model.head_pose_hand.lod = 1
         # IMPORTANT: process_one_image returns a list of dicts
-        outputs_raw = self.estimator.process_one_image(image_path, bboxes=bboxes_numpy, cam_int=self.cached_cam_int)
+        outputs_raw = self.estimator.process_one_image(
+            image_path,
+            bboxes=bboxes_numpy,
+            cam_int=self.cached_cam_int,
+            inference_type=self.inference_type,
+        )
         
         # If num_people is None and bboxes are not provided, use all detections
         if bboxes is None and num_people is None:
@@ -969,6 +993,12 @@ class PoseEstimationManager:
             "creation_date": datetime.utcnow().isoformat() + "Z",
             "version": VERSION,
             "num_people": num_people,
+            "inference": {
+                "type": self.inference_type,
+                "body_only": self.inference_type == "body",
+                "fast_inference": bool(getattr(self.estimator, "skip_keypoint_prompt", False)),
+                "precision": self.precision,
+            },
             "frames": estimation_results,
         }
         if fps is not None:
@@ -1019,6 +1049,7 @@ class PoseEstimationManager:
                 "tracking": data.get("tracking", None),
                 "outputs": data.get("outputs", None),
                 "fps": data.get("fps", None),
+                "inference": data.get("inference", None),
             }
             frames = data["frames"]
             

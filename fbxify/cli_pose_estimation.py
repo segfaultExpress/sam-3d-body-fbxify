@@ -65,6 +65,11 @@ def parse_args():
         action="store_true",
         help="Skip the second body-decoder keypoint-prompt pass (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT).",
     )
+    parser.add_argument(
+        "--body_only",
+        action="store_true",
+        help="Run the body decoder only: no hand crops or hand decoders. Batches with --frame_batch_size.",
+    )
     # Input / output
     parser.add_argument(
         "input_file",
@@ -192,9 +197,11 @@ def main():
         print(f"Error initializing estimator: {e}")
         sys.exit(1)
 
-    if args.fast_inference:
+    if args.fast_inference or args.body_only:
         estimation_manager.set_inference_options(
-            precision=args.precision, skip_keypoint_prompt=True
+            precision=args.precision,
+            skip_keypoint_prompt=bool(args.fast_inference),
+            body_only=bool(args.body_only),
         )
 
     data_prep_manager = FbxDataPrepManager()
