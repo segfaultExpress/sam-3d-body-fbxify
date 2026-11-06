@@ -155,6 +155,8 @@
     "body_model": "🧍 SAM 3D Body checkpoint",
     "encoder": "🧠 Image encoder variant",
     "detector": "🔲 Person bbox detector",
+    "body_only": "🖐️ Body only (no hand decoders)",
+    "body_only_info": "Skip the hand crops and hand decoders. Hand pose comes from the body decoder. Fastest; works with frame batching.",
     "frame_batch_size": "Frame batch size",
     "frame_batch_size_info": "Run pose model once per N frames (1 = per-frame). 4 or 8 can speed up video. Higher = more GPU memory.",
     "detection_batch_size": "Detection batch size",

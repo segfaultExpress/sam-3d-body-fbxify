@@ -44,6 +44,16 @@ This fork extends SAM 3D Body with **FBXify**, a tool that allows you to export 
 
 Note: The exported FBX files contain only the armature (skeleton), not the mesh. You can retarget or directly move the action to any MHR, Mixamo, or Unity character.
 
+### Speed options
+
+Pose estimation on video has three independent speed knobs. Each is a per-job option in the web UI (next to Precision), a flag on `python -m fbxify.cli` / `fbxify.cli_pose_estimation`, and a form field on the worker's `POST /jobs/pose`. The choice is recorded under `inference` in the estimation JSON's metadata.
+
+- **Fast inference** (`--fast_inference`, `fast_inference=true`): skip the second body-decoder pass that re-prompts with the wrist and elbow keypoints found by the hand decoders. Hands still run; arm correction is reduced.
+- **Body only** (`--body_only`, `body_only=true`): run the body decoder only. No hand crops, no hand decoders, no wrist fusion; hand pose is whatever the body decoder estimates from the body crop. This removes the per-person hand passes (two extra crops through the backbone per person per frame) and the hand-flicker they can introduce, at the cost of finger detail.
+- **Frame batch size** (`--frame_batch_size N`, `frame_batch_size=N`): run the pose model once per N frames. Every person crop from all N frames goes through the backbone and body decoder in one forward; the hand refinement (when on) is batched the same way.
+
+Body only and frame batching compose. The body-only cost is almost entirely the backbone + body-decoder forward, and that forward already takes all crops of a batch at once, so a batch of body-only frames is one GPU call instead of N. On an RTX 4070 Ti with the ViT-H model and three people per frame, one body-only forward costs about 244 ms for 3 crops but only 587 ms for 12, so batching 4 frames gives roughly 1.5x the single-frame rate end to end (about 4.5 to 6.8 frames per second); the gain flattens past 8 frames as the GPU saturates, and frames with fewer people than the largest in the batch are padded, so mixed person counts gain a little less. Running two jobs side by side on one GPU gains far less (about 20%), because both are already competing for the same compute, so batching rather than parallel jobs is the lever. Higher batch sizes use more GPU memory.
+
 ### Acknowledgments
 
 Special thanks to [tori29umai0123](https://github.com/tori29umai0123) for their starter code that inspired this fork. See the original GitHub issue: [A script that outputs a human animation fbx file that can be loaded in Unity (incomplete) #66](https://github.com/facebookresearch/sam-3d-body/issues/66).

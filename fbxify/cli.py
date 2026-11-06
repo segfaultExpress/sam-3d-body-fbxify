@@ -123,6 +123,11 @@ def parse_args():
         action="store_true",
         help="Skip the second body-decoder keypoint-prompt pass (Fast SAM 3D Body SKIP_KEYPOINT_PROMPT). Hands still run. Test/A-B vs stock 3DB."
     )
+    parser.add_argument(
+        "--body_only",
+        action="store_true",
+        help="Run the body decoder only: no hand crops or hand decoders. Hand pose comes from the body decoder. Batches with --frame_batch_size."
+    )
     
     # Root motion
     parser.add_argument(
@@ -266,9 +271,11 @@ def main():
         sys.exit(1)
     print(f"Loaded models: {estimation_manager.loaded_selection()}")
 
-    if args.fast_inference:
+    if args.fast_inference or args.body_only:
         estimation_manager.set_inference_options(
-            precision=args.precision, skip_keypoint_prompt=True
+            precision=args.precision,
+            skip_keypoint_prompt=bool(args.fast_inference),
+            body_only=bool(args.body_only),
         )
 
     data_prep_manager = FbxDataPrepManager()
