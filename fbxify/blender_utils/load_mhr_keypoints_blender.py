@@ -49,10 +49,12 @@ if not blender_utils_dir or not os.path.exists(blender_utils_dir):
     except:
         pass
 
-# Method 4: Hardcoded fallback (update this to your actual path)
+# Method 4: FBXIFY_BLENDER_UTILS environment variable (set it to your fbxify/blender_utils folder)
 if not blender_utils_dir or not os.path.exists(blender_utils_dir):
-    blender_utils_dir = r"F:\Projects\Project-Mimesis\sam-3d-body-main\fbxify\blender_utils"
-    print(f"Using hardcoded path: {blender_utils_dir}")
+    env_dir = os.environ.get("FBXIFY_BLENDER_UTILS", "")
+    if env_dir and os.path.exists(env_dir):
+        blender_utils_dir = env_dir
+        print(f"Using FBXIFY_BLENDER_UTILS: {blender_utils_dir}")
 
 # Find and import the visualizer module directly
 import importlib.util
@@ -63,18 +65,12 @@ if blender_utils_dir and os.path.exists(blender_utils_dir):
     if not os.path.exists(visualizer_file):
         visualizer_file = None
 
-# If still not found, try hardcoded path
-if not visualizer_file or not os.path.exists(visualizer_file):
-    hardcoded_path = r"F:\Projects\Project-Mimesis\sam-3d-body-main\fbxify\blender_utils\mhr_keypoints_visualizer.py"
-    if os.path.exists(hardcoded_path):
-        visualizer_file = hardcoded_path
-        blender_utils_dir = os.path.dirname(hardcoded_path)
-
 if not visualizer_file or not os.path.exists(visualizer_file):
     raise FileNotFoundError(
         f"Could not find mhr_keypoints_visualizer.py\n"
         f"Tried: {visualizer_file}\n"
-        f"Please ensure the file exists in: {blender_utils_dir}"
+        f"Please ensure the file exists in: {blender_utils_dir}\n"
+        f"or set FBXIFY_BLENDER_UTILS to your fbxify/blender_utils folder"
     )
 
 print(f"Loading visualizer from: {visualizer_file}")
@@ -138,12 +134,8 @@ def load_keypoints_from_json(json_path):
 
 # Main execution
 if __name__ == "__main__":
-    # Example usage - update the path to your JSON file
-    json_file_path = r"F:/Projects/Project-Mimesis/sam-3d-body-main/output/keypoints.json"
-    
-    # Alternative: uncomment to use interactive file selection
-    # import bpy
-    # json_file_path = bpy.path.abspath("//keypoints.json")  # Relative to .blend file
+    # The JSON path comes from FBXIFY_KEYPOINTS_JSON, else keypoints.json next to the .blend file
+    json_file_path = os.environ.get("FBXIFY_KEYPOINTS_JSON", "") or bpy.path.abspath("//keypoints.json")
     
     if os.path.exists(json_file_path):
         load_keypoints_from_json(json_file_path)
@@ -151,7 +143,7 @@ if __name__ == "__main__":
         print(f"JSON file not found: {json_file_path}")
         print("\nTo use this script:")
         print("1. Run save_mhr_keypoints.py to generate a JSON file from an image")
-        print("2. Update json_file_path in this script to point to your JSON file")
+        print("2. Set FBXIFY_KEYPOINTS_JSON to that file, or save it as keypoints.json next to your .blend file")
         print("3. Run this script in Blender's Scripting workspace")
         print("\nExample:")
         print("  python save_mhr_keypoints.py --image image.jpg --output keypoints.json --checkpoint checkpoint.pth")
