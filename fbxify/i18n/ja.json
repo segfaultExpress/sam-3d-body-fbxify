@@ -155,6 +155,8 @@
     "body_model": "🧍 SAM 3D Body チェックポイント",
     "encoder": "🧠 画像エンコーダの種類",
     "detector": "🔲 人物 bbox 検出器",
+    "body_only": "🖐️ 身体のみ（手デコーダなし）",
+    "body_only_info": "手の切り出しと手デコーダを省略します。手のポーズは身体デコーダから得ます。最速で、フレームバッチと併用できます。",
     "frame_batch_size": "フレームバッチサイズ",
     "frame_batch_size_info": "Nフレームごとにポーズモデルを1回実行（1=フレームごと）。4や8で動画を高速化。大きいほどGPUメモリを使用。",
     "detection_batch_size": "検出バッチサイズ",

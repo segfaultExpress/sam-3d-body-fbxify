@@ -164,6 +164,11 @@ def create_entry_section(translator: Translator, models: Dict[str, Any] | None =
         value=False,
         info=translator.t("ui.fast_inference_info"),
     )
+    components['body_only'] = gr.Checkbox(
+        label=translator.t("ui.body_only"),
+        value=False,
+        info=translator.t("ui.body_only_info"),
+    )
 
     # Frame batching (run pose model once per N frames for speed)
     components['frame_batch_size'] = gr.Number(
@@ -263,6 +268,7 @@ def update_entry_language(lang: str, translator: Translator) -> Tuple[Any, ...]:
         gr.update(label=t.t("ui.sample_number"), info=t.t("ui.sample_number_info")),  # sample_number
         gr.update(label=t.t("ui.precision"), info=t.t("ui.precision_info")),  # precision
         gr.update(label=t.t("ui.fast_inference"), info=t.t("ui.fast_inference_info")),  # fast_inference
+        gr.update(label=t.t("ui.body_only"), info=t.t("ui.body_only_info")),  # body_only
         gr.update(label=t.t("ui.frame_batch_size"), info=t.t("ui.frame_batch_size_info")),  # frame_batch_size
         gr.update(label=t.t("ui.detection_batch_size"), info=t.t("ui.detection_batch_size_info")),  # detection_batch_size
     )

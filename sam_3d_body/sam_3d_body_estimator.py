@@ -278,13 +278,19 @@ class SAM3DBodyEstimator:
     ) -> List[List[Dict[str, Any]]]:
         """
         Run pose estimation on multiple frames in one batched body forward, then
-        hand refinement per frame. Returns the same structure as calling
-        process_one_image for each frame: list of (list of per-person dicts per frame).
+        (for "full") hand refinement across the batch. Returns the same structure as
+        calling process_one_image for each frame: list of (list of per-person dicts per frame).
 
         Args:
             frames: List of dicts, each with "img" (path or ndarray), "bboxes" (xyxy, shape Nx4),
                 optional "cam_int" (tensor or array). Optional "masks", "masks_score".
             inference_type: "full", "body", or "hand".
+                - full: one body forward over every crop of every frame, then batched hand refinement.
+                - body: the same batched body forward with no hand decoders. The body-only cost is
+                  the backbone + body decoder, and that forward already takes (frames x persons)
+                  crops at once, so batching pays here exactly as it does for "full".
+                - hand: no batched path exists (hand refinement needs a body estimate to
+                  locate the hands), so frames are processed one at a time.
 
         Returns:
             [ all_out_frame_0, ..., all_out_frame_K-1 ] where each all_out_frame_i
@@ -292,8 +298,10 @@ class SAM3DBodyEstimator:
         """
         if not frames:
             return []
-        if inference_type != "full":
-            # Body-only or hand-only: no batching benefit; fall back to per-frame.
+        if inference_type not in ("full", "body", "hand"):
+            raise ValueError(f"Invalid inference type: {inference_type}")
+        if inference_type == "hand":
+            # Hand-only has no batched path; fall back to per-frame.
             return [
                 self.process_one_image(
                     f["img"],
@@ -349,15 +357,21 @@ class SAM3DBodyEstimator:
                 c = c.reshape(3, 3)
             batch["cam_int"] = c.unsqueeze(0).expand(K, 3, 3).clone()
 
-        images = [batch["img_ori"][k].data for k in range(K)]
-        pose_output, batch_lhand, batch_rhand = self.model.run_inference_batched(
-            images=images,
-            batch=batch,
-            transform_hand=self.transform_hand,
-            n_per_frame=n_per_frame,
-            thresh_wrist_angle=self.thresh_wrist_angle,
-            skip_keypoint_prompt=self.skip_keypoint_prompt,
-        )
+        if inference_type == "body":
+            # Body-only: the same (K x N_max)-crop body forward the full path starts
+            # with, without the hand decoders. Matches run_inference(inference_type="body").
+            pose_output = self.model.forward_step(batch, decoder_type="body")
+            batch_lhand = batch_rhand = None
+        else:
+            images = [batch["img_ori"][k].data for k in range(K)]
+            pose_output, batch_lhand, batch_rhand = self.model.run_inference_batched(
+                images=images,
+                batch=batch,
+                transform_hand=self.transform_hand,
+                n_per_frame=n_per_frame,
+                thresh_wrist_angle=self.thresh_wrist_angle,
+                skip_keypoint_prompt=self.skip_keypoint_prompt,
+            )
 
         out = pose_output["mhr"]
         out = recursive_to(out, "cpu")
@@ -365,27 +379,28 @@ class SAM3DBodyEstimator:
 
         # 4 syncs total (not 4*K) - move full batches once, then index
         bbox_cpu = batch["bbox"].cpu().numpy()
-        bc_l = batch_lhand["bbox_center"].cpu().numpy()
-        bs_l = batch_lhand["bbox_scale"].cpu().numpy()
-        bc_r = batch_rhand["bbox_center"].cpu().numpy()
-        bs_r = batch_rhand["bbox_scale"].cpu().numpy()
         lhand_bbox_cpu = []
         rhand_bbox_cpu = []
-        for k in range(K):
-            n_k = n_per_frame[k]
-            for idx in range(n_k):
-                lhand_bbox_cpu.append(np.array([
-                    bc_l[k, idx, 0] - bs_l[k, idx, 0] / 2,
-                    bc_l[k, idx, 1] - bs_l[k, idx, 1] / 2,
-                    bc_l[k, idx, 0] + bs_l[k, idx, 0] / 2,
-                    bc_l[k, idx, 1] + bs_l[k, idx, 1] / 2,
-                ]))
-                rhand_bbox_cpu.append(np.array([
-                    bc_r[k, idx, 0] - bs_r[k, idx, 0] / 2,
-                    bc_r[k, idx, 1] - bs_r[k, idx, 1] / 2,
-                    bc_r[k, idx, 0] + bs_r[k, idx, 0] / 2,
-                    bc_r[k, idx, 1] + bs_r[k, idx, 1] / 2,
-                ]))
+        if batch_lhand is not None:
+            bc_l = batch_lhand["bbox_center"].cpu().numpy()
+            bs_l = batch_lhand["bbox_scale"].cpu().numpy()
+            bc_r = batch_rhand["bbox_center"].cpu().numpy()
+            bs_r = batch_rhand["bbox_scale"].cpu().numpy()
+            for k in range(K):
+                n_k = n_per_frame[k]
+                for idx in range(n_k):
+                    lhand_bbox_cpu.append(np.array([
+                        bc_l[k, idx, 0] - bs_l[k, idx, 0] / 2,
+                        bc_l[k, idx, 1] - bs_l[k, idx, 1] / 2,
+                        bc_l[k, idx, 0] + bs_l[k, idx, 0] / 2,
+                        bc_l[k, idx, 1] + bs_l[k, idx, 1] / 2,
+                    ]))
+                    rhand_bbox_cpu.append(np.array([
+                        bc_r[k, idx, 0] - bs_r[k, idx, 0] / 2,
+                        bc_r[k, idx, 1] - bs_r[k, idx, 1] / 2,
+                        bc_r[k, idx, 0] + bs_r[k, idx, 0] / 2,
+                        bc_r[k, idx, 1] + bs_r[k, idx, 1] / 2,
+                    ]))
 
         person_idx = 0
         result = []
@@ -415,8 +430,9 @@ class SAM3DBodyEstimator:
                     "pred_global_rots": out["joint_global_rots"][global_idx],
                     "mhr_model_params": out["mhr_model_params"][global_idx],
                 })
-                all_out_k[-1]["lhand_bbox"] = lhand_bbox_cpu[person_idx]
-                all_out_k[-1]["rhand_bbox"] = rhand_bbox_cpu[person_idx]
+                if batch_lhand is not None:
+                    all_out_k[-1]["lhand_bbox"] = lhand_bbox_cpu[person_idx]
+                    all_out_k[-1]["rhand_bbox"] = rhand_bbox_cpu[person_idx]
                 person_idx += 1
             result.append(all_out_k)
         return result

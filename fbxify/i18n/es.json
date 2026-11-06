@@ -155,6 +155,8 @@
     "body_model": "🧍 Checkpoint de SAM 3D Body",
     "encoder": "🧠 Variante del codificador de imagen",
     "detector": "🔲 Detector de personas (bbox)",
+    "body_only": "🖐️ Solo cuerpo (sin decodificadores de manos)",
+    "body_only_info": "Omite los recortes y decodificadores de manos. La pose de las manos viene del decodificador del cuerpo. Lo más rápido; funciona con el lote de fotogramas.",
     "frame_batch_size": "Tamaño de lote de fotogramas",
     "frame_batch_size_info": "Ejecutar el modelo de pose una vez cada N fotogramas (1 = por fotograma). 4 u 8 puede acelerar el vídeo. Mayor = más memoria GPU.",
     "detection_batch_size": "Tamaño de lote de detección",
